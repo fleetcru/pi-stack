@@ -11,14 +11,32 @@ android {
         applicationId = "com.example.picompanion"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
+        versionName = System.getenv("VERSION_NAME") ?: "1.0-debug"
+    }
+
+    signingConfigs {
+        // CI: keystore decoded from base64 secret by the workflow before Gradle runs.
+        // Set KEYSTORE_PATH env var to the decoded file path.
+        val ksPath = System.getenv("KEYSTORE_PATH")
+        if (!ksPath.isNullOrBlank()) {
+            create("release") {
+                storeFile = File(ksPath)
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
+                keyAlias = System.getenv("KEY_ALIAS") ?: ""
+                keyPassword = System.getenv("KEY_PASSWORD") ?: ""
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            val ks = signingConfigs.findByName("release")
+            if (ks != null) {
+                signingConfig = ks
+            }
         }
     }
     compileOptions {
