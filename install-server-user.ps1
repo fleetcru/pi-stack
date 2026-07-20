@@ -1,11 +1,10 @@
-#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Installs pi-server system-wide as a Windows service (requires admin).
+    Installs pi-server for the current user (no admin required).
 
 .DESCRIPTION
     Downloads the pi-server binary from GitHub releases, installs it to
-    C:\pi-server, and creates a scheduled task that runs at startup as SYSTEM.
+    %LOCALAPPDATA%\pi-server, and creates a logon task to start automatically.
 
 .PARAMETER Port
     Port to listen on. Default: 3142
@@ -27,11 +26,11 @@ $ErrorActionPreference = "Stop"
 
 # ── Config ────────────────────────────────────────────────
 $Repo = "fleetcru/pi-stack"
-$InstallDir = "C:\pi-server"
+$InstallDir = Join-Path $env:LOCALAPPDATA "pi-server"
 $DataDir = Join-Path $InstallDir "data"
 $ConfigDir = Join-Path $InstallDir "config"
 $BinaryUrl = "https://github.com/$Repo/releases/latest/download/pi-server-windows-amd64.exe"
-$TaskName = "PiServer"
+$TaskName = "PiServer-$env:USERNAME"
 
 # ── Helpers ───────────────────────────────────────────────
 function Write-Step($msg) { Write-Host "[info] $msg" -ForegroundColor Cyan }
@@ -40,7 +39,7 @@ function Write-Warn($msg) { Write-Host "[warn] $msg" -ForegroundColor Yellow }
 function Write-Fail($msg) { Write-Host "[error] $msg" -ForegroundColor Red; exit 1 }
 
 # ── Create directories ────────────────────────────────────
-Write-Step "Creating directories..."
+Write-Step "Creating directories in $InstallDir..."
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
@@ -85,10 +84,13 @@ $EnvContent = @"
 #   Stop-ScheduledTask -TaskName "$TaskName"
 #   Start-ScheduledTask -TaskName "$TaskName"
 
-PI_SERVER_ADDR=0.0.0.0:$Port
+PI_SERVER_ADDR=127.0.0.1:$Port
 PI_SERVER_DATA_DIR=$DataDir
 PI_SERVER_ALLOWED_ROOTS=$DataDir
-PI_SERVER_ALLOW_INSECURE=1
+
+# For LAN/Tailscale access, uncomment and set:
+# PI_SERVER_ADDR=0.0.0.0:$Port
+# PI_SERVER_ALLOW_INSECURE=1
 
 # Set a token to require authentication:
 # PI_SERVER_AUTH_TOKEN=your-secret-token
@@ -122,15 +124,16 @@ if ($ExistingTask) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
 }
 
-# ── Create scheduled task (startup, SYSTEM account) ───────
-Write-Step "Creating scheduled task..."
+# ── Create scheduled task (logon, current user, no admin) ─
+Write-Step "Creating logon task..."
 
 $Action = New-ScheduledTaskAction `
     -Execute "powershell.exe" `
     -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$WrapperPath`"" `
     -WorkingDirectory $InstallDir
 
-$Trigger = New-ScheduledTaskTrigger -AtStartup
+$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+
 $Settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
@@ -139,20 +142,17 @@ $Settings = New-ScheduledTaskSettingsSet `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit (New-TimeSpan -Days 365)
 
-$Principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-
 Register-ScheduledTask `
     -TaskName $TaskName `
     -Action $Action `
     -Trigger $Trigger `
     -Settings $Settings `
-    -Principal $Principal `
-    -Description "pi-server — Pi coding agent hub" `
+    -Description "pi-server — Pi coding agent hub (user install)" `
     -Force | Out-Null
 
-Write-Ok "Scheduled task created: $TaskName"
+Write-Ok "Logon task created: $TaskName"
 
-# ── Start service ─────────────────────────────────────────
+# ── Start now ─────────────────────────────────────────────
 Write-Step "Starting pi-server..."
 Start-ScheduledTask -TaskName $TaskName
 Start-Sleep -Seconds 2
@@ -166,14 +166,11 @@ if ($Task.State -eq "Running") {
 }
 
 # ── Summary ───────────────────────────────────────────────
-$ServerIP = (Invoke-WebRequest -Uri "https://ifconfig.me" -UseBasicParsing -ErrorAction SilentlyContinue).Content.Trim()
-if (-not $ServerIP) { $ServerIP = "localhost" }
-
 Write-Host ""
 Write-Host "==================================================" -ForegroundColor Green
-Write-Host "  pi-server installed system-wide!"
+Write-Host "  pi-server installed for current user!"
 Write-Host ""
-Write-Host "  URL:      http://${ServerIP}:${Port}" -ForegroundColor Cyan
+Write-Host "  URL:      http://127.0.0.1:$Port" -ForegroundColor Cyan
 Write-Host "  Config:   $EnvFile"
 Write-Host "  Data:     $DataDir"
 Write-Host "  Binary:   $ExePath"
@@ -182,7 +179,8 @@ Write-Host "  Commands:"
 Write-Host "    Start-ScheduledTask -TaskName '$TaskName'" -ForegroundColor Cyan
 Write-Host "    Stop-ScheduledTask -TaskName '$TaskName'" -ForegroundColor Cyan
 Write-Host "    Get-ScheduledTask -TaskName '$TaskName'" -ForegroundColor Cyan
+Write-Host "    Unregister-ScheduledTask -TaskName '$TaskName'" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Set PI_SERVER_AUTH_TOKEN in $EnvFile" -ForegroundColor Yellow
-Write-Host "  before exposing this to the internet!" -ForegroundColor Yellow
+Write-Host "  To uninstall: run the Unregister command above,"
+Write-Host "  then delete $InstallDir"
 Write-Host "==================================================" -ForegroundColor Green
