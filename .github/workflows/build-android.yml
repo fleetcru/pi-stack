@@ -68,3 +68,13 @@ jobs:
           name: pi-companion-${{ steps.version.outputs.name }}
           path: pi-companion-exp/app/build/outputs/apk/release/*.apk
           retention-days: 90
+
+      - name: Create GitHub Release
+        if: github.ref_type == 'tag'
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "pi-companion v${{ steps.version.outputs.name }}" \
+            --generate-notes \
+            pi-companion-exp/app/build/outputs/apk/release/*.apk#pi-companion-${{ steps.version.outputs.name }}.apk
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
