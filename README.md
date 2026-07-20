@@ -32,7 +32,59 @@ A multi-device coding agent ecosystem for [Pi](https://github.com/earendil-works
 - **Relay** — Existing Pi TUI sessions can bridge into pi-server via the external-session extension, making them visible and controllable from Webby and Companion.
 - **WebSocket tickets** — Browser clients authenticate via single-use, time-limited tickets instead of exposing bearer tokens over WebSocket.
 
-## Quick start
+## One-liner install (production)
+
+Deploy pi-server to a remote VPS or your personal machine with a single command.
+
+### Linux VPS (DigitalOcean, Hetzner, etc.)
+
+```bash
+curl -sSL linux.fleetcru.dev | sudo bash
+```
+
+- Installs to `/opt/pi-server`
+- Creates a systemd service (auto-start on boot)
+- Runs as dedicated `pi-server` user
+- Config at `/etc/pi-server/pi-server.env`
+
+### Windows VPS (Admin)
+
+```powershell
+irm https://windows.fleetcru.dev | iex
+```
+
+- Installs to `C:\pi-server`
+- Creates a scheduled task (runs at startup as SYSTEM)
+- Config at `C:\pi-server\config\pi-server.env`
+
+### Personal machine (no admin)
+
+**Linux/macOS:**
+```bash
+curl -sSL linux.fleetcru.dev | bash
+```
+
+**Windows:**
+```powershell
+irm https://get.fleetcru.dev | iex
+```
+
+- Installs to `%LOCALAPPDATA%\pi-server` (Windows) or `~/.local/share/pi-server` (Linux)
+- Runs at logon under your user account
+- No admin/root required
+
+### With authentication
+
+```bash
+# Linux
+PI_SERVER_AUTH_TOKEN="my-secret" curl -sSL linux.fleetcru.dev | sudo bash
+
+# Windows
+irm https://windows.fleetcru.dev -OutFile install.ps1
+.\install.ps1 -AuthToken "my-secret"
+```
+
+## Quick start (development)
 
 ### Prerequisites
 
