@@ -1,0 +1,52 @@
+# ── Runtime data ──────────────────────────────────────────
+.data/
+*.log
+*.tmp
+
+# ── Go ────────────────────────────────────────────────────
+pi-server-exp/pi-server
+pi-server-exp/*.exe
+
+# ── Node / Web ────────────────────────────────────────────
+pi-webby-exp/node_modules/
+pi-webby-exp/dist/
+pi-webby-exp/.vite/
+
+# ── Android / Gradle ──────────────────────────────────────
+pi-companion-exp/.gradle/
+pi-companion-exp/app/build/
+pi-companion-exp/build/
+pi-companion-exp/local.properties
+pi-companion-exp/*.apk
+pi-companion-exp/*.aab
+
+# ── IDE ───────────────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── OS ────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Secrets ───────────────────────────────────────────────
+.env
+.env.local
+*.pem
+*.key
+*.jks
+*.keystore
+main_keystore
+
+# ── Audit / internal docs ────────────────────────────────
+REVIEW_FINDINGS.md
+REVIEW_PROMPT.md
+
+# ── Non-exp originals (if they exist) ────────────────────
+pi-server/
+pi-webby/
+pi-companion/

@@ -1,0 +1,262 @@
+package com.example.picompanion.ui.sessions
+
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.picompanion.data.model.ServerSession
+import com.example.picompanion.ui.components.DirectoryBrowserSheet
+import com.example.picompanion.ui.settings.SettingsViewModel
+
+@Composable
+fun SessionsScreen(
+  onSessionClick: (String) -> Unit,
+  sharedTransitionScope: SharedTransitionScope,
+  animatedVisibilityScope: AnimatedVisibilityScope,
+  modifier: Modifier = Modifier,
+  viewModel: SessionsViewModel = viewModel(),
+  settingsViewModel: SettingsViewModel = viewModel(),
+) {
+  val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+  val createdSessionId by viewModel.createdSessionId.collectAsStateWithLifecycle()
+  val settings by settingsViewModel.settings.collectAsStateWithLifecycle()
+  var searchQuery by remember { mutableStateOf("") }
+  var showBrowser by remember { mutableStateOf(false) }
+  var actionSession by remember { mutableStateOf<ServerSession?>(null) }
+
+  // Auto-navigate when a session is created
+  LaunchedEffect(createdSessionId) {
+    val id = createdSessionId
+    if (id != null) {
+      onSessionClick(id)
+      viewModel.clearCreatedSession()
+    }
+  }
+
+  Column(
+    modifier
+      .fillMaxSize()
+      .padding(horizontal = 18.dp),
+  ) {
+    // Header with refresh
+    Row(
+      Modifier
+        .fillMaxWidth()
+        .padding(start = 4.dp, top = 28.dp, bottom = 16.dp),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Column {
+        Text(
+          text = "Sessions",
+          style = MaterialTheme.typography.headlineMedium,
+          fontWeight = FontWeight.Bold,
+        )
+        Text(
+          text = "Local and remote Pi workspaces",
+          style = MaterialTheme.typography.bodyMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+      IconButton(onClick = { viewModel.refresh() }) {
+        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+      }
+    }
+
+    // New session button
+    Button(
+      onClick = { showBrowser = true },
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(bottom = 8.dp),
+      shape = RoundedCornerShape(12.dp),
+    ) {
+      Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+      Spacer(Modifier.width(8.dp))
+      Text("New Session")
+    }
+
+    // Search bar
+    OutlinedTextField(
+      value = searchQuery,
+      onValueChange = { searchQuery = it },
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(bottom = 4.dp),
+      placeholder = { Text("Search sessions…") },
+      leadingIcon = {
+        Icon(Icons.Default.Search, contentDescription = null)
+      },
+      shape = RoundedCornerShape(14.dp),
+      singleLine = true,
+      colors = OutlinedTextFieldDefaults.colors(
+        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+      ),
+    )
+
+    // Content
+    when (val state = uiState) {
+      is SessionsUiState.Loading -> {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+          CircularProgressIndicator()
+        }
+      }
+
+      is SessionsUiState.Empty -> {
+        Box(Modifier.fillMaxSize().padding(top = 80.dp), contentAlignment = Alignment.TopCenter) {
+          Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+              "No sessions",
+              style = MaterialTheme.typography.titleMedium,
+              fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+              "Create a session from pi-server to get started",
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              textAlign = TextAlign.Center,
+            )
+          }
+        }
+      }
+
+      is SessionsUiState.Error -> {
+        Box(Modifier.fillMaxSize().padding(top = 80.dp), contentAlignment = Alignment.TopCenter) {
+          Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+              "Failed to load sessions",
+              style = MaterialTheme.typography.titleMedium,
+              fontWeight = FontWeight.SemiBold,
+              color = MaterialTheme.colorScheme.error,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+              state.message,
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(16.dp))
+            OutlinedButton(onClick = { viewModel.refresh() }) {
+              Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+              Spacer(Modifier.width(6.dp))
+              Text("Retry")
+            }
+          }
+        }
+      }
+
+      is SessionsUiState.Content -> {
+        val filteredSessions = remember(searchQuery, state.sessions) {
+          if (searchQuery.isBlank()) state.sessions
+          else state.sessions.filter {
+            (it.title?.contains(searchQuery, ignoreCase = true) == true) ||
+              (it.project?.contains(searchQuery, ignoreCase = true) == true) ||
+              (it.status?.contains(searchQuery, ignoreCase = true) == true) ||
+              it.id.contains(searchQuery, ignoreCase = true)
+          }
+        }
+
+        if (filteredSessions.isEmpty() && searchQuery.isNotBlank()) {
+          Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
+            Text(
+              "No matches for \"$searchQuery\"",
+              style = MaterialTheme.typography.bodyMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          }
+        } else {
+          LazyColumn(
+            modifier = Modifier
+              .fillMaxWidth()
+              .weight(1f)
+              .padding(top = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+          ) {
+            items(filteredSessions, key = { it.id }, contentType = { "session_item" }) { session ->
+              SessionListItem(
+                session = session,
+                isSelected = false,
+                onClick = { onSessionClick(session.id) },
+                onLongClick = { actionSession = session },
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+
+  actionSession?.let { session ->
+    AlertDialog(
+      onDismissRequest = { actionSession = null },
+      title = { Text(session.title ?: "Session actions") },
+      text = { Text("Choose an action for this session. Deleting stops its Pi process and removes it from pi-server.") },
+      confirmButton = {
+        TextButton(
+          onClick = {
+            actionSession = null
+            viewModel.deleteSession(session.id)
+          },
+        ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+      },
+      dismissButton = {
+        TextButton(onClick = { actionSession = null }) { Text("Cancel") }
+      },
+    )
+  }
+
+  // Directory browser sheet
+  DirectoryBrowserSheet(
+    visible = showBrowser,
+    server = settings.activeServer,
+    onDismiss = { showBrowser = false },
+    onSelect = { cwd ->
+      showBrowser = false
+      viewModel.createSession(cwd)
+    },
+  )
+}

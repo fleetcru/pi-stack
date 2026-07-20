@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- pi-server runs over HTTP on private networks (localhost, LAN, Tailscale).
+     Android's <domain-config> does not support CIDR ranges, so per-IP rules
+     are impractical. Allow cleartext globally — the app only connects to
+     user-configured pi-server URLs, and Tailscale already encrypts the tunnel. -->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true">
+    <trust-anchors>
+      <certificates src="system" />
+    </trust-anchors>
+  </base-config>
+</network-security-config>
