@@ -631,9 +631,19 @@ function MachineSessionList({ sessions, onOpen }: { sessions: MachineSession[]; 
 
   if (validSessions.length === 0 && invalidCount === 0) return null
 
+  const [expanded, setExpanded] = useState(false)
+
   return (
     <div className="mt-3 border-t border-border/60 pt-2">
-      <p className="px-2 py-1 text-[10px] font-medium tracking-[0.14em] text-muted-foreground uppercase">Local Pi sessions</p>
+      <button
+        type="button"
+        onClick={() => setExpanded((prev) => !prev)}
+        className="flex w-full items-center gap-1 px-2 py-1 text-left text-[10px] font-medium tracking-[0.14em] text-muted-foreground uppercase hover:text-sidebar-foreground"
+      >
+        {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+        Local Pi sessions ({validSessions.length})
+      </button>
+      {expanded && <>
       <p className="px-2 pb-1 text-[10px] text-muted-foreground/60">From ~/.pi/agent/sessions</p>
       {invalidCount > 0 && (
         <p className="px-2 py-1 text-[10px] text-amber-500/80">{invalidCount} session{invalidCount > 1 ? "s" : ""} skipped (missing working directory)</p>
@@ -663,6 +673,7 @@ function MachineSessionList({ sessions, onOpen }: { sessions: MachineSession[]; 
           ))}
         </>
       )}
+      </>}
     </div>
   )
 }
