@@ -5,12 +5,12 @@ This repository contains three projects forming a multi-device Pi coding-agent e
 ## Architecture
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌──────────────┐
-│   Webby     │────▶│             │◀────│  Companion   │
-│  (browser)  │ WS  │  pi-server  │ WS  │  (Android)   │
-└─────────────┘     │             │     └──────────────┘
-                    │   ┌─────┐   │
-                    │   │ Pi  │   │◀──── Pi TUI (via relay extension)
+┌─────────────┐     ┌─────────────┐     ┌──────────────┐     ┌──────────────┐
+│   Webby     │────▶│             │◀────│   Desktop    │     │  Companion   │
+│  (browser)  │ WS  │             │ WS  │   (Electron) │     │  (Android)   │
+└─────────────┘     │             │     └──────────────┘     └──────────────┘
+                    │   ┌─────┐   │                             ▲
+                    │   │ Pi  │   │◀──── Pi TUI (via relay)─────┘
                     │   └─────┘   │
                     └──────┬──────┘
                            │
@@ -106,6 +106,19 @@ Android client for pi-server.
 cd pi-companion-exp
 ./gradlew :app:compileDebugKotlin
 ./gradlew :app:testDebugUnitTest
+```
+
+### pi-desktop (Electron)
+
+**Path:** `pi-desktop/` · **Stack:** React, TypeScript, Vite, Electron
+
+Desktop client with native OS integration. Shares API client and components with pi-webby.
+
+```bash
+cd pi-desktop
+pnpm install
+pnpm dev
+pnpm build
 ```
 
 ## Key Design Decisions

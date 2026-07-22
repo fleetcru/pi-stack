@@ -1,6 +1,6 @@
 # pi-stack
 
-A multi-device coding agent ecosystem for [Pi](https://github.com/earendil-works/pi). Run Pi sessions from your terminal, control them from a web browser or Android phone, and bridge existing TUI sessions into the stack.
+A multi-device coding agent ecosystem for [Pi](https://github.com/earendil-works/pi). Run Pi sessions from your terminal, control them from a web browser, desktop app, or Android phone, and bridge existing TUI sessions into the stack.
 
 ## What's in the box
 
@@ -8,17 +8,18 @@ A multi-device coding agent ecosystem for [Pi](https://github.com/earendil-works
 |---|---|---|
 | **pi-server** | Go | HTTP/WebSocket hub that supervises Pi processes, proxies workers, and relays TUI sessions |
 | **pi-webby** | React + TypeScript + Vite | Browser client for creating, monitoring, and chatting with Pi sessions |
-| **pi-companion** | Kotlin + Jetpack Compose | Android client with the same capabilities, plus camera attachments and mobile UX |
+| **pi-desktop** | React + TypeScript + Vite + Electron | Desktop app with native OS integration, image attachments, and offline support |
+| **pi-companion** | Kotlin + Jetpack Compose | Android client with camera attachments, mobile UX, and real-time session status |
 
 ## Architecture
 
 ```
-┌─────────────┐     ┌─────────────┐     ┌──────────────┐
-│   Webby     │────▶│             │◀────│  Companion   │
-│  (browser)  │ WS  │  pi-server  │ WS  │  (Android)   │
-└─────────────┘     │             │     └──────────────┘
-                    │   ┌─────┐   │
-                    │   │ Pi  │   │◀──── Pi TUI (via relay extension)
+┌─────────────┐     ┌─────────────┐     ┌──────────────┐     ┌──────────────┐
+│   Webby     │────▶│             │◀────│   Desktop    │     │  Companion   │
+│  (browser)  │ WS  │             │ WS  │   (Electron) │     │  (Android)   │
+└─────────────┘     │             │     └──────────────┘     └──────────────┘
+                    │   ┌─────┐   │                             ▲
+                    │   │ Pi  │   │◀──── Pi TUI (via relay)─────┘
                     │   └─────┘   │
                     └──────┬──────┘
                            │
@@ -29,8 +30,12 @@ A multi-device coding agent ecosystem for [Pi](https://github.com/earendil-works
 
 - **Sessions** — Each Pi process runs as an isolated RPC session with its own working directory, history, and metadata.
 - **Workers** — Remote Pi instances registered by URL. pi-server proxies requests and aggregates their session inventories.
-- **Relay** — Existing Pi TUI sessions can bridge into pi-server via the external-session extension, making them visible and controllable from Webby and Companion.
+- **Relay** — Existing Pi TUI sessions can bridge into pi-server via the external-session extension, making them visible and controllable from Webby, Desktop, and Companion.
 - **WebSocket tickets** — Browser clients authenticate via single-use, time-limited tickets instead of exposing bearer tokens over WebSocket.
+- **Real-time status** — Sessions show granular runtime state (working, waiting for input, reconnecting) with pulsing indicators and detail labels.
+- **Image attachments** — Send images from web and Android clients as multimodal prompts.
+- **Session search** — Filter sessions by title, project, worker, or session ID across the sidebar.
+- **Pin sessions** — Star important sessions to keep them at the top of their project group.
 
 ## One-liner install (production)
 
@@ -213,6 +218,10 @@ pi-stack/
 │   ├── src/api/        # Server client, WebSocket, hooks
 │   ├── src/components/ # UI components
 │   └── src/state/      # Zustand store
+├── pi-desktop/         # Electron desktop app (React + TypeScript)
+│   ├── src/api/        # Shared API client with pi-webby
+│   ├── src/components/ # Native desktop UI
+│   └── src/hooks/      # Desktop-specific hooks (image attachments, etc.)
 ├── pi-companion/       # Android Kotlin/Compose client
 │   └── app/src/main/java/
 │       ├── data/api/       # HTTP client
@@ -221,6 +230,7 @@ pi-stack/
 │       └── ui/main/        # Home screen
 ├── start-exp-server.*  # Server-only scripts
 ├── start-exp-live-stack.* # Full stack scripts
+├── install-server.*    # VPS install scripts
 └── install-exp-external-bridge.* # Relay bridge installer
 ```
 
