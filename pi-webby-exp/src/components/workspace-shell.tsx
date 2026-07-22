@@ -889,7 +889,6 @@ function SessionLeaf({
           </div>
         )
       })()}
-      </button>
       {/* Pin/unpin on hover */}
       <button
         type="button"
