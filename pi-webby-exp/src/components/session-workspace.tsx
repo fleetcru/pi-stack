@@ -1,5 +1,6 @@
 import { memo, useCallback, useMemo, useState } from "react"
-import { ArrowUp, Bot, Brain, ChevronRight, Sparkles, Square, Terminal } from "lucide-react"
+import { ArrowUp, Bot, Brain, ChevronRight, ImagePlus, Sparkles, Square, Terminal, X } from "lucide-react"
+import { useImageAttachments } from "@/hooks/use-image-attachments"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeSanitize from "rehype-sanitize"
@@ -47,6 +48,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const [prompt, setPrompt] = useState("")
   const [deliveryNotice, setDeliveryNotice] = useState<string | undefined>()
   const [deliveryCommandId, setDeliveryCommandId] = useState<string | undefined>()
+  const imageAttachments = useImageAttachments()
   const client = usePiServerClient()
   const socket = useActiveSessionSocket(sessionId)
   const historyQuery = useSessionHistory(sessionId)
@@ -104,13 +106,16 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   async function sendPrompt(mode: "prompt" | "steer" = "prompt") {
     const message = prompt.trim()
-    if (!message) return
+    if (!message && imageAttachments.images.length === 0) return
     try {
       setDeliveryNotice("Sending…")
-      const response = mode === "steer" ? await client.steer(sessionId, { message }) : await client.prompt(sessionId, { message })
+      const images = await imageAttachments.toImageContent()
+      const request = { message, images: images.length > 0 ? images : undefined }
+      const response = mode === "steer" ? await client.steer(sessionId, request) : await client.prompt(sessionId, request)
       const commandId = (response as Record<string, unknown>).commandId
       setDeliveryCommandId(typeof commandId === "string" ? commandId : undefined)
       setPrompt("")
+      imageAttachments.clearImages()
       setDeliveryNotice(mode === "steer" ? "Steering Pi now…" : "Sent to bridged Pi. It will arrive at the next safe turn boundary.")
     } catch (error) {
       setDeliveryNotice(error instanceof Error ? error.message : "Could not send message to Pi")
@@ -204,7 +209,39 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
               void sendPrompt()
             }}
           >
-            <InputGroup className="rounded-2xl bg-muted/70 shadow-sm">
+            <div
+              className="rounded-2xl bg-muted/70 shadow-sm"
+              onPaste={imageAttachments.handlePaste}
+              onDragOver={imageAttachments.handleDragOver}
+              onDrop={imageAttachments.handleDrop}
+            >
+              {imageAttachments.images.length > 0 && (
+                <div className="flex flex-wrap gap-2 px-4 pt-3 pb-1">
+                  {imageAttachments.images.map((img) => (
+                    <div key={img.id} className="group relative shrink-0">
+                      <div className="h-16 w-16 overflow-hidden rounded-lg border border-border">
+                        <img
+                          src={img.previewUrl}
+                          alt="Attached image"
+                          className="size-full object-cover"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => imageAttachments.removeImage(img.id)}
+                        className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-border bg-background text-muted-foreground opacity-0 transition-opacity hover:bg-destructive hover:text-white group-hover:opacity-100"
+                        aria-label="Remove image"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {imageAttachments.error && (
+                <p className="px-4 pt-2 text-xs text-destructive">{imageAttachments.error}</p>
+              )}
+              <InputGroup className="rounded-2xl !border-0 !shadow-none !outline-none !ring-0 !ring-offset-0 has-[data-slot=input-group-control:focus-visible]:!ring-0 has-[data-slot=input-group-control:focus-visible]:!border-0">
               <InputGroupTextarea
                 className="max-h-32 min-h-14 px-4 pt-3 text-sm leading-6 select-text"
                 value={prompt}
@@ -256,12 +293,31 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   </SelectContent>
                 </Select>
                   </div>
+                <input
+                  ref={imageAttachments.inputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={imageAttachments.handlePickerChange}
+                />
+                <InputGroupButton
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost"
+                  className="rounded-xl text-muted-foreground"
+                  onClick={imageAttachments.openPicker}
+                  aria-label="Attach image"
+                  title="Attach image (or paste/drop)"
+                >
+                  <ImagePlus />
+                </InputGroupButton>
                 <InputGroupButton
                   type="button"
                   size="sm"
                   variant="outline"
                   className="rounded-xl"
-                  disabled={!prompt.trim()}
+                  disabled={!prompt.trim() && imageAttachments.images.length === 0}
                   onClick={() => void sendPrompt("steer")}
                 >
                   Steer
@@ -270,7 +326,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   type={isWorking ? "button" : "submit"}
                   size="icon-sm"
                   className={`ml-auto rounded-full text-white ${isWorking ? "bg-red-600 hover:bg-red-500" : "bg-blue-600 hover:bg-blue-500"}`}
-                  disabled={isWorking ? false : !prompt.trim()}
+                  disabled={isWorking ? false : !prompt.trim() && imageAttachments.images.length === 0}
                   onClick={isWorking ? () => void abortSession() : undefined}
                   aria-label={isWorking ? "Stop Pi" : "Send prompt"}
                   title={isWorking ? "Stop Pi" : "Send prompt"}
@@ -279,7 +335,8 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 </InputGroupButton>
                 </div>
               </InputGroupAddon>
-            </InputGroup>
+              </InputGroup>
+            </div>
           </form>
           {relayStatus && (
             <p className={`mx-auto mt-2 max-w-3xl text-xs ${!state?.external || state?.relayConnected ? "text-muted-foreground" : "text-amber-600 dark:text-amber-400"}`} role="status">
