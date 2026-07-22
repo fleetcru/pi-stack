@@ -1,0 +1,3 @@
+[submodule "pi-desktop-app"]
+	path = pi-desktop-app
+	url = https://github.com/fleetcru/pi-desktop-app.git
