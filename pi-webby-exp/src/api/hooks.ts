@@ -295,6 +295,7 @@ export function useActiveSessionSocket(
       watchFiles,
       onStatusChange: setStatus,
       onEvent: (event) => {
+        if (disposed) return
         const id = event._daemonEventId
         if (typeof id === "number") {
           if (seenEventIdsRef.current.has(id)) return
@@ -322,12 +323,13 @@ export function useActiveSessionSocket(
         })
       },
       onGap: (expectedAfter, received) => {
+        if (disposed) return
         setError(new Error(`Session event history gap detected (${expectedAfter} → ${received}); resynchronizing conversation`))
         void queryClient.invalidateQueries({
           queryKey: ["pi-server", client.baseUrl, "sessions", activeSessionId, "history"],
         })
       },
-      onError: setError,
+      onError: (err) => { if (!disposed) setError(err) },
     })
     socketRef.current = socket
     socket.connect()
