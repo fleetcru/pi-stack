@@ -42,7 +42,12 @@ fun SessionListItem(
   val sessionShape = RoundedCornerShape(16.dp)
   val displayTitle = session.title ?: session.project ?: session.cwd ?: session.id
   val displayProject = session.project ?: session.cwd ?: ""
-  val displayStatus = session.status ?: "Unknown"
+  // Extract granular runtime state from session.state if available
+  val runtimeState = (session.state?.get("runtimeStatus") as? kotlinx.serialization.json.JsonObject)
+    ?.get("state")?.toString()?.trim('"')
+  val runtimeDetail = (session.state?.get("runtimeStatus") as? kotlinx.serialization.json.JsonObject)
+    ?.get("detail")?.toString()?.trim('"')
+  val effectiveStatus = runtimeState ?: session.status ?: "unknown"
 
   with(sharedTransitionScope) {
     Surface(
@@ -100,10 +105,18 @@ fun SessionListItem(
               overflow = TextOverflow.Ellipsis,
               modifier = Modifier.weight(1f, fill = false),
             )
-            StatusPill(displayStatus)
+            StatusPill(effectiveStatus)
           }
 
-          if (displayProject.isNotEmpty()) {
+          if (runtimeDetail != null && runtimeState != "idle" && runtimeState != "created") {
+            Text(
+              text = runtimeDetail,
+              style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+              maxLines = 1,
+              overflow = TextOverflow.Ellipsis,
+            )
+          } else if (displayProject.isNotEmpty()) {
             Text(
               text = displayProject,
               style = MaterialTheme.typography.bodySmall,

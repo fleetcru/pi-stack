@@ -53,6 +53,7 @@ data class ServerSession(
   val metadata: Map<String, String> = emptyMap(),
   val createdAt: String? = null,
   val updatedAt: String? = null,
+  val state: Map<String, kotlinx.serialization.json.JsonElement>? = null,
 )
 
 @Serializable

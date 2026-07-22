@@ -43,6 +43,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { cn } from "@/lib/utils"
 import { useAppStore } from "@/state/app-store"
 
+type SessionStatus = "working" | "waiting" | "active" | "idle" | "reconnecting" | "error"
+
 type TreeNodeProps = {
   children: ReactNode
   depth?: number
@@ -51,7 +53,7 @@ type TreeNodeProps = {
   label: string
   onClick?: () => void
   selected?: boolean
-  status?: "active" | "idle" | "error"
+  status?: SessionStatus
   badge?: string
 }
 
@@ -874,7 +876,19 @@ function SessionLeaf({
           {pinned && <Star className="mr-0.5 inline size-3 shrink-0 fill-amber-400 text-amber-400" />}
           {label}
         </span>
-        <StatusDot status={sessionStatus(session.status)} />
+        <StatusDot status={sessionStatus(session.status, (session.state?.runtimeStatus as { state?: string } | undefined)?.state)} />
+      </button>
+      {/* Status detail label */}
+      {(() => {
+        const rt = session.state?.runtimeStatus as { state?: string; detail?: string } | undefined
+        if (!rt || rt.state === "idle" || rt.state === "created") return null
+        const detail = rt.detail || rt.state
+        return (
+          <div className="flex h-5 w-full items-center pl-14 pr-2">
+            <span className="truncate text-[10px] text-muted-foreground/70">{detail}</span>
+          </div>
+        )
+      })()}
       </button>
       {/* Pin/unpin on hover */}
       <button
@@ -933,15 +947,18 @@ function TreeNode({
   )
 }
 
-function StatusDot({ status }: { status: "active" | "idle" | "error" }) {
+function StatusDot({ status }: { status: SessionStatus }) {
   return (
     <span
       aria-label={status}
       title={status}
       className={cn(
         "size-[7px] shrink-0 rounded-full ring-1 ring-inset ring-background",
+        status === "working" && "bg-emerald-500 animate-pulse",
+        status === "waiting" && "bg-amber-400 animate-pulse",
         status === "active" && "bg-emerald-500",
-        status === "idle" && "bg-amber-400",
+        status === "idle" && "bg-muted-foreground/40",
+        status === "reconnecting" && "bg-blue-400 animate-pulse",
         status === "error" && "bg-destructive"
       )}
     />
@@ -1034,10 +1051,22 @@ function folderName(path?: string): string | undefined {
   return parts.at(-1)
 }
 
-function sessionStatus(status?: string): "active" | "idle" | "error" {
-  if (["running", "starting", "working", "waiting_for_input", "reconnecting"].includes(status ?? "")) return "active"
-  if (["error", "failed", "stopped"].includes(status ?? "")) return "error"
-  return "idle"
+function sessionStatus(status?: string, runtimeState?: string): SessionStatus {
+  // Use runtimeState for more granular status when available
+  const state = runtimeState ?? status
+  switch (state) {
+    case "working": return "working"
+    case "waiting_for_input": return "waiting"
+    case "starting":
+    case "reconnecting": return "reconnecting"
+    case "error":
+    case "failed":
+    case "stopped": return "error"
+    case "running": return "active"
+    case "idle":
+    case "created":
+    default: return "idle"
+  }
 }
 
 function relativeTime(dateStr?: string): string {
