@@ -674,10 +674,19 @@ function GlobalSessionList({
   sessions: Array<{ id: string; workerId: string; session: { id: string; title?: string; project?: string; status?: string } }>
   onOpen: (id: string) => void
 }) {
+  const [expanded, setExpanded] = useState(false)
+
   return (
     <div className="mt-3 border-t border-border/60 pt-2">
-      <p className="px-2 py-1 text-[10px] font-medium tracking-[0.14em] text-muted-foreground uppercase">Global sessions</p>
-      {sessions.map((global) => (
+      <button
+        type="button"
+        onClick={() => setExpanded((prev) => !prev)}
+        className="flex w-full items-center gap-1 px-2 py-1 text-left text-[10px] font-medium tracking-[0.14em] text-muted-foreground uppercase hover:text-sidebar-foreground"
+      >
+        {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+        Global sessions ({sessions.length})
+      </button>
+      {expanded && sessions.map((global) => (
         <button
           key={global.id}
           type="button"
