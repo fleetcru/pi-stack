@@ -8,7 +8,7 @@ A multi-device coding agent ecosystem for [Pi](https://github.com/earendil-works
 |---|---|---|
 | **pi-server** | Go | HTTP/WebSocket hub that supervises Pi processes, proxies workers, and relays TUI sessions |
 | **pi-webby** | React + TypeScript + Vite | Browser client for creating, monitoring, and chatting with Pi sessions |
-| **pi-desktop** | React + TypeScript + Vite + Electron | Desktop app with native OS integration, image attachments, and offline support |
+| **pi-desktop** | Tauri v2 + React + TypeScript | Desktop app with native OS integration, image attachments, and offline support |
 | **pi-companion** | Kotlin + Jetpack Compose | Android client with camera attachments, mobile UX, and real-time session status |
 
 ## Architecture
@@ -218,10 +218,9 @@ pi-stack/
 │   ├── src/api/        # Server client, WebSocket, hooks
 │   ├── src/components/ # UI components
 │   └── src/state/      # Zustand store
-├── pi-desktop/         # Electron desktop app (React + TypeScript)
-│   ├── src/api/        # Shared API client with pi-webby
-│   ├── src/components/ # Native desktop UI
-│   └── src/hooks/      # Desktop-specific hooks (image attachments, etc.)
+├── pi-desktop-app/     # Tauri v2 desktop app
+│   ├── src/            # React frontend (shared components with pi-webby)
+│   └── src-tauri/      # Rust backend for native OS integration
 ├── pi-companion/       # Android Kotlin/Compose client
 │   └── app/src/main/java/
 │       ├── data/api/       # HTTP client

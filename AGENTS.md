@@ -108,14 +108,14 @@ cd pi-companion-exp
 ./gradlew :app:testDebugUnitTest
 ```
 
-### pi-desktop (Electron)
+### pi-desktop (Tauri)
 
-**Path:** `pi-desktop/` · **Stack:** React, TypeScript, Vite, Electron
+**Path:** `pi-desktop-app/` · **Stack:** Tauri v2, React, TypeScript, Vite
 
-Desktop client with native OS integration. Shares API client and components with pi-webby.
+Desktop client with native OS integration via Tauri. Shares API client and components with pi-webby.
 
 ```bash
-cd pi-desktop
+cd pi-desktop-app
 pnpm install
 pnpm dev
 pnpm build
