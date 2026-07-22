@@ -7,7 +7,7 @@ This repository contains three projects forming a multi-device Pi coding-agent e
 ```
 ┌─────────────┐     ┌─────────────┐     ┌──────────────┐     ┌──────────────┐
 │   Webby     │────▶│             │◀────│   Desktop    │     │  Companion   │
-│  (browser)  │ WS  │             │ WS  │   (Electron) │     │  (Android)   │
+│  (browser)  │ WS  │             │ WS  │   (Tauri)   │     │  (Android)   │
 └─────────────┘     │             │     └──────────────┘     └──────────────┘
                     │   ┌─────┐   │                             ▲
                     │   │ Pi  │   │◀──── Pi TUI (via relay)─────┘

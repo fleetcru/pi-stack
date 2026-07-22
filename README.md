@@ -16,7 +16,7 @@ A multi-device coding agent ecosystem for [Pi](https://github.com/earendil-works
 ```
 ┌─────────────┐     ┌─────────────┐     ┌──────────────┐     ┌──────────────┐
 │   Webby     │────▶│             │◀────│   Desktop    │     │  Companion   │
-│  (browser)  │ WS  │             │ WS  │   (Electron) │     │  (Android)   │
+│  (browser)  │ WS  │             │ WS  │   (Tauri)   │     │  (Android)   │
 └─────────────┘     │             │     └──────────────┘     └──────────────┘
                     │   ┌─────┐   │                             ▲
                     │   │ Pi  │   │◀──── Pi TUI (via relay)─────┘
