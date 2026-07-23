@@ -83,6 +83,7 @@ func (p *PiProcess) Start(_ context.Context) error {
 		return errors.New("session closed")
 	}
 	p.setRuntimeLocked("starting", "process", "Starting Pi")
+	p.emitRuntimeStateLocked()
 	args := append([]string{"--mode", "rpc"}, p.spec.Args...)
 	for _, extension := range p.cfg.Extensions {
 		if extension != "" {
@@ -111,6 +112,7 @@ func (p *PiProcess) Start(_ context.Context) error {
 	}
 	p.cmd, p.stdin, p.running, p.done = cmd, stdin, true, make(chan struct{})
 	p.setRuntimeLocked("idle", "process", "Ready")
+	p.emitRuntimeStateLocked()
 	go p.readStdout(stdout)
 	go p.readStderr(stderr)
 	go p.wait(cmd)
@@ -322,8 +324,10 @@ func (p *PiProcess) wait(cmd *exec.Cmd) {
 		p.running = false
 		if p.spec.Restart && !p.closed && p.restarts < p.cfg.RestartMax {
 			p.setRuntimeLocked("reconnecting", "process", "Restarting Pi")
+			p.emitRuntimeStateLocked()
 		} else {
 			p.setRuntimeLocked("stopped", "process", "Pi process stopped")
+			p.emitRuntimeStateLocked()
 		}
 		p.stdin = nil
 		p.cmd = nil
@@ -376,7 +380,10 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 		}
 	}
 	p.mu.Lock()
+	oldState := p.runtimeState
+	oldReason := p.runtimeReason
 	p.updateRuntimeFromEventLocked(ev)
+	stateChanged := p.runtimeState != oldState || p.runtimeReason != oldReason
 	p.eventSeq++
 	id := p.eventSeq
 	// Retaining full Pi events is optional replay convenience, so account for
@@ -410,6 +417,28 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 			p.logger.Warn("dropping event for slow subscriber")
 		}
 	}
+	// Emit a synthetic runtime_state event when the process state transitions.
+	// This lets clients derive live status from WS events without HTTP polling.
+	if stateChanged {
+		p.mu.RLock()
+		rtState := p.runtimeState
+		rtReason := p.runtimeReason
+		rtDetail := p.runtimeDetail
+		rtSince := p.runtimeSince
+		rtError := p.runtimeError
+		p.mu.RUnlock()
+		rtEvent := RPCEvent{
+			"type":          "runtime_state",
+			"runtimeState":  rtState,
+			"runtimeReason": rtReason,
+			"runtimeDetail": rtDetail,
+			"runtimeSince":  rtSince,
+		}
+		if rtError != "" {
+			rtEvent["runtimeError"] = rtError
+		}
+		p.dispatch(rtEvent)
+	}
 	// Invalidate history cache when a message ends so REST requests return
 	// fresh data instead of stale cached responses.
 	if ev["type"] == "message_end" && p.onMessageEnd != nil {
@@ -422,6 +451,29 @@ func (p *PiProcess) setRuntimeLocked(state, reason, detail string) {
 		p.runtimeState, p.runtimeReason, p.runtimeDetail = state, reason, detail
 		p.runtimeSince = time.Now().UTC()
 	}
+}
+
+// emitRuntimeStateLocked broadcasts the current runtime state to WS subscribers
+// and the event ring. Called from Start()/wait() which bypass dispatch().
+// Caller must hold p.mu (write lock). Reads state under the held lock,
+// then schedules dispatch() in a goroutine so it can re-acquire the lock
+// after the caller releases it.
+func (p *PiProcess) emitRuntimeStateLocked() {
+	// Capture state while the caller still holds the write lock.
+	event := RPCEvent{
+		"type":          "runtime_state",
+		"runtimeState":  p.runtimeState,
+		"runtimeReason": p.runtimeReason,
+		"runtimeDetail": p.runtimeDetail,
+		"runtimeSince":  p.runtimeSince,
+	}
+	if p.runtimeError != "" {
+		event["runtimeError"] = p.runtimeError
+	}
+	// dispatch() acquires p.mu, so schedule it to run after the caller
+	// releases the lock. The captured event values are safe to read without
+	// the lock.
+	go p.dispatch(event)
 }
 
 func (p *PiProcess) updateRuntimeFromEventLocked(ev RPCEvent) {

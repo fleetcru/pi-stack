@@ -1083,8 +1083,12 @@ function sessionStatus(status?: string, runtimeState?: string): SessionStatus {
     case "stopped": return "error"
     case "running": return "active"
     case "idle":
-    case "created":
-    default: return "idle"
+    case "created": return "idle"
+    default:
+      // Unknown states get a console warning so we can add mapping for new
+      // server states instead of silently showing idle.
+      if (state) console.warn(`[sessionStatus] unknown state: ${state}`)
+      return "idle"
   }
 }
 

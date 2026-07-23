@@ -88,12 +88,34 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const models = responseModels(modelsQuery.data)
   const state = stateQuery.data?.data as { model?: { provider?: string; id?: string }; thinkingLevel?: string; isStreaming?: boolean; external?: boolean; relayConnected?: boolean; relayLatencyMs?: number } | undefined
-  const isWorking = state?.isStreaming === true
+  // Derive live runtime state from WS events. The runtime_state event is
+  // emitted by the server whenever the process state transitions. This is
+  // more responsive than HTTP polling which freezes when WS is open.
+  const wsRuntimeState = useMemo(() => {
+    for (let i = socket.events.length - 1; i >= 0; i--) {
+      const ev = socket.events[i]
+      if (ev.type === "runtime_state") {
+        return {
+          state: ev.runtimeState as string | undefined,
+          reason: ev.runtimeReason as string | undefined,
+          detail: ev.runtimeDetail as string | undefined,
+        }
+      }
+    }
+    return undefined
+  }, [socket.events])
+  // Use WS runtime state when available (WS open), fall back to HTTP polling (WS closed).
+  const isWorking = socket.status === "open"
+    ? wsRuntimeState?.state === "working" || wsRuntimeState?.state === "starting" || wsRuntimeState?.state === "reconnecting"
+    : state?.isStreaming === true
   const relayStatus = state?.external
     ? state.relayConnected
       ? `Relay connected${typeof state.relayLatencyMs === "number" ? ` · ${state.relayLatencyMs} ms` : ""}`
       : "Relay disconnected — commands queue on the server"
     : state ? "Local RPC" : undefined
+
+  // Show runtime detail from WS events when available (e.g., "Running tool", "Generating response")
+  const runtimeDetail = socket.status === "open" ? wsRuntimeState?.detail : undefined
 
   async function abortSession() {
     try {
