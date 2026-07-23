@@ -153,6 +153,22 @@ func (s *Server) openMachineSession(w http.ResponseWriter, r *http.Request, mach
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	// Also search the server's managed session directory. The list endpoint
+	// merges both roots, so the open endpoint must accept IDs from either.
+	managedRoot := filepath.Join(s.cfg.DataDir, "pi-sessions")
+	if managedRoot != root {
+		if managed, merr := listMachineSessions(managedRoot); merr == nil {
+			seen := make(map[string]bool, len(items))
+			for _, it := range items {
+				seen[it.ID] = true
+			}
+			for _, it := range managed {
+				if !seen[it.ID] {
+					items = append(items, it)
+				}
+			}
+		}
+	}
 	var found *MachineSession
 	for i := range items {
 		if items[i].ID == machineID {
@@ -165,7 +181,9 @@ func (s *Server) openMachineSession(w http.ResponseWriter, r *http.Request, mach
 		return
 	}
 	// Reopening from Webby or Companion must not start another Pi process for
-	// the same persisted JSONL session. Return the live server session instead.
+	// the same persisted JSONL session. Return the existing server session
+	// instead — even when stopped. The client connects via WS and the Pi
+	// process auto-starts lazily on the first RPC request.
 	for _, spec := range s.sessions.ListSpecs() {
 		// Match by explicit --session path or by managed session directory.
 		// Managed sessions use --session-dir instead of --session, so check both.
@@ -178,12 +196,8 @@ func (s *Server) openMachineSession(w http.ResponseWriter, r *http.Request, mach
 		if !matched {
 			continue
 		}
-		if process, ok := s.sessions.Get(spec.ID); ok {
-			if running, _ := process.Status()["running"].(bool); running {
-				writeJSON(w, http.StatusOK, map[string]any{"id": spec.ID, "machineSessionId": found.ID, "cwd": spec.CWD, "ws": "/v1/sessions/" + spec.ID + "/ws"})
-				return
-			}
-		}
+		writeJSON(w, http.StatusOK, map[string]any{"id": spec.ID, "machineSessionId": found.ID, "cwd": spec.CWD, "ws": "/v1/sessions/" + spec.ID + "/ws"})
+		return
 	}
 	if info, err := os.Stat(found.CWD); err != nil || !info.IsDir() {
 		writeErrorText(w, http.StatusBadRequest, "machine session working directory is unavailable")

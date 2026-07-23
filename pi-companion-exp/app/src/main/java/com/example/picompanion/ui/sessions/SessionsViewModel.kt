@@ -101,12 +101,19 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
     }
   }
 
+  private val _actionError = MutableStateFlow<String?>(null)
+  val actionError: StateFlow<String?> = _actionError.asStateFlow()
+
+  fun clearActionError() {
+    _actionError.value = null
+  }
+
   fun openMachineSession(machineId: String) {
     viewModelScope.launch {
       val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
       when (val result = kotlinx.coroutines.withContext(Dispatchers.IO) { client.openMachineSession(server, machineId) }) {
         is HttpResult.Success -> _createdSessionId.value = result.value.id
-        is HttpResult.Failure -> refresh()
+        is HttpResult.Failure -> _actionError.value = "Could not open session: ${result.userMessage}"
       }
     }
   }
@@ -116,7 +123,7 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
       val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
       when (val result = kotlinx.coroutines.withContext(Dispatchers.IO) { client.attachGlobalSession(server, globalId) }) {
         is HttpResult.Success -> _createdSessionId.value = result.value.id
-        is HttpResult.Failure -> refresh()
+        is HttpResult.Failure -> _actionError.value = "Could not attach session: ${result.userMessage}"
       }
     }
   }

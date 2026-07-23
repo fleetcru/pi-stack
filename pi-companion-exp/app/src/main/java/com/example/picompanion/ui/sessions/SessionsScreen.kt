@@ -68,6 +68,7 @@ fun SessionsScreen(
 ) {
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
   val createdSessionId by viewModel.createdSessionId.collectAsStateWithLifecycle()
+  val actionError by viewModel.actionError.collectAsStateWithLifecycle()
   val settings by settingsViewModel.settings.collectAsStateWithLifecycle()
   var searchQuery by remember { mutableStateOf("") }
   var showBrowser by remember { mutableStateOf(false) }
@@ -80,6 +81,18 @@ fun SessionsScreen(
       onSessionClick(id)
       viewModel.clearCreatedSession()
     }
+  }
+
+  // Surface open/attach failures instead of silently refreshing
+  actionError?.let { message ->
+    AlertDialog(
+      onDismissRequest = { viewModel.clearActionError() },
+      title = { Text("Session unavailable") },
+      text = { Text(message) },
+      confirmButton = {
+        TextButton(onClick = { viewModel.clearActionError() }) { Text("OK") }
+      },
+    )
   }
 
   Column(
