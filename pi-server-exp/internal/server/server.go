@@ -32,6 +32,7 @@ type Server struct {
 	pendingTitleMu sync.Mutex
 	pendingTitle   map[string]bool
 	stopHeartbeat  chan struct{}
+	sessionBridge  *SessionBridge
 }
 
 func New(cfg Config, logger *slog.Logger) *Server {
@@ -61,6 +62,19 @@ func New(cfg Config, logger *slog.Logger) *Server {
 			_ = s.sessions.Delete(spec.ID)
 		}
 	}
+	// Re-link managed sessions to Pi's native session store after restart.
+	// This ensures pi -r can discover sessions created via the API.
+	if s.sessionBridge != nil {
+		go func() {
+			for _, spec := range s.sessions.ListSpecs() {
+				if spec.ManagedSessionDir != "" && spec.Transport == "rpc" {
+					if err := s.sessionBridge.LinkManagedSession(spec.ID, spec.ManagedSessionDir); err != nil {
+						logger.Debug("failed to re-link managed session", "id", spec.ID, "error", err)
+					}
+				}
+			}
+		}()
+	}
 	if err := s.workers.Load(); err != nil {
 		logger.Warn("failed to load worker registry", "error", err)
 	}
@@ -82,6 +96,12 @@ func New(cfg Config, logger *slog.Logger) *Server {
 			// Match HTTP CORS: exact origin or equivalent loopback host.
 			return originAllowed(origin, cfg.AllowedOrigins)
 		},
+	}
+	// Initialize session bridge for pi -r compatibility
+	if bridge, err := NewSessionBridge(logger); err != nil {
+		logger.Warn("session bridge disabled", "error", err)
+	} else {
+		s.sessionBridge = bridge
 	}
 	s.httpSrv = &http.Server{
 		Addr:              cfg.Addr,

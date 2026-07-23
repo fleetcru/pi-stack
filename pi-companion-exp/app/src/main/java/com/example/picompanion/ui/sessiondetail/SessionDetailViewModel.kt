@@ -292,8 +292,14 @@ class SessionDetailViewModel(
     if (closed || reconnectJob?.isActive == true) return
     val server = activeServer ?: return
     reconnectJob = viewModelScope.launch {
-      val delays = longArrayOf(1_000, 2_000, 5_000, 10_000)
-      if (!immediate) delay(delays[reconnectAttempt.coerceAtMost(delays.lastIndex)])
+      val baseDelays = longArrayOf(1_000, 2_000, 5_000, 10_000, 15_000, 30_000)
+      if (!immediate) {
+        val base = baseDelays[reconnectAttempt.coerceAtMost(baseDelays.lastIndex)]
+        // Add ±20% jitter to prevent thundering-herd when multiple clients
+        // reconnect simultaneously after an outage.
+        val jitter = (base * 0.2 * (Math.random() * 2 - 1)).toLong()
+        delay((base + jitter).coerceAtLeast(500))
+      }
       reconnectAttempt++
       _connectionState.value = ConnectionState.Connecting
       // Replay missed events immediately. Do not block reconnection on a full
@@ -321,6 +327,13 @@ class SessionDetailViewModel(
         if (role == "user") {
           // User sent a prompt from the TUI — show it in the timeline
           val text = message?.findText()?.takeIf { it.isNotBlank() } ?: return
+          // Deduplicate against the optimistic insert from sendPrompt().
+          // The WS echo arrives with a server timestamp while the optimistic
+          // item uses "now"; text comparison avoids showing the same message twice.
+          if (text == lastSentPrompt) {
+            lastSentPrompt = null
+            return
+          }
           SessionTimelineItem.Chat(
             author = "You",
             text = text,

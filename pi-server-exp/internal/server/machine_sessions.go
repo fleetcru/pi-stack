@@ -115,7 +115,27 @@ func (s *Server) listMachineSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"root": root, "sessions": items})
+	// Also include sessions from the server's managed session directory.
+	// Sessions created via the web/companion API use --session-dir pointing
+	// to {DataDir}/pi-sessions/{id}/ instead of ~/.pi/agent/sessions/.
+	// Without this, those sessions are invisible to pi -r and this API.
+	managedRoot := filepath.Join(s.cfg.DataDir, "pi-sessions")
+	if managedRoot != root {
+		managed, err := listMachineSessions(managedRoot)
+		if err == nil {
+			// Deduplicate: prefer the Pi-native entry if both exist.
+			seen := make(map[string]bool, len(items))
+			for _, it := range items {
+				seen[it.ID] = true
+			}
+			for _, it := range managed {
+				if !seen[it.ID] {
+					items = append(items, it)
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"root": root, "managedRoot": managedRoot, "sessions": items})
 }
 
 func (s *Server) openMachineSession(w http.ResponseWriter, r *http.Request, machineID string) {
@@ -147,7 +167,15 @@ func (s *Server) openMachineSession(w http.ResponseWriter, r *http.Request, mach
 	// Reopening from Webby or Companion must not start another Pi process for
 	// the same persisted JSONL session. Return the live server session instead.
 	for _, spec := range s.sessions.ListSpecs() {
-		if spec.SessionPath != found.Path {
+		// Match by explicit --session path or by managed session directory.
+		// Managed sessions use --session-dir instead of --session, so check both.
+		matched := spec.SessionPath == found.Path
+		if !matched && spec.ManagedSessionDir != "" {
+			// The found.Path is a JSONL file inside the managed directory.
+			managedDir := filepath.Dir(found.Path)
+			matched = spec.ManagedSessionDir == managedDir || spec.ManagedSessionDir == found.Path
+		}
+		if !matched {
 			continue
 		}
 		if process, ok := s.sessions.Get(spec.ID); ok {

@@ -42,9 +42,9 @@ class SessionEventSocket(
   @Volatile private var resynchronizing = false
   // LinkedHashMap for O(1) add/contains and O(1) eviction of oldest entries.
   // All access is synchronized to prevent races between add and size check.
-  private val seenEventIds = object : LinkedHashMap<Long, Boolean>(512) {
+  private val seenEventIds = object : LinkedHashMap<Long, Boolean>(1024) {
     override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Boolean>?): Boolean {
-      return size > 2_000
+      return size > 10_000
     }
   }
 

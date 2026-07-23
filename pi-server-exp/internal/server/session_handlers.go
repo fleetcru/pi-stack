@@ -60,6 +60,14 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Bridge managed session to Pi's native session store so pi -r can discover it.
+	if s.sessionBridge != nil && spec.ManagedSessionDir != "" {
+		go func() {
+			if err := s.sessionBridge.LinkManagedSession(spec.ID, spec.ManagedSessionDir); err != nil {
+				s.logger.Warn("failed to bridge session to pi -r", "session", spec.ID, "error", err)
+			}
+		}()
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": spec.ID, "cwd": spec.CWD, "args": spec.Args, "managed": true, "status": "running", "ws": "/v1/sessions/" + spec.ID + "/ws"})
 }
 
@@ -94,6 +102,10 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	if err := s.sessions.Delete(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
+	}
+	// Remove session bridge symlink from Pi's native session store.
+	if s.sessionBridge != nil {
+		s.sessionBridge.UnlinkManagedSession(id)
 	}
 	if err := s.removeManagedSessionDir(spec.ManagedSessionDir); err != nil {
 		// The daemon record is already gone. Keep deletion successful while
