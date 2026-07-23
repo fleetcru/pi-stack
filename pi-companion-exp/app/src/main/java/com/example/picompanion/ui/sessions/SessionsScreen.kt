@@ -2,6 +2,9 @@ package com.example.picompanion.ui.sessions
 
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,20 +18,24 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -41,11 +48,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.picompanion.data.model.ServerSession
 import com.example.picompanion.ui.components.DirectoryBrowserSheet
+import com.example.picompanion.ui.components.StatusPill
 import com.example.picompanion.ui.settings.SettingsViewModel
 
 @Composable
@@ -188,41 +197,136 @@ fun SessionsScreen(
       }
 
       is SessionsUiState.Content -> {
-        val filteredSessions = remember(searchQuery, state.sessions) {
-          if (searchQuery.isBlank()) state.sessions
-          else state.sessions.filter {
-            (it.title?.contains(searchQuery, ignoreCase = true) == true) ||
-              (it.project?.contains(searchQuery, ignoreCase = true) == true) ||
-              (it.status?.contains(searchQuery, ignoreCase = true) == true) ||
-              it.id.contains(searchQuery, ignoreCase = true)
+        val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
+
+        // Tab row
+        Row(
+          Modifier
+            .fillMaxWidth()
+            .padding(bottom = 4.dp),
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          FilterChip(
+            selected = selectedTab == SessionTab.Active,
+            onClick = { viewModel.selectTab(SessionTab.Active) },
+            label = { Text("Active (${state.activeSessions.size})") },
+          )
+          FilterChip(
+            selected = selectedTab == SessionTab.Machine,
+            onClick = { viewModel.selectTab(SessionTab.Machine) },
+            label = { Text("Local (${state.machineSessions.size})") },
+          )
+          if (state.globalSessions.isNotEmpty()) {
+            FilterChip(
+              selected = selectedTab == SessionTab.Global,
+              onClick = { viewModel.selectTab(SessionTab.Global) },
+              label = { Text("Global (${state.globalSessions.size})") },
+            )
           }
         }
 
-        if (filteredSessions.isEmpty() && searchQuery.isNotBlank()) {
-          Box(Modifier.fillMaxWidth().padding(top = 40.dp), contentAlignment = Alignment.Center) {
-            Text(
-              "No matches for \"$searchQuery\"",
-              style = MaterialTheme.typography.bodyMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          }
-        } else {
-          LazyColumn(
-            modifier = Modifier
-              .fillMaxWidth()
-              .weight(1f)
-              .padding(top = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-          ) {
-            items(filteredSessions, key = { it.id }, contentType = { "session_item" }) { session ->
-              SessionListItem(
-                session = session,
-                isSelected = false,
-                onClick = { onSessionClick(session.id) },
-                onLongClick = { actionSession = session },
-                sharedTransitionScope = sharedTransitionScope,
-                animatedVisibilityScope = animatedVisibilityScope,
+        when (selectedTab) {
+          SessionTab.Active -> {
+            val filteredSessions = remember(searchQuery, state.activeSessions) {
+              if (searchQuery.isBlank()) state.activeSessions
+              else state.activeSessions.filter {
+                (it.title?.contains(searchQuery, ignoreCase = true) == true) ||
+                  (it.project?.contains(searchQuery, ignoreCase = true) == true) ||
+                  (it.status?.contains(searchQuery, ignoreCase = true) == true) ||
+                  it.id.contains(searchQuery, ignoreCase = true)
+              }
+            }
+
+            if (filteredSessions.isEmpty()) {
+              EmptySessionsMessage(
+                title = if (searchQuery.isNotBlank()) "No matches for \"$searchQuery\"" else "No active sessions",
+                subtitle = if (searchQuery.isNotBlank()) null else "Sessions created from the web or companion app appear here",
               )
+            } else {
+              LazyColumn(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .weight(1f)
+                  .padding(top = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+              ) {
+                items(filteredSessions, key = { it.id }, contentType = { "session_item" }) { session ->
+                  SessionListItem(
+                    session = session,
+                    isSelected = false,
+                    onClick = { onSessionClick(session.id) },
+                    onLongClick = { actionSession = session },
+                    sharedTransitionScope = sharedTransitionScope,
+                    animatedVisibilityScope = animatedVisibilityScope,
+                  )
+                }
+              }
+            }
+          }
+
+          SessionTab.Machine -> {
+            val filteredMachine = remember(searchQuery, state.machineSessions) {
+              if (searchQuery.isBlank()) state.machineSessions
+              else state.machineSessions.filter {
+                it.id.contains(searchQuery, ignoreCase = true) ||
+                  it.cwd.contains(searchQuery, ignoreCase = true)
+              }
+            }
+
+            if (filteredMachine.isEmpty()) {
+              EmptySessionsMessage(
+                title = if (searchQuery.isNotBlank()) "No matches for \"$searchQuery\"" else "No local sessions",
+                subtitle = if (searchQuery.isNotBlank()) null else "Sessions from ~/.pi/agent/sessions/ appear here",
+              )
+            } else {
+              LazyColumn(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .weight(1f)
+                  .padding(top = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+              ) {
+                items(filteredMachine, key = { it.id }, contentType = { "machine_item" }) { session ->
+                  MachineSessionListItem(
+                    session = session,
+                    onClick = { viewModel.openMachineSession(session.id) },
+                  )
+                }
+              }
+            }
+          }
+
+          SessionTab.Global -> {
+            val filteredGlobal = remember(searchQuery, state.globalSessions) {
+              if (searchQuery.isBlank()) state.globalSessions
+              else state.globalSessions.filter {
+                it.session.title?.contains(searchQuery, ignoreCase = true) == true ||
+                  it.session.project?.contains(searchQuery, ignoreCase = true) == true ||
+                  it.workerId.contains(searchQuery, ignoreCase = true) ||
+                  it.originId.contains(searchQuery, ignoreCase = true)
+              }
+            }
+
+            if (filteredGlobal.isEmpty()) {
+              EmptySessionsMessage(
+                title = if (searchQuery.isNotBlank()) "No matches for \"$searchQuery\"" else "No global sessions",
+                subtitle = if (searchQuery.isNotBlank()) null else "Sessions from remote workers appear here",
+              )
+            } else {
+              LazyColumn(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .weight(1f)
+                  .padding(top = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+              ) {
+                items(filteredGlobal, key = { it.id }, contentType = { "global_item" }) { session ->
+                  GlobalSessionListItem(
+                    session = session,
+                    onClick = { viewModel.attachGlobalSession(session.id) },
+                  )
+                }
+              }
             }
           }
         }
@@ -259,4 +363,166 @@ fun SessionsScreen(
       viewModel.createSession(cwd)
     },
   )
+}
+
+@Composable
+private fun EmptySessionsMessage(
+  title: String,
+  subtitle: String?,
+  modifier: Modifier = Modifier,
+) {
+  Box(
+    modifier.fillMaxWidth().padding(top = 40.dp),
+    contentAlignment = Alignment.Center,
+  ) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+      Text(
+        title,
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.SemiBold,
+      )
+      if (subtitle != null) {
+        Spacer(Modifier.height(4.dp))
+        Text(
+          subtitle,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          textAlign = TextAlign.Center,
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun MachineSessionListItem(
+  session: com.example.picompanion.data.model.MachineSession,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val sessionShape = RoundedCornerShape(16.dp)
+  Surface(
+    modifier = modifier
+      .fillMaxWidth()
+      .combinedClickable(
+        interactionSource = remember { MutableInteractionSource() },
+        indication = null,
+        onClick = onClick,
+      ),
+    shape = sessionShape,
+    color = MaterialTheme.colorScheme.surface,
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+  ) {
+    Row(
+      Modifier.padding(horizontal = 16.dp, vertical = 15.dp),
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
+      verticalAlignment = Alignment.Top,
+    ) {
+      Surface(
+        modifier = Modifier.size(40.dp),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+      ) {
+        Icon(
+          imageVector = Icons.Default.Computer,
+          contentDescription = null,
+          modifier = Modifier.padding(8.dp),
+          tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+
+      Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+          text = session.id,
+          style = MaterialTheme.typography.titleSmall,
+          fontWeight = FontWeight.Bold,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+          text = session.cwd,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        if (!session.updatedAt.isNullOrBlank()) {
+          Text(
+            text = session.updatedAt,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline,
+          )
+        }
+      }
+
+      StatusPill("local")
+    }
+  }
+}
+
+@Composable
+private fun GlobalSessionListItem(
+  session: com.example.picompanion.data.model.GlobalSession,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val sessionShape = RoundedCornerShape(16.dp)
+  val displayTitle = session.session.title ?: session.session.project ?: session.originId
+  Surface(
+    modifier = modifier
+      .fillMaxWidth()
+      .combinedClickable(
+        interactionSource = remember { MutableInteractionSource() },
+        indication = null,
+        onClick = onClick,
+      ),
+    shape = sessionShape,
+    color = MaterialTheme.colorScheme.surface,
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+  ) {
+    Row(
+      Modifier.padding(horizontal = 16.dp, vertical = 15.dp),
+      horizontalArrangement = Arrangement.spacedBy(12.dp),
+      verticalAlignment = Alignment.Top,
+    ) {
+      Surface(
+        modifier = Modifier.size(40.dp),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+      ) {
+        Icon(
+          imageVector = Icons.Default.Computer,
+          contentDescription = null,
+          modifier = Modifier.padding(8.dp),
+          tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+
+      Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+          text = displayTitle,
+          style = MaterialTheme.typography.titleSmall,
+          fontWeight = FontWeight.Bold,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+          text = "Worker: ${session.workerId}",
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+        )
+        if (!session.session.updatedAt.isNullOrBlank()) {
+          Text(
+            text = session.session.updatedAt,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline,
+          )
+        }
+      }
+
+      StatusPill(if (session.reachable) "remote" else "offline")
+    }
+  }
 }

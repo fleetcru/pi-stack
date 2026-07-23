@@ -9,6 +9,8 @@ import com.example.picompanion.data.model.CreateSessionRequest
 import com.example.picompanion.data.model.ServerSession
 import com.example.picompanion.data.repository.SessionsRepository
 import com.example.picompanion.data.settings.SettingsDataStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,8 +29,15 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
   private val _createdSessionId = MutableStateFlow<String?>(null)
   val createdSessionId: StateFlow<String?> = _createdSessionId.asStateFlow()
 
+  private val _selectedTab = MutableStateFlow(SessionTab.Active)
+  val selectedTab: StateFlow<SessionTab> = _selectedTab.asStateFlow()
+
   init {
     refresh()
+  }
+
+  fun selectTab(tab: SessionTab) {
+    _selectedTab.value = tab
   }
 
   fun refresh() {
@@ -39,18 +48,33 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
         _uiState.value = SessionsUiState.Empty
         return@launch
       }
-      when (val result = repository.listSessions()) {
-        is HttpResult.Success -> {
-          _uiState.value = if (result.value.isEmpty()) {
-            SessionsUiState.Empty
-          } else {
-            SessionsUiState.Content(result.value)
-          }
-        }
-        is HttpResult.Failure -> {
-          _uiState.value = SessionsUiState.Error(result.userMessage)
-        }
+      val server = settings.activeServer ?: return@launch
+
+      // Fetch all session types in parallel
+      val activeDeferred = async(Dispatchers.IO) { client.listSessions(server) }
+      val machineDeferred = async(Dispatchers.IO) { client.listMachineSessions(server) }
+      val globalDeferred = async(Dispatchers.IO) { client.listGlobalSessions(server) }
+
+      val activeResult = activeDeferred.await()
+      val machineResult = machineDeferred.await()
+      val globalResult = globalDeferred.await()
+
+      val activeSessions = (activeResult as? HttpResult.Success)?.value?.sessions
+        ?.sortedByDescending { it.updatedAt ?: it.createdAt ?: "" }
+        ?: emptyList()
+      val machineSessions = (machineResult as? HttpResult.Success)?.value?.sessions ?: emptyList()
+      val globalSessions = (globalResult as? HttpResult.Success)?.value?.sessions ?: emptyList()
+
+      if (activeResult is HttpResult.Failure && machineResult is HttpResult.Failure) {
+        _uiState.value = SessionsUiState.Error((activeResult as? HttpResult.Failure)?.userMessage ?: "Failed to load sessions")
+        return@launch
       }
+
+      _uiState.value = SessionsUiState.Content(
+        activeSessions = activeSessions,
+        machineSessions = machineSessions,
+        globalSessions = globalSessions,
+      )
     }
   }
 
@@ -77,14 +101,42 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
     }
   }
 
+  fun openMachineSession(machineId: String) {
+    viewModelScope.launch {
+      val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
+      when (val result = kotlinx.coroutines.withContext(Dispatchers.IO) { client.openMachineSession(server, machineId) }) {
+        is HttpResult.Success -> _createdSessionId.value = result.value.id
+        is HttpResult.Failure -> refresh()
+      }
+    }
+  }
+
+  fun attachGlobalSession(globalId: String) {
+    viewModelScope.launch {
+      val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
+      when (val result = kotlinx.coroutines.withContext(Dispatchers.IO) { client.attachGlobalSession(server, globalId) }) {
+        is HttpResult.Success -> _createdSessionId.value = result.value.id
+        is HttpResult.Failure -> refresh()
+      }
+    }
+  }
+
   fun clearCreatedSession() {
     _createdSessionId.value = null
   }
 }
 
+enum class SessionTab { Active, Machine, Global }
+
 sealed interface SessionsUiState {
   data object Loading : SessionsUiState
   data object Empty : SessionsUiState
-  data class Content(val sessions: List<ServerSession>) : SessionsUiState
+  data class Content(
+    val activeSessions: List<ServerSession>,
+    val machineSessions: List<com.example.picompanion.data.model.MachineSession>,
+    val globalSessions: List<com.example.picompanion.data.model.GlobalSession>,
+  ) : SessionsUiState {
+    val hasAnySessions: Boolean get() = activeSessions.isNotEmpty() || machineSessions.isNotEmpty() || globalSessions.isNotEmpty()
+  }
   data class Error(val message: String) : SessionsUiState
 }
