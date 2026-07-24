@@ -124,6 +124,10 @@ class PiServerClient(
     return doGet(server, "/v1/sessions/$sessionId/git/$resource", emptyMap(), JsonObject.serializer())
   }
 
+  fun writeSessionGit(server: ServerEntry, sessionId: String, action: String, body: JsonObject): HttpResult<JsonObject> {
+    return doPost(server, "/v1/sessions/$sessionId/git/$action", body.toString(), JsonObject.serializer())
+  }
+
   fun getSessionModels(server: ServerEntry, sessionId: String): HttpResult<JsonObject> =
     doGet(server, "/v1/sessions/$sessionId/models", emptyMap(), JsonObject.serializer())
 

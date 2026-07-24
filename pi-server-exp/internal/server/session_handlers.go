@@ -12,19 +12,20 @@ import (
 )
 
 type createSessionRequest struct {
-	ID          string            `json:"id"`
-	CWD         string            `json:"cwd"`
-	Args        []string          `json:"args"`
-	Env         map[string]string `json:"env"`
-	SessionPath string            `json:"sessionPath"`
-	Start       bool              `json:"start"`
-	Restart     bool              `json:"restart"`
-	Project     string            `json:"project"`
-	Title       string            `json:"title"`
-	TaskType    string            `json:"taskType"`
-	Owner       string            `json:"owner"`
-	Labels      []string          `json:"labels"`
-	Metadata    map[string]string `json:"metadata"`
+	ID           string            `json:"id"`
+	CWD          string            `json:"cwd"`
+	Args         []string          `json:"args"`
+	Env          map[string]string `json:"env"`
+	SessionPath  string            `json:"sessionPath"`
+	Start        bool              `json:"start"`
+	Restart      bool              `json:"restart"`
+	Project      string            `json:"project"`
+	Title        string            `json:"title"`
+	TaskType     string            `json:"taskType"`
+	Owner        string            `json:"owner"`
+	Labels       []string          `json:"labels"`
+	Metadata     map[string]string `json:"metadata"`
+	WorktreePath string            `json:"worktreePath"`
 }
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +144,14 @@ func (s *Server) buildSessionSpec(req createSessionRequest) (SessionSpec, error)
 	if err != nil {
 		return SessionSpec{}, err
 	}
+	worktreePath := ""
+	if req.WorktreePath != "" {
+		worktreePath, err = s.validateWorktreePath(cwd, req.WorktreePath, true)
+		if err != nil {
+			return SessionSpec{}, err
+		}
+		cwd = worktreePath
+	}
 	id := req.ID
 	if id == "" {
 		id = NewSessionID()
@@ -160,7 +169,7 @@ func (s *Server) buildSessionSpec(req createSessionRequest) (SessionSpec, error)
 		managedSessionDir = filepath.Join(s.cfg.DataDir, "pi-sessions", id)
 		args = append(args, "--session-dir", managedSessionDir)
 	}
-	return SessionSpec{ID: id, CWD: cwd, Args: args, Env: req.Env, SessionPath: req.SessionPath, ManagedSessionDir: managedSessionDir, Managed: true, Transport: "rpc", Restart: req.Restart, Status: "created", Project: req.Project, Title: req.Title, TaskType: req.TaskType, Owner: req.Owner, Labels: req.Labels, Metadata: req.Metadata}, nil
+	return SessionSpec{ID: id, CWD: cwd, Args: args, Env: req.Env, SessionPath: req.SessionPath, ManagedSessionDir: managedSessionDir, WorktreePath: worktreePath, Managed: true, Transport: "rpc", Restart: req.Restart, Status: "created", Project: req.Project, Title: req.Title, TaskType: req.TaskType, Owner: req.Owner, Labels: req.Labels, Metadata: req.Metadata}, nil
 }
 
 func (s *Server) getSession(id string) (*PiProcess, bool) {

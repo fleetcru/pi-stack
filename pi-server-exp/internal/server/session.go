@@ -28,15 +28,16 @@ type SessionSpec struct {
 	Owner             string            `json:"owner,omitempty"`
 	Labels            []string          `json:"labels,omitempty"`
 	Metadata          map[string]string `json:"metadata,omitempty"`
+	WorktreePath      string            `json:"worktreePath,omitempty"`
 	CreatedAt         time.Time         `json:"createdAt"`
 	UpdatedAt         time.Time         `json:"updatedAt"`
 }
 
 type SessionRegistry struct {
-	mu         sync.RWMutex
-	path       string
-	sessions   map[string]*PiProcess
-	specs      map[string]SessionSpec
+	mu          sync.RWMutex
+	path        string
+	sessions    map[string]*PiProcess
+	specs       map[string]SessionSpec
 	maxSessions int
 }
 

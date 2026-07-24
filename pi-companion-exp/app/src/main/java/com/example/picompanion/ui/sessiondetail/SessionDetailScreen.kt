@@ -55,6 +55,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import java.io.File
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.picompanion.data.model.ServerSession
@@ -222,6 +224,7 @@ fun SessionDetailScreen(
         onSaveMetadata = viewModel::updateMetadata,
         onAction = viewModel::runSessionAction,
         onGit = viewModel::showGit,
+        onGitWrite = { action, body -> viewModel.writeGit(action, Json.parseToJsonElement(body).jsonObject) },
       )
     }
 

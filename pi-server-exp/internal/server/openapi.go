@@ -42,7 +42,7 @@ func schemas() map[string]any {
 			"env":         map[string]any{"type": "object", "additionalProperties": str()},
 			"sessionPath": str(), "managed": schemaBool(), "transport": str(), "restart": schemaBool(), "status": str(),
 			"project": str(), "title": str(), "taskType": str(), "owner": str(),
-			"labels": arr(str()), "metadata": map[string]any{"type": "object", "additionalProperties": str()},
+			"labels": arr(str()), "metadata": map[string]any{"type": "object", "additionalProperties": str()}, "worktreePath": str(),
 			"createdAt": str(), "updatedAt": str(),
 		}, "id", "cwd"),
 		"SessionSummary": obj(map[string]any{
@@ -53,7 +53,7 @@ func schemas() map[string]any {
 		"CreateSessionRequest": obj(map[string]any{
 			"id": str(), "cwd": str(), "args": arr(str()),
 			"env":         map[string]any{"type": "object", "additionalProperties": str()},
-			"sessionPath": str(), "start": schemaBool(), "restart": schemaBool(),
+			"sessionPath": str(), "start": schemaBool(), "restart": schemaBool(), "worktreePath": str(),
 			"project": str(), "title": str(), "taskType": str(), "owner": str(),
 			"labels": arr(str()), "metadata": map[string]any{"type": "object", "additionalProperties": str()},
 		}),
@@ -69,6 +69,8 @@ func schemas() map[string]any {
 		"GitBranch":             obj(map[string]any{"name": str(), "current": schemaBool(), "remote": str()}, "name", "current"),
 		"GitWorktree":           obj(map[string]any{"path": str(), "head": str(), "branch": str(), "detached": schemaBool()}, "path", "head", "detached"),
 		"GitWorktreeRequest":    obj(map[string]any{"path": str(), "branch": str(), "startPoint": str()}, "path"),
+		"GitCommitRequest":      obj(map[string]any{"message": str(), "stageAll": schemaBool()}, "message"),
+		"GitMergeRequest":       obj(map[string]any{"branch": str()}, "branch"),
 		"BashRequest":           obj(map[string]any{"command": str()}, "command"),
 		"ModelRequest":          obj(map[string]any{"provider": str(), "modelId": str()}, "provider", "modelId"),
 		"ThinkingRequest":       obj(map[string]any{"level": str()}, "level"),
@@ -118,6 +120,8 @@ func paths() map[string]any {
 		"post":   op("Create Git worktree", "RPCResponse", "GitWorktreeRequest"),
 		"delete": op("Remove Git worktree", "RPCResponse", "GitWorktreeRequest"),
 	}
+	post("/v1/sessions/{id}/git/commit", "Create a Git commit", "GitCommitRequest")
+	post("/v1/sessions/{id}/git/merge", "Merge a Git branch", "GitMergeRequest")
 	get("/v1/files/tree", "List directory tree")
 	for _, x := range []string{"state", "messages", "stats", "models", "commands", "entries", "tree", "last-assistant-text", "fork-messages", "daemon-status", "events"} {
 		get("/v1/sessions/{id}/"+x, "Pi RPC "+x)

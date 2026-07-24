@@ -783,6 +783,16 @@ class SessionDetailViewModel(
     _gitOutput.value = null
   }
 
+  fun writeGit(action: String, body: JsonObject) {
+    val server = activeServer ?: return
+    viewModelScope.launch {
+      when (val result = withContext(Dispatchers.IO) { client.writeSessionGit(server, sessionId, action, body) }) {
+        is com.example.picompanion.data.api.HttpResult.Success -> _gitOutput.value = action.replaceFirstChar { it.uppercase() } to (result.value["output"]?.toString()?.trim('"') ?: "Completed")
+        is com.example.picompanion.data.api.HttpResult.Failure -> _gitOutput.value = "Git error" to result.userMessage
+      }
+    }
+  }
+
   /** Hides a replayed/stale extension request without sending an approval. */
   fun ignoreExtensionRequest() {
     _extensionRequest.value = null

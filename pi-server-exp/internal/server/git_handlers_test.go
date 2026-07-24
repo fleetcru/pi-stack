@@ -97,6 +97,36 @@ func TestGitWorktreeLifecycle(t *testing.T) {
 	}
 }
 
+func TestGitCommitAndMerge(t *testing.T) {
+	cwd := gitTestRepo(t)
+	s := New(Config{RequestTimeout: time.Second, DataDir: t.TempDir(), AllowedRoots: []string{cwd}}, testLogger())
+	if _, err := s.sessions.RegisterSpec(SessionSpec{ID: "test", CWD: cwd, Transport: "rpc"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "feature.txt"), []byte("feature\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	commitReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/test/git/commit", strings.NewReader(`{"message":"add feature","stageAll":true}`))
+	commitRec := httptest.NewRecorder()
+	s.gitHandler(commitRec, commitReq)
+	if commitRec.Code != http.StatusOK {
+		t.Fatalf("commit code: %d %s", commitRec.Code, commitRec.Body.String())
+	}
+	for _, args := range [][]string{{"checkout", "-b", "feature"}, {"checkout", "main"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = cwd
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	mergeReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/test/git/merge", strings.NewReader(`{"branch":"feature"}`))
+	mergeRec := httptest.NewRecorder()
+	s.gitHandler(mergeRec, mergeReq)
+	if mergeRec.Code != http.StatusOK {
+		t.Fatalf("merge code: %d %s", mergeRec.Code, mergeRec.Body.String())
+	}
+}
+
 func TestRunGitStatus(t *testing.T) {
 	cwd := t.TempDir()
 	for _, args := range [][]string{{"init"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "Test"}} {

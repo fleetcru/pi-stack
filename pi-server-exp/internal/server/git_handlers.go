@@ -42,6 +42,15 @@ type gitWorktreeRequest struct {
 	StartPoint string `json:"startPoint"`
 }
 
+type gitCommitRequest struct {
+	Message  string `json:"message"`
+	StageAll bool   `json:"stageAll"`
+}
+
+type gitMergeRequest struct {
+	Branch string `json:"branch"`
+}
+
 func (s *Server) gitHandler(w http.ResponseWriter, r *http.Request) {
 	id, action := splitSessionPath(r.URL.Path)
 	if !strings.HasPrefix(action, "git/") {
@@ -57,8 +66,8 @@ func (s *Server) gitHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resource := strings.TrimPrefix(action, "git/")
-	if resource == "worktrees" && r.Method != http.MethodGet {
-		s.gitWorktreeMutation(w, r, spec, id)
+	if r.Method != http.MethodGet && (resource == "worktrees" || resource == "commit" || resource == "merge") {
+		s.gitWriteOperation(w, r, spec, id, resource)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -237,6 +246,65 @@ func (s *Server) gitWorktrees(ctx context.Context, cwd string) ([]GitWorktree, e
 		return nil, err
 	}
 	return worktrees, nil
+}
+
+func (s *Server) gitWriteOperation(w http.ResponseWriter, r *http.Request, spec SessionSpec, sessionID, resource string) {
+	if resource == "commit" {
+		var req gitCommitRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil || strings.TrimSpace(req.Message) == "" {
+			writeErrorText(w, http.StatusBadRequest, "commit message is required")
+			return
+		}
+		if len(req.Message) > 500 {
+			writeErrorText(w, http.StatusBadRequest, "commit message is too long")
+			return
+		}
+		if req.StageAll {
+			if _, err := s.runGit(r.Context(), spec.CWD, "add", "--all", "--"); err != nil {
+				writeGitError(w, err)
+				return
+			}
+		}
+		output, err := s.runGit(r.Context(), spec.CWD, "commit", "-m", req.Message)
+		if err != nil {
+			writeGitError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"sessionId": sessionID, "output": output})
+		return
+	}
+	if resource == "merge" {
+		var req gitMergeRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil || strings.TrimSpace(req.Branch) == "" {
+			writeErrorText(w, http.StatusBadRequest, "branch is required")
+			return
+		}
+		status, err := s.gitStatus(r.Context(), spec.CWD)
+		if err != nil {
+			writeGitError(w, err)
+			return
+		}
+		if len(status.Staged)+len(status.Modified)+len(status.Untracked)+len(status.Conflicts) > 0 {
+			writeErrorText(w, http.StatusConflict, "working tree must be clean before merging")
+			return
+		}
+		if _, err := s.runGit(r.Context(), spec.CWD, "check-ref-format", "--branch", req.Branch); err != nil {
+			writeErrorText(w, http.StatusBadRequest, "invalid branch name")
+			return
+		}
+		output, err := s.runGit(r.Context(), spec.CWD, "merge", "--no-edit", "--", req.Branch)
+		if err != nil {
+			writeGitError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"sessionId": sessionID, "output": output})
+		return
+	}
+	if resource != "worktrees" {
+		http.NotFound(w, r)
+		return
+	}
+	s.gitWorktreeMutation(w, r, spec, sessionID)
 }
 
 func (s *Server) gitWorktreeMutation(w http.ResponseWriter, r *http.Request, spec SessionSpec, sessionID string) {

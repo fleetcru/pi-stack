@@ -26,6 +26,7 @@ export interface CreateSessionRequest {
   args?: string[]
   env?: Record<string, string>
   sessionPath?: string
+  worktreePath?: string
   start?: boolean
   restart?: boolean
   project?: string
@@ -115,6 +116,11 @@ export interface GitWorktreesResponse {
 
 export interface WorktreeMutationResponse extends GitWorktreesResponse {
   sessionId: string
+}
+
+export interface GitWriteResponse {
+  sessionId: string
+  output: string
 }
 
 export interface FileInfo {
@@ -335,6 +341,20 @@ export class PiServerClient {
     return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/worktrees`, {
       method: "DELETE",
       body: { path },
+    })
+  }
+
+  commitSessionGit(id: string, message: string, stageAll = true): Promise<GitWriteResponse> {
+    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/commit`, {
+      method: "POST",
+      body: { message, stageAll },
+    })
+  }
+
+  mergeSessionGit(id: string, branch: string): Promise<GitWriteResponse> {
+    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/merge`, {
+      method: "POST",
+      body: { branch },
     })
   }
 

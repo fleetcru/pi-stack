@@ -222,6 +222,8 @@ function Workspace({ session }: { session: ApiSession }) {
   const [gitView, setGitView] = useState<"status" | "diff" | "log" | "branches" | "worktrees">("status")
   const [branch, setBranch] = useState("")
   const [worktreePath, setWorktreePath] = useState("")
+  const [commitMessage, setCommitMessage] = useState("")
+  const [mergeBranch, setMergeBranch] = useState("")
   const content = useSessionFileContent(session.id, selectedPath)
   const status = gitStatus.data?.status
   return (
@@ -248,6 +250,14 @@ function Workspace({ session }: { session: ApiSession }) {
               <Row label="Modified" value={String(status?.modified.length ?? 0)} />
               <Row label="Untracked" value={String(status?.untracked.length ?? 0)} />
               {git.isError && <p className="text-destructive">Git status unavailable.</p>}
+              <div className="space-y-1 border-t border-border/60 pt-2">
+                <Input placeholder="commit message" value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} />
+                <Button size="sm" disabled={!commitMessage.trim()} onClick={() => { if (window.confirm("Create a commit with all current changes?")) void client.commitSessionGit(session.id, commitMessage.trim()).then(() => { setCommitMessage(""); return gitStatus.refetch() }) }}>Commit all changes</Button>
+                <div className="flex gap-1">
+                  <Input placeholder="branch to merge" value={mergeBranch} onChange={(event) => setMergeBranch(event.target.value)} />
+                  <Button size="sm" variant="outline" disabled={!mergeBranch.trim()} onClick={() => { if (window.confirm(`Merge ${mergeBranch} into the current branch?`)) void client.mergeSessionGit(session.id, mergeBranch.trim()).then(() => { setMergeBranch(""); return gitStatus.refetch() }) }}>Merge</Button>
+                </div>
+              </div>
             </div>
           )}
           {gitView === "diff" && <pre className="max-h-64 overflow-auto rounded-lg bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap">{diff.data?.output || "No changes"}</pre>}

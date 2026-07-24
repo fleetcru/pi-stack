@@ -48,7 +48,10 @@ fun SessionControlsDialog(
   onSaveMetadata: (title: String, project: String) -> Unit,
   onAction: (action: String, body: String) -> Unit,
   onGit: (resource: String) -> Unit,
+  onGitWrite: (action: String, body: String) -> Unit,
 ) {
+  var commitMessage by remember { mutableStateOf("") }
+  var mergeBranch by remember { mutableStateOf("") }
   var title by remember(initialTitle) { mutableStateOf(initialTitle) }
   var project by remember(initialProject) { mutableStateOf(initialProject) }
 
@@ -114,6 +117,14 @@ fun SessionControlsDialog(
       item { ControlRow("Status" to { onGit("status") }, "Diff" to { onGit("diff") }) }
       item { ControlRow("Log" to { onGit("log") }, "HEAD" to { onGit("head") }) }
       item { ControlRow("Branches" to { onGit("branches") }, "Worktrees" to { onGit("worktrees") }) }
+      item {
+        OutlinedTextField(value = commitMessage, onValueChange = { commitMessage = it }, label = { Text("Commit message", color = SheetMuted) }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = neutralFieldColors())
+      }
+      item { NeutralAction("Commit all changes", { if (commitMessage.isNotBlank()) onGitWrite("commit", buildJsonObject { put("message", commitMessage); put("stageAll", true) }.toString()) }, Modifier.fillMaxWidth()) }
+      item {
+        OutlinedTextField(value = mergeBranch, onValueChange = { mergeBranch = it }, label = { Text("Branch to merge", color = SheetMuted) }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = neutralFieldColors())
+      }
+      item { NeutralAction("Merge branch", { if (mergeBranch.isNotBlank()) onGitWrite("merge", buildJsonObject { put("branch", mergeBranch) }.toString()) }, Modifier.fillMaxWidth()) }
     }
   }
 }
