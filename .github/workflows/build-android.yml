@@ -62,19 +62,38 @@ jobs:
           VERSION_NAME: ${{ steps.version.outputs.name }}
           VERSION_CODE: ${{ steps.version.outputs.code }}
 
-      - name: Upload APK
+      - name: Stage APK with versioned name
+        run: |
+          mkdir -p staging
+          cp pi-companion-exp/app/build/outputs/apk/release/*.apk \
+            "staging/pi-companion-${{ steps.version.outputs.name }}.apk"
+
+      # Kept as a build record. Note: GitHub always serves artifacts as a
+      # .zip download; for the raw .apk use the Release asset below.
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: pi-companion-${{ steps.version.outputs.name }}
-          path: pi-companion-exp/app/build/outputs/apk/release/*.apk
+          path: staging/*.apk
           retention-days: 90
 
+      # Release assets are downloaded as raw files (no zip wrapper), so this
+      # is where the directly-installable .apk lives. Runs on both tag pushes
+      # (proper release) and manual dispatch (prerelease) so you always get a
+      # usable APK link.
       - name: Create GitHub Release
-        if: github.ref_type == 'tag'
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "pi-companion v${{ steps.version.outputs.name }}" \
-            --generate-notes \
-            pi-companion-exp/app/build/outputs/apk/release/*.apk#pi-companion-${{ steps.version.outputs.name }}.apk
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            gh release create "$GITHUB_REF_NAME" \
+              --title "pi-companion v${{ steps.version.outputs.name }}" \
+              --generate-notes \
+              "staging/pi-companion-${{ steps.version.outputs.name }}.apk"
+          else
+            gh release create "v${{ steps.version.outputs.name }}-${{ github.run_number }}" \
+              --title "pi-companion ${{ steps.version.outputs.name }} (build ${{ github.run_number }})" \
+              --notes "Manual build from ${{ github.sha }}" \
+              --prerelease \
+              "staging/pi-companion-${{ steps.version.outputs.name }}.apk"
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
