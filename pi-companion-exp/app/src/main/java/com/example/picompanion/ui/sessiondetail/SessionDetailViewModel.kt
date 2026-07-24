@@ -83,6 +83,7 @@ class SessionDetailViewModel(
   private val _loadingOlderHistory = MutableStateFlow(false)
   val loadingOlderHistory: StateFlow<Boolean> = _loadingOlderHistory.asStateFlow()
   private var nextHistoryOffset = 0
+  private var historicalItems: List<SessionTimelineItem> = emptyList()
   private val historyMutex = kotlinx.coroutines.sync.Mutex()
 
   private var lastEventId: Long = 0
@@ -231,26 +232,29 @@ class SessionDetailViewModel(
     if (appendOld) _loadingOlderHistory.value = true
     when (val result = repository.getSessionMessages(sessionId, offset = offset)) {
       is com.example.picompanion.data.api.HttpResult.Success -> {
-        val messages = result.value["data"]?.jsonObject?.get("messages") as? JsonArray ?: return
-        val history = messages.mapNotNull { element ->
-          val message = element as? JsonObject ?: return@mapNotNull null
-          val role = message.getString("role") ?: return@mapNotNull null
-          if (role != "user" && role != "assistant") return@mapNotNull null
-          val text = message.findText()?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-          SessionTimelineItem.Chat(
-            author = if (role == "user") "You" else "Pi Agent",
-            text = text,
-            time = message.getString("timestamp").orEmpty(),
-            isUser = role == "user",
-          )
+        val messages = result.value["data"]?.jsonObject?.get("messages") as? JsonArray
+        if (messages != null) {
+          val history = messages.mapNotNull { element ->
+            val message = element as? JsonObject ?: return@mapNotNull null
+            val role = message.getString("role") ?: return@mapNotNull null
+            if (role != "user" && role != "assistant") return@mapNotNull null
+            val text = message.findText()?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            SessionTimelineItem.Chat(
+              author = if (role == "user") "You" else "Pi Agent",
+              text = text,
+              time = message.getString("timestamp").orEmpty(),
+              isUser = role == "user",
+            )
+          }
+          val historyMeta = result.value["data"]?.jsonObject?.get("history")?.jsonObject
+          _hasOlderHistory.value = historyMeta?.get("hasOlder")?.jsonPrimitive?.booleanOrNull == true
+          nextHistoryOffset = historyMeta?.get("nextOffset")?.jsonPrimitive?.intOrNull ?: 0
+          // Keep a canonical history list so refreshes do not discard older
+          // pages, while live events remain at the bottom during reconnects.
+          val live = _items.value.filter { item -> item !in historicalItems }
+          historicalItems = if (appendOld) history + historicalItems else history
+          _items.value = historicalItems + live
         }
-        val historyMeta = result.value["data"]?.jsonObject?.get("history")?.jsonObject
-        _hasOlderHistory.value = historyMeta?.get("hasOlder")?.jsonPrimitive?.booleanOrNull == true
-        nextHistoryOffset = historyMeta?.get("nextOffset")?.jsonPrimitive?.intOrNull ?: 0
-        // Preserve conversation context even when live events arrived first.
-        // Older pages are prepended; the live stream remains at the bottom.
-        val live = _items.value
-        _items.value = if (appendOld) history + live else history + live.filter { liveItem -> liveItem !in history }
       }
       is com.example.picompanion.data.api.HttpResult.Failure -> {
         android.util.Log.w("SessionWS", "Could not load session history: ${result.message}")
@@ -476,14 +480,8 @@ class SessionDetailViewModel(
       // does not render yet. They remain available in Logcat for diagnosis.
       else -> return
     }
-    _items.value = (_items.value + item).trimTimeline()
+    _items.value = _items.value + item
   }
-
-  // Long relay/local sessions otherwise accumulate unbounded timeline state,
-  // degrading recomposition and memory. Older entries remain available via
-  // "load older history".
-  private fun List<SessionTimelineItem>.trimTimeline(): List<SessionTimelineItem> =
-    if (size > maxTimelineItems) drop(size - maxTimelineItems) else this
 
   private data class ToolUpdate(val callId: String?, val output: String?, val status: String)
   private val pendingToolUpdates = mutableListOf<ToolUpdate>()
@@ -532,12 +530,12 @@ class SessionDetailViewModel(
   }
 
   private fun appendAssistantMessage(text: String) {
-    _items.value = (_items.value + SessionTimelineItem.Chat(
+    _items.value = _items.value + SessionTimelineItem.Chat(
       author = "Pi Agent",
       text = text,
       time = "",
       isUser = false,
-    )).trimTimeline()
+    )
   }
 
   private fun formatTime(raw: JsonObject): String {
@@ -825,7 +823,6 @@ class SessionDetailViewModel(
   }
 
   companion object {
-    private const val maxTimelineItems = 600
     fun factory(application: Application, sessionId: String): ViewModelProvider.Factory {
       return object : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")

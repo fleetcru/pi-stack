@@ -254,9 +254,11 @@ fun SessionDetailScreen(
         // older page is prepended. Live rows fall back to their current index.
         itemsIndexed(items, key = { index, item ->
           when (item) {
-            is SessionTimelineItem.Chat -> item.time.takeIf { it.isNotBlank() }?.let { "chat-$it" } ?: "chat-live-$index"
-            is SessionTimelineItem.Tool -> "tool-${item.callId}"
-            is SessionTimelineItem.FileChange -> "file-${item.operation}-${item.path}"
+            // Include the current index so duplicate timestamps, repeated file
+            // changes, and replayed system rows can never collide in Compose.
+            is SessionTimelineItem.Chat -> "chat-$index-${item.time}"
+            is SessionTimelineItem.Tool -> "tool-$index-${item.callId}"
+            is SessionTimelineItem.FileChange -> "file-$index-${item.operation}-${item.path}"
             is SessionTimelineItem.System -> "system-$index"
           }
         }, contentType = { _, item ->
