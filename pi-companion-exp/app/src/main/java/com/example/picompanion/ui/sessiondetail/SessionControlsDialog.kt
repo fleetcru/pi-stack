@@ -52,6 +52,9 @@ fun SessionControlsDialog(
 ) {
   var commitMessage by remember { mutableStateOf("") }
   var mergeBranch by remember { mutableStateOf("") }
+  var worktreeBranch by remember { mutableStateOf("") }
+  var worktreePath by remember { mutableStateOf("") }
+  var existingWorktreeBranch by remember { mutableStateOf(false) }
   var title by remember(initialTitle) { mutableStateOf(initialTitle) }
   var project by remember(initialProject) { mutableStateOf(initialProject) }
 
@@ -117,6 +120,10 @@ fun SessionControlsDialog(
       item { ControlRow("Status" to { onGit("status") }, "Diff" to { onGit("diff") }) }
       item { ControlRow("Log" to { onGit("log") }, "HEAD" to { onGit("head") }) }
       item { ControlRow("Branches" to { onGit("branches") }, "Worktrees" to { onGit("worktrees") }) }
+      item { OutlinedTextField(value = worktreeBranch, onValueChange = { worktreeBranch = it }, label = { Text("Branch", color = SheetMuted) }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = neutralFieldColors()) }
+      item { OutlinedTextField(value = worktreePath, onValueChange = { worktreePath = it }, label = { Text("Worktree path", color = SheetMuted) }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = neutralFieldColors()) }
+      item { ControlRow("New branch" to { existingWorktreeBranch = false }, "Existing branch" to { existingWorktreeBranch = true }) }
+      item { NeutralAction("Create worktree", { if (worktreeBranch.isNotBlank() && worktreePath.isNotBlank()) onGitWrite("worktrees", buildJsonObject { put("branch", worktreeBranch); put("path", worktreePath); put("existingBranch", existingWorktreeBranch) }.toString()) }, Modifier.fillMaxWidth()) }
       item {
         OutlinedTextField(value = commitMessage, onValueChange = { commitMessage = it }, label = { Text("Commit message", color = SheetMuted) }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = neutralFieldColors())
       }

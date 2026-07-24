@@ -326,7 +326,7 @@ export class PiServerClient {
 
   createSessionWorktree(
     id: string,
-    input: { path: string; branch: string; startPoint?: string },
+    input: { path: string; branch: string; startPoint?: string; existingBranch?: boolean },
   ): Promise<WorktreeMutationResponse> {
     return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/worktrees`, {
       method: "POST",

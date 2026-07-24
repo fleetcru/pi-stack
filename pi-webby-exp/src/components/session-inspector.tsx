@@ -222,6 +222,8 @@ function Workspace({ session }: { session: ApiSession }) {
   const [gitView, setGitView] = useState<"status" | "diff" | "log" | "branches" | "worktrees">("status")
   const [branch, setBranch] = useState("")
   const [worktreePath, setWorktreePath] = useState("")
+  const [startPoint, setStartPoint] = useState("")
+  const [existingBranch, setExistingBranch] = useState(false)
   const [commitMessage, setCommitMessage] = useState("")
   const [mergeBranch, setMergeBranch] = useState("")
   const [remote, setRemote] = useState("origin")
@@ -283,9 +285,15 @@ function Workspace({ session }: { session: ApiSession }) {
                 </div>
               ))}
               <div className="space-y-1 border-t border-border/60 pt-2">
-                <Input placeholder="branch name" value={branch} onChange={(event) => setBranch(event.target.value)} />
+                <Input list={existingBranch ? "git-branches" : undefined} placeholder={existingBranch ? "existing branch" : "new branch name"} value={branch} onChange={(event) => setBranch(event.target.value)} />
+                <datalist id="git-branches">{branches.data?.branches.map((item) => <option key={item.name} value={item.name} />)}</datalist>
+                {!existingBranch && <Input placeholder="base branch (optional)" value={startPoint} onChange={(event) => setStartPoint(event.target.value)} />}
                 <Input placeholder="path (relative to repo)" value={worktreePath} onChange={(event) => setWorktreePath(event.target.value)} />
-                <Button size="sm" className="w-full" disabled={!branch || !worktreePath} onClick={() => void client.createSessionWorktree(session.id, { path: worktreePath, branch }).then(() => { setBranch(""); setWorktreePath(""); return worktrees.refetch() })}>Create worktree</Button>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <input type="checkbox" checked={existingBranch} onChange={(event) => setExistingBranch(event.target.checked)} />
+                  Use existing branch
+                </label>
+                <Button size="sm" className="w-full" disabled={!branch || !worktreePath} onClick={() => void client.createSessionWorktree(session.id, { path: worktreePath, branch, startPoint: existingBranch ? undefined : startPoint || undefined, existingBranch }).then(() => { setBranch(""); setStartPoint(""); setWorktreePath(""); return worktrees.refetch() })}>{existingBranch ? "Create from existing branch" : "Create new branch"}</Button>
               </div>
             </div>
           )}

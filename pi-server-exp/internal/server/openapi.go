@@ -68,7 +68,7 @@ func schemas() map[string]any {
 		"GitStatus":             obj(map[string]any{"branch": str(), "ahead": map[string]string{"type": "integer"}, "behind": map[string]string{"type": "integer"}, "staged": arr(str()), "modified": arr(str()), "untracked": arr(str()), "conflicts": arr(str())}),
 		"GitBranch":             obj(map[string]any{"name": str(), "current": schemaBool(), "remote": str()}, "name", "current"),
 		"GitWorktree":           obj(map[string]any{"path": str(), "head": str(), "branch": str(), "detached": schemaBool()}, "path", "head", "detached"),
-		"GitWorktreeRequest":    obj(map[string]any{"path": str(), "branch": str(), "startPoint": str()}, "path"),
+		"GitWorktreeRequest":    obj(map[string]any{"path": str(), "branch": str(), "startPoint": str(), "existingBranch": schemaBool()}, "path"),
 		"GitCommitRequest":      obj(map[string]any{"message": str(), "stageAll": schemaBool()}, "message"),
 		"GitMergeRequest":       obj(map[string]any{"branch": str()}, "branch"),
 		"GitRemoteRequest":      obj(map[string]any{"remote": str(), "branch": str()}),

@@ -37,9 +37,10 @@ type GitWorktree struct {
 }
 
 type gitWorktreeRequest struct {
-	Path       string `json:"path"`
-	Branch     string `json:"branch"`
-	StartPoint string `json:"startPoint"`
+	Path           string `json:"path"`
+	Branch         string `json:"branch"`
+	StartPoint     string `json:"startPoint"`
+	ExistingBranch bool   `json:"existingBranch"`
 }
 
 type gitCommitRequest struct {
@@ -390,13 +391,16 @@ func (s *Server) gitWorktreeMutation(w http.ResponseWriter, r *http.Request, spe
 	if r.Method == http.MethodPost {
 		args := []string{"worktree", "add"}
 		if req.Branch == "" {
-			returnError := "branch is required"
-			writeErrorText(w, http.StatusBadRequest, returnError)
+			writeErrorText(w, http.StatusBadRequest, "branch is required")
 			return
 		}
-		args = append(args, "-b", req.Branch, path)
-		if req.StartPoint != "" {
-			args = append(args, req.StartPoint)
+		if req.ExistingBranch {
+			args = append(args, path, req.Branch)
+		} else {
+			args = append(args, "-b", req.Branch, path)
+			if req.StartPoint != "" {
+				args = append(args, req.StartPoint)
+			}
 		}
 		if _, err := s.runGit(r.Context(), spec.CWD, args...); err != nil {
 			writeGitError(w, err)
