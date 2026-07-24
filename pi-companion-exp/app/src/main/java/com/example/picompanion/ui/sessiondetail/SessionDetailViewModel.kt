@@ -73,6 +73,8 @@ class SessionDetailViewModel(
 
   private val _extensionRequest = MutableStateFlow<ExtensionUiRequest?>(null)
   val extensionRequest: StateFlow<ExtensionUiRequest?> = _extensionRequest.asStateFlow()
+  private val _gitOutput = MutableStateFlow<Pair<String, String>?>(null)
+  val gitOutput: StateFlow<Pair<String, String>?> = _gitOutput.asStateFlow()
 
   private val _sessionCwd = MutableStateFlow("")
   val sessionCwd: StateFlow<String> = _sessionCwd.asStateFlow()
@@ -770,11 +772,15 @@ class SessionDetailViewModel(
     viewModelScope.launch {
       when (val result = withContext(Dispatchers.IO) { client.getSessionGit(server, sessionId, resource) }) {
         is com.example.picompanion.data.api.HttpResult.Success ->
-          _items.value = _items.value + SessionTimelineItem.System(result.value["output"]?.toString()?.trim('"') ?: "No Git output")
+          _gitOutput.value = resource.replaceFirstChar { it.uppercase() } to (result.value["output"]?.toString()?.trim('"') ?: "No Git output")
         is com.example.picompanion.data.api.HttpResult.Failure ->
-          _items.value = _items.value + SessionTimelineItem.System("Could not read Git $resource: ${result.userMessage}")
+          _gitOutput.value = "Git error" to result.userMessage
       }
     }
+  }
+
+  fun closeGitOutput() {
+    _gitOutput.value = null
   }
 
   /** Hides a replayed/stale extension request without sending an approval. */

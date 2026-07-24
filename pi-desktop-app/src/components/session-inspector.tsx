@@ -9,6 +9,9 @@ import {
   useSessionEvents,
   useSessionFileContent,
   useSessionGit,
+  useSessionGitBranches,
+  useSessionGitStatus,
+  useSessionGitWorktrees,
 } from "@/api/hooks"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -207,21 +210,68 @@ function ActivityFeed({ sessionId }: { sessionId: string }) {
 }
 
 function Workspace({ session }: { session: ApiSession }) {
+  const client = usePiServerClient()
   const git = useSessionGit(session.id, "status")
+  const gitStatus = useSessionGitStatus(session.id)
+  const branches = useSessionGitBranches(session.id)
+  const worktrees = useSessionGitWorktrees(session.id)
+  const diff = useSessionGit(session.id, "diff")
+  const log = useSessionGit(session.id, "log")
   const files = useFileTree(session.cwd)
   const [selectedPath, setSelectedPath] = useState<string>()
+  const [gitView, setGitView] = useState<"status" | "diff" | "log" | "branches" | "worktrees">("status")
+  const [branch, setBranch] = useState("")
+  const [worktreePath, setWorktreePath] = useState("")
   const content = useSessionFileContent(session.id, selectedPath)
+  const status = gitStatus.data?.status
   return (
     <ScrollArea className="h-full">
       <div className="space-y-5 p-4">
         <Section title="Git">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2 text-xs">
             <GitBranch className="size-3.5" />
-            {git.data?.output.split("\n")[0] || "No Git status"}
+            <span className="font-medium">{status?.branch || git.data?.output.split("\\n")[0] || "No Git repository"}</span>
+            {status && <span className="ml-auto text-muted-foreground">{status.staged.length + status.modified.length + status.untracked.length} changed</span>}
           </div>
-          <pre className="mt-3 max-h-40 overflow-auto rounded-lg bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap">
-            {git.data?.output || "Clean workspace"}
-          </pre>
+          <div className="grid grid-cols-5 gap-1">
+            {(["status", "diff", "log", "branches", "worktrees"] as const).map((view) => (
+              <Button key={view} size="xs" variant={gitView === view ? "default" : "outline"} onClick={() => setGitView(view)}>
+                {view[0].toUpperCase() + view.slice(1)}
+              </Button>
+            ))}
+          </div>
+          {gitView === "status" && (
+            <div className="space-y-1 text-xs text-muted-foreground">
+              <Row label="Branch" value={status?.branch || "—"} />
+              <Row label="Ahead / behind" value={`${status?.ahead ?? 0} / ${status?.behind ?? 0}`} />
+              <Row label="Staged" value={String(status?.staged.length ?? 0)} />
+              <Row label="Modified" value={String(status?.modified.length ?? 0)} />
+              <Row label="Untracked" value={String(status?.untracked.length ?? 0)} />
+              {git.isError && <p className="text-destructive">Git status unavailable.</p>}
+            </div>
+          )}
+          {gitView === "diff" && <pre className="max-h-64 overflow-auto rounded-lg bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap">{diff.data?.output || "No changes"}</pre>}
+          {gitView === "log" && <pre className="max-h-64 overflow-auto rounded-lg bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap">{log.data?.output || "No commits"}</pre>}
+          {gitView === "branches" && <div className="space-y-1 text-xs">{branches.data?.branches.map((item) => <div key={item.name} className="flex justify-between rounded px-2 py-1 hover:bg-muted/40"><span>{item.current ? "* " : "  "}{item.name}</span><span className="text-muted-foreground">{item.remote || "local"}</span></div>)}</div>}
+          {gitView === "worktrees" && (
+            <div className="space-y-2 text-xs">
+              {worktrees.data?.worktrees.map((item) => (
+                <div key={item.path} className="rounded border border-border/60 p-2">
+                  <div className="font-medium">{item.branch || "detached"}</div>
+                  <div className="truncate text-muted-foreground">{item.path}</div>
+                  <div className="mt-1 flex gap-1">
+                    <Button size="xs" variant="outline" onClick={() => void client.createSession({ cwd: item.path, start: true }).then(() => undefined)}>Open session</Button>
+                    <Button size="xs" variant="ghost" onClick={() => void client.removeSessionWorktree(session.id, item.path).then(() => worktrees.refetch())}>Remove</Button>
+                  </div>
+                </div>
+              ))}
+              <div className="space-y-1 border-t border-border/60 pt-2">
+                <Input placeholder="branch name" value={branch} onChange={(event) => setBranch(event.target.value)} />
+                <Input placeholder="path (relative to repo)" value={worktreePath} onChange={(event) => setWorktreePath(event.target.value)} />
+                <Button size="sm" className="w-full" disabled={!branch || !worktreePath} onClick={() => void client.createSessionWorktree(session.id, { path: worktreePath, branch }).then(() => { setBranch(""); setWorktreePath(""); return worktrees.refetch() })}>Create worktree</Button>
+              </div>
+            </div>
+          )}
         </Section>
         <Section title={`Files (${files.data?.files.length ?? 0})`}>
           <div className="space-y-1">

@@ -343,7 +343,7 @@ function MobileWorkspace({
               </div>
               <SessionTree sessions={sessions} workerIds={workers.map((worker) => worker.id)} selectedSessionId={selectedSession?.id} onSelectSession={(id) => { setSessionsOpen(false); onOpenSession(id) }} filterText={mobileFilterText} />
               {globalSessions.length > 0 && <GlobalSessionList sessions={globalSessions} onOpen={(id) => { setSessionsOpen(false); onOpenGlobal(id) }} />}
-              {machineSessions.length > 0 && <MachineSessionList sessions={machineSessions} onOpen={(id) => { setSessionsOpen(false); onOpenMachine(id) }} />}
+              {machineSessions.length > 0 && <MachineSessionList sessions={machineSessions} onOpen={async (id) => { setSessionsOpen(false); await onOpenMachine(id) }} />}
             </nav>
           </ScrollArea>
         </SheetContent>

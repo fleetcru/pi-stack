@@ -77,6 +77,46 @@ export interface GitResponse {
   output: string
 }
 
+export interface GitStatusResponse {
+  cwd: string
+  status: {
+    branch: string
+    ahead: number
+    behind: number
+    staged: string[]
+    modified: string[]
+    untracked: string[]
+    conflicts: string[]
+  }
+}
+
+export interface GitBranch {
+  name: string
+  current: boolean
+  remote?: string
+}
+
+export interface GitBranchesResponse {
+  cwd: string
+  branches: GitBranch[]
+}
+
+export interface GitWorktree {
+  path: string
+  head: string
+  branch?: string
+  detached: boolean
+}
+
+export interface GitWorktreesResponse {
+  cwd: string
+  worktrees: GitWorktree[]
+}
+
+export interface WorktreeMutationResponse extends GitWorktreesResponse {
+  sessionId: string
+}
+
 export interface FileInfo {
   name: string
   path: string
@@ -263,9 +303,39 @@ export class PiServerClient {
     id: string,
     resource: "status" | "diff" | "log" | "head"
   ): Promise<GitResponse> {
-    return this.request(
-      `/v1/sessions/${encodeURIComponent(id)}/git/${resource}`
-    )
+    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/${resource}`)
+  }
+
+  getSessionGitStatus(id: string): Promise<GitStatusResponse> {
+    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/status?format=json`)
+  }
+
+  getSessionGitBranches(id: string): Promise<GitBranchesResponse> {
+    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/branches`)
+  }
+
+  getSessionGitWorktrees(id: string): Promise<GitWorktreesResponse> {
+    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/worktrees`)
+  }
+
+  createSessionWorktree(
+    id: string,
+    input: { path: string; branch: string; startPoint?: string },
+  ): Promise<WorktreeMutationResponse> {
+    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/worktrees`, {
+      method: "POST",
+      body: input,
+    })
+  }
+
+  removeSessionWorktree(
+    id: string,
+    path: string,
+  ): Promise<WorktreeMutationResponse> {
+    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/worktrees`, {
+      method: "DELETE",
+      body: { path },
+    })
   }
 
   listDirectories(path?: string): Promise<DirectoryListResponse> {

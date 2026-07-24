@@ -11,6 +11,10 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 	if s.proxyRemoteSession(w, r, id, action) {
 		return
 	}
+	if strings.HasPrefix(action, "git/") {
+		s.gitHandler(w, r)
+		return
+	}
 	if _, external := s.external.get(id); external {
 		if action == "abort" {
 			command := ExternalCommand{ID: NewSessionID(), Type: "abort"}

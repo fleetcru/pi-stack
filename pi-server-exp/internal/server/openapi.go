@@ -65,6 +65,10 @@ func schemas() map[string]any {
 		"PromptRequest":         obj(map[string]any{"message": str(), "streamingBehavior": map[string]any{"type": "string", "enum": []string{"steer", "followUp"}}, "images": arr(ref("ImageContent"))}, "message"),
 		"ExtensionUIResponse":   obj(map[string]any{"id": str(), "value": map[string]any{}, "confirmed": schemaBool(), "cancelled": schemaBool()}, "id"),
 		"SessionMetadataUpdate": obj(map[string]any{"project": str(), "title": str(), "taskType": str(), "owner": str(), "labels": arr(str()), "metadata": map[string]any{"type": "object", "additionalProperties": str()}}),
+		"GitStatus":             obj(map[string]any{"branch": str(), "ahead": map[string]string{"type": "integer"}, "behind": map[string]string{"type": "integer"}, "staged": arr(str()), "modified": arr(str()), "untracked": arr(str()), "conflicts": arr(str())}),
+		"GitBranch":             obj(map[string]any{"name": str(), "current": schemaBool(), "remote": str()}, "name", "current"),
+		"GitWorktree":           obj(map[string]any{"path": str(), "head": str(), "branch": str(), "detached": schemaBool()}, "path", "head", "detached"),
+		"GitWorktreeRequest":    obj(map[string]any{"path": str(), "branch": str(), "startPoint": str()}, "path"),
 		"BashRequest":           obj(map[string]any{"command": str()}, "command"),
 		"ModelRequest":          obj(map[string]any{"provider": str(), "modelId": str()}, "provider", "modelId"),
 		"ThinkingRequest":       obj(map[string]any{"level": str()}, "level"),
@@ -106,8 +110,13 @@ func paths() map[string]any {
 	get("/v1/files/content", "Read bounded file content")
 	get("/v1/sessions/{id}/files/content", "Session-scoped bounded file content")
 	get("/v1/sessions/{id}/summary", "Session inventory summary")
-	for _, x := range []string{"status", "diff", "log", "head"} {
+	for _, x := range []string{"status", "diff", "log", "head", "branches", "worktrees"} {
 		get("/v1/sessions/{id}/git/"+x, "Read-only Git "+x)
+	}
+	p["/v1/sessions/{id}/git/worktrees"] = map[string]any{
+		"get":    op("List Git worktrees", "RPCResponse", ""),
+		"post":   op("Create Git worktree", "RPCResponse", "GitWorktreeRequest"),
+		"delete": op("Remove Git worktree", "RPCResponse", "GitWorktreeRequest"),
 	}
 	get("/v1/files/tree", "List directory tree")
 	for _, x := range []string{"state", "messages", "stats", "models", "commands", "entries", "tree", "last-assistant-text", "fork-messages", "daemon-status", "events"} {

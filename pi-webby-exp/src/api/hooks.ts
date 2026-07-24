@@ -12,6 +12,9 @@ import {
   type ApiSession,
   type ApiWorker,
   type CreateSessionRequest,
+  type GitBranchesResponse,
+  type GitStatusResponse,
+  type GitWorktreesResponse,
   type PromptRequest,
   type RpcCommand,
   type RpcResponse,
@@ -161,6 +164,36 @@ export function useSessionGit(
     queryFn: () => client.getSessionGit(sessionId!, resource),
     enabled: Boolean(sessionId),
     refetchInterval: resource === "status" ? 5_000 : false,
+  })
+}
+
+export function useSessionGitStatus(sessionId: string | undefined) {
+  const client = usePiServerClient()
+  return useQuery<GitStatusResponse>({
+    queryKey: piQueryKeys.git(client.baseUrl, sessionId ?? "none", "status-json"),
+    queryFn: () => client.getSessionGitStatus(sessionId!),
+    enabled: Boolean(sessionId),
+    refetchInterval: 5_000,
+  })
+}
+
+export function useSessionGitBranches(sessionId: string | undefined) {
+  const client = usePiServerClient()
+  return useQuery<GitBranchesResponse>({
+    queryKey: piQueryKeys.git(client.baseUrl, sessionId ?? "none", "branches"),
+    queryFn: () => client.getSessionGitBranches(sessionId!),
+    enabled: Boolean(sessionId),
+    staleTime: 10_000,
+  })
+}
+
+export function useSessionGitWorktrees(sessionId: string | undefined) {
+  const client = usePiServerClient()
+  return useQuery<GitWorktreesResponse>({
+    queryKey: piQueryKeys.git(client.baseUrl, sessionId ?? "none", "worktrees"),
+    queryFn: () => client.getSessionGitWorktrees(sessionId!),
+    enabled: Boolean(sessionId),
+    staleTime: 5_000,
   })
 }
 

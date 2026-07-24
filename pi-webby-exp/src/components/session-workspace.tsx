@@ -114,9 +114,6 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
       : "Relay disconnected — commands queue on the server"
     : state ? "Local RPC" : undefined
 
-  // Show runtime detail from WS events when available (e.g., "Running tool", "Generating response")
-  const runtimeDetail = socket.status === "open" ? wsRuntimeState?.detail : undefined
-
   async function abortSession() {
     try {
       await client.abort(sessionId)

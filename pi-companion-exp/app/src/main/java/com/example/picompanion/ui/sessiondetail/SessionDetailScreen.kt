@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -49,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -97,6 +99,7 @@ fun SessionDetailScreen(
   val extensionRequest by viewModel.extensionRequest.collectAsStateWithLifecycle()
   val modelControls by viewModel.modelControls.collectAsStateWithLifecycle()
   val relayHealth by viewModel.relayHealth.collectAsStateWithLifecycle()
+  val gitOutput by viewModel.gitOutput.collectAsStateWithLifecycle()
   val hasOlderHistory by viewModel.hasOlderHistory.collectAsStateWithLifecycle()
   val loadingOlderHistory by viewModel.loadingOlderHistory.collectAsStateWithLifecycle()
   var extensionValue by remember { mutableStateOf("") }
@@ -135,6 +138,25 @@ fun SessionDetailScreen(
       sharedTransitionScope = sharedTransitionScope,
       animatedVisibilityScope = animatedVisibilityScope,
     )
+
+    gitOutput?.let { (title, output) ->
+      androidx.compose.material3.AlertDialog(
+        onDismissRequest = viewModel::closeGitOutput,
+        title = { Text("Git · $title") },
+        text = {
+          androidx.compose.foundation.text.selection.SelectionContainer {
+            androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+              Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                Text(output, style = MaterialTheme.typography.bodySmall)
+              }
+            }
+          }
+        },
+        confirmButton = {
+          androidx.compose.material3.TextButton(onClick = viewModel::closeGitOutput) { Text("Done") }
+        },
+      )
+    }
 
     extensionRequest?.let { request ->
       androidx.compose.material3.AlertDialog(

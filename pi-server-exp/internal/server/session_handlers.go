@@ -73,6 +73,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	id, rest := splitSessionPath(r.URL.Path)
+	if strings.HasPrefix(rest, "git/") {
+		s.gitHandler(w, r)
+		return
+	}
 	if rest != "" {
 		http.NotFound(w, r)
 		return

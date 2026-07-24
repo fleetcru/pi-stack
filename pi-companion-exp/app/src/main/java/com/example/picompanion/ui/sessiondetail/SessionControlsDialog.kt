@@ -112,7 +112,8 @@ fun SessionControlsDialog(
       item { HorizontalDivider(color = SheetLine) }
       item { SectionLabel("GIT") }
       item { ControlRow("Status" to { onGit("status") }, "Diff" to { onGit("diff") }) }
-      item { ControlRow("Log" to { onGit("log") }, null) }
+      item { ControlRow("Log" to { onGit("log") }, "HEAD" to { onGit("head") }) }
+      item { ControlRow("Branches" to { onGit("branches") }, "Worktrees" to { onGit("worktrees") }) }
     }
   }
 }
