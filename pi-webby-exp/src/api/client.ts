@@ -358,6 +358,18 @@ export class PiServerClient {
     })
   }
 
+  abortGitMerge(id: string): Promise<GitWriteResponse> {
+    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/merge-abort`, { method: "POST", body: {} })
+  }
+
+  pullSessionGit(id: string, remote = "origin", branch?: string): Promise<GitWriteResponse> {
+    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/pull`, { method: "POST", body: { remote, branch } })
+  }
+
+  pushSessionGit(id: string, remote = "origin", branch?: string): Promise<GitWriteResponse> {
+    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/push`, { method: "POST", body: { remote, branch } })
+  }
+
   listDirectories(path?: string): Promise<DirectoryListResponse> {
     const query = path ? `?${new URLSearchParams({ path })}` : ""
     return this.request(`/v1/directories${query}`)

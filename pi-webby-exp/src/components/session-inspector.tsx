@@ -224,6 +224,7 @@ function Workspace({ session }: { session: ApiSession }) {
   const [worktreePath, setWorktreePath] = useState("")
   const [commitMessage, setCommitMessage] = useState("")
   const [mergeBranch, setMergeBranch] = useState("")
+  const [remote, setRemote] = useState("origin")
   const content = useSessionFileContent(session.id, selectedPath)
   const status = gitStatus.data?.status
   return (
@@ -257,6 +258,12 @@ function Workspace({ session }: { session: ApiSession }) {
                   <Input placeholder="branch to merge" value={mergeBranch} onChange={(event) => setMergeBranch(event.target.value)} />
                   <Button size="sm" variant="outline" disabled={!mergeBranch.trim()} onClick={() => { if (window.confirm(`Merge ${mergeBranch} into the current branch?`)) void client.mergeSessionGit(session.id, mergeBranch.trim()).then(() => { setMergeBranch(""); return gitStatus.refetch() }) }}>Merge</Button>
                 </div>
+                <div className="flex gap-1">
+                  <Input placeholder="remote" value={remote} onChange={(event) => setRemote(event.target.value)} />
+                  <Button size="sm" variant="outline" onClick={() => { if (window.confirm(`Pull from ${remote}?`)) void client.pullSessionGit(session.id, remote).then(() => gitStatus.refetch()) }}>Pull</Button>
+                  <Button size="sm" variant="outline" onClick={() => { if (window.confirm(`Push to ${remote}?`)) void client.pushSessionGit(session.id, remote).then(() => gitStatus.refetch()) }}>Push</Button>
+                </div>
+                <Button size="sm" variant="ghost" onClick={() => void client.abortGitMerge(session.id).then(() => gitStatus.refetch())}>Abort merge</Button>
               </div>
             </div>
           )}

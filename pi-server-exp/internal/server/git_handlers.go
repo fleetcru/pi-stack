@@ -51,6 +51,11 @@ type gitMergeRequest struct {
 	Branch string `json:"branch"`
 }
 
+type gitRemoteRequest struct {
+	Remote string `json:"remote"`
+	Branch string `json:"branch"`
+}
+
 func (s *Server) gitHandler(w http.ResponseWriter, r *http.Request) {
 	id, action := splitSessionPath(r.URL.Path)
 	if !strings.HasPrefix(action, "git/") {
@@ -66,7 +71,7 @@ func (s *Server) gitHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resource := strings.TrimPrefix(action, "git/")
-	if r.Method != http.MethodGet && (resource == "worktrees" || resource == "commit" || resource == "merge") {
+	if r.Method != http.MethodGet && (resource == "worktrees" || resource == "commit" || resource == "merge" || resource == "merge-abort" || resource == "pull" || resource == "push") {
 		s.gitWriteOperation(w, r, spec, id, resource)
 		return
 	}
@@ -273,6 +278,62 @@ func (s *Server) gitWriteOperation(w http.ResponseWriter, r *http.Request, spec 
 		writeJSON(w, http.StatusOK, map[string]any{"sessionId": sessionID, "output": output})
 		return
 	}
+	if resource == "merge-abort" {
+		output, err := s.runGit(r.Context(), spec.CWD, "merge", "--abort")
+		if err != nil {
+			writeGitError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"sessionId": sessionID, "output": output})
+		return
+	}
+	if resource == "pull" || resource == "push" {
+		var req gitRemoteRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		remote := strings.TrimSpace(req.Remote)
+		if remote == "" {
+			remote = "origin"
+		}
+		if _, err := s.runGit(r.Context(), spec.CWD, "remote", "get-url", remote); err != nil {
+			writeErrorText(w, http.StatusBadRequest, "unknown Git remote")
+			return
+		}
+		branch := strings.TrimSpace(req.Branch)
+		if branch == "" {
+			branchOutput, err := s.runGit(r.Context(), spec.CWD, "branch", "--show-current")
+			if err != nil {
+				writeGitError(w, err)
+				return
+			}
+			branch = strings.TrimSpace(branchOutput)
+		}
+		if branch == "" {
+			writeErrorText(w, http.StatusBadRequest, "branch is required for a detached HEAD")
+			return
+		}
+		var args []string
+		if resource == "pull" {
+			args = []string{"pull", "--ff-only", remote, branch}
+		} else {
+			args = []string{"push", remote, branch}
+		}
+		output, err := s.runGit(r.Context(), spec.CWD, args...)
+		if err != nil {
+			if resource == "pull" {
+				if status, statusErr := s.gitStatus(r.Context(), spec.CWD); statusErr == nil && len(status.Conflicts) > 0 {
+					writeJSON(w, http.StatusConflict, map[string]any{"error": "pull resulted in conflicts", "conflicts": status.Conflicts, "output": output})
+					return
+				}
+			}
+			writeGitError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"sessionId": sessionID, "remote": remote, "branch": branch, "output": output})
+		return
+	}
 	if resource == "merge" {
 		var req gitMergeRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil || strings.TrimSpace(req.Branch) == "" {
@@ -294,6 +355,10 @@ func (s *Server) gitWriteOperation(w http.ResponseWriter, r *http.Request, spec 
 		}
 		output, err := s.runGit(r.Context(), spec.CWD, "merge", "--no-edit", "--", req.Branch)
 		if err != nil {
+			if status, statusErr := s.gitStatus(r.Context(), spec.CWD); statusErr == nil && len(status.Conflicts) > 0 {
+				writeJSON(w, http.StatusConflict, map[string]any{"error": "merge resulted in conflicts", "conflicts": status.Conflicts, "output": output})
+				return
+			}
 			writeGitError(w, err)
 			return
 		}

@@ -125,6 +125,8 @@ fun SessionControlsDialog(
         OutlinedTextField(value = mergeBranch, onValueChange = { mergeBranch = it }, label = { Text("Branch to merge", color = SheetMuted) }, singleLine = true, modifier = Modifier.fillMaxWidth(), colors = neutralFieldColors())
       }
       item { NeutralAction("Merge branch", { if (mergeBranch.isNotBlank()) onGitWrite("merge", buildJsonObject { put("branch", mergeBranch) }.toString()) }, Modifier.fillMaxWidth()) }
+      item { ControlRow("Pull" to { onGitWrite("pull", "{\"remote\":\"origin\"}") }, "Push" to { onGitWrite("push", "{\"remote\":\"origin\"}") }) }
+      item { NeutralAction("Abort merge", { onGitWrite("merge-abort", "{}") }, Modifier.fillMaxWidth()) }
     }
   }
 }

@@ -71,6 +71,7 @@ func schemas() map[string]any {
 		"GitWorktreeRequest":    obj(map[string]any{"path": str(), "branch": str(), "startPoint": str()}, "path"),
 		"GitCommitRequest":      obj(map[string]any{"message": str(), "stageAll": schemaBool()}, "message"),
 		"GitMergeRequest":       obj(map[string]any{"branch": str()}, "branch"),
+		"GitRemoteRequest":      obj(map[string]any{"remote": str(), "branch": str()}),
 		"BashRequest":           obj(map[string]any{"command": str()}, "command"),
 		"ModelRequest":          obj(map[string]any{"provider": str(), "modelId": str()}, "provider", "modelId"),
 		"ThinkingRequest":       obj(map[string]any{"level": str()}, "level"),
@@ -122,6 +123,9 @@ func paths() map[string]any {
 	}
 	post("/v1/sessions/{id}/git/commit", "Create a Git commit", "GitCommitRequest")
 	post("/v1/sessions/{id}/git/merge", "Merge a Git branch", "GitMergeRequest")
+	post("/v1/sessions/{id}/git/merge-abort", "Abort an in-progress Git merge", "")
+	post("/v1/sessions/{id}/git/pull", "Fast-forward pull from a Git remote", "GitRemoteRequest")
+	post("/v1/sessions/{id}/git/push", "Push a Git branch to a remote", "GitRemoteRequest")
 	get("/v1/files/tree", "List directory tree")
 	for _, x := range []string{"state", "messages", "stats", "models", "commands", "entries", "tree", "last-assistant-text", "fork-messages", "daemon-status", "events"} {
 		get("/v1/sessions/{id}/"+x, "Pi RPC "+x)
