@@ -2,6 +2,10 @@ name: Build pi-server
 
 on:
   push:
+    branches:
+      - main
+    tags:
+      - 'server-v*'
     paths:
       - 'pi-server-exp/**'
       - '.github/workflows/build-server.yml'
@@ -67,3 +71,39 @@ jobs:
           path: pi-server-exp/dist/${{ matrix.binary }}
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    name: Create GitHub release
+    if: startsWith(github.ref, 'refs/tags/server-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+
+          cp artifacts/pi-server-linux-amd64/pi-server-linux-amd64 release/
+          tar -C release -czf release/pi-server-linux-amd64.tar.gz pi-server-linux-amd64
+
+          cp artifacts/pi-server-windows-amd64.exe/pi-server-windows-amd64.exe release/
+          (cd release && zip pi-server-windows-amd64.zip pi-server-windows-amd64.exe)
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "pi-server ${GITHUB_REF_NAME#server-}" \
+            --generate-notes \
+            release/pi-server-linux-amd64.tar.gz \
+            release/pi-server-windows-amd64.zip
