@@ -1,4 +1,4 @@
-import { PiServerClient, type RpcCommand } from "@/api/client"
+import { PiServerApiError, PiServerClient, type RpcCommand } from "@/api/client"
 
 export type SessionSocketStatus =
   "idle" | "connecting" | "open" | "reconnecting" | "closed"
@@ -127,7 +127,12 @@ export class SessionSocket {
       // Guard against stale errors from a previous socket that resolved
       // after the user switched to a new session.
       if (!this.manuallyClosed) {
-        this.onError?.(toError(error))
+        const normalized = toError(error)
+        this.onError?.(normalized)
+        if (error instanceof PiServerApiError && error.status === 401) {
+          this.setStatus("closed")
+          return
+        }
         this.scheduleReconnect()
       }
     } finally {

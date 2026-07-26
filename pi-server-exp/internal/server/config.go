@@ -1,8 +1,11 @@
 package server
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +33,40 @@ type Config struct {
 	EventHistoryBytes  int
 	MaxWatches         int
 	LogLevel           slog.Level
+}
+
+// ValidateConfig checks local prerequisites before the daemon starts accepting
+// sessions. It deliberately avoids launching Pi, since Pi may load user-specific
+// extensions and provider configuration at session start.
+func ValidateConfig(cfg Config) error {
+	if _, err := exec.LookPath(cfg.PiBinary); err != nil {
+		return fmt.Errorf("pi binary %q is not available in PATH: %w", cfg.PiBinary, err)
+	}
+
+	cwdInfo, err := os.Stat(cfg.CWD)
+	if err != nil {
+		return fmt.Errorf("server cwd %q is unavailable: %w", cfg.CWD, err)
+	}
+	if !cwdInfo.IsDir() {
+		return fmt.Errorf("server cwd %q is not a directory", cfg.CWD)
+	}
+
+	if err := os.MkdirAll(cfg.DataDir, 0o750); err != nil {
+		return fmt.Errorf("server data directory %q is unavailable: %w", cfg.DataDir, err)
+	}
+	testFile, err := os.CreateTemp(filepath.Clean(cfg.DataDir), ".pi-server-write-test-*")
+	if err != nil {
+		return fmt.Errorf("server data directory %q is not writable: %w", cfg.DataDir, err)
+	}
+	name := testFile.Name()
+	if err := testFile.Close(); err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("server data directory %q write test failed: %w", cfg.DataDir, err)
+	}
+	if err := os.Remove(name); err != nil {
+		return fmt.Errorf("server data directory %q cleanup failed: %w", cfg.DataDir, err)
+	}
+	return nil
 }
 
 func ConfigFromEnv() Config {

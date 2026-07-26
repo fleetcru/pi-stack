@@ -27,6 +27,11 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	slog.SetDefault(logger)
 
+	if err := server.ValidateConfig(cfg); err != nil {
+		logger.Error("configuration validation failed", "error", err)
+		os.Exit(1)
+	}
+
 	// Binding a non-loopback address without an auth token exposes full session
 	// control (prompt execution, file reads, relay commands) to the LAN — and,
 	// via the permissive WebSocket origin check, to any website the operator

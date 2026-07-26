@@ -59,13 +59,13 @@ export function useServerConfigured() {
 export function useServerHealth() {
   const client = usePiServerClient()
   const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.health(client.baseUrl), queryFn: () => client.health(), refetchInterval: 15_000, retry: 1, enabled: configured })
+  return useQuery({ queryKey: piQueryKeys.health(client.baseUrl), queryFn: () => client.health(), refetchInterval: 15_000, enabled: configured })
 }
 
 export function useServerCapabilities() {
   const client = usePiServerClient()
   const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.capabilities(client.baseUrl), queryFn: () => client.capabilities(), staleTime: Infinity, retry: 1, enabled: configured })
+  return useQuery({ queryKey: piQueryKeys.capabilities(client.baseUrl), queryFn: () => client.capabilities(), staleTime: Infinity, enabled: configured })
 }
 
 export function useWorkers() {

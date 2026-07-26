@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-  [int]$ServerPort = 3142,
+  [int]$ServerPort = 3141,
+  [string]$RelayUrl = "",
   [string]$AuthToken = ""
 )
 
@@ -42,7 +43,7 @@ if ($piCommand) {
 }
 
 # Set environment variables for relay connection
-$relayUrl = "http://127.0.0.1:$ServerPort"
+$relayUrl = if ($RelayUrl) { $RelayUrl.TrimEnd('/') } else { "http://127.0.0.1:$ServerPort" }
 [Environment]::SetEnvironmentVariable("PI_EXTERNAL_RELAY_URL", $relayUrl, "User")
 if ($AuthToken) {
   [Environment]::SetEnvironmentVariable("PI_EXTERNAL_RELAY_TOKEN", $AuthToken, "User")

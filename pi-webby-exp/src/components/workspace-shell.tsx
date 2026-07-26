@@ -24,7 +24,7 @@ import {
 } from "lucide-react"
 
 import { useGlobalSessions, useMachineSessions, usePiServerClient, useServerHealth, useSessions, useWorkers, piQueryKeys } from "@/api/hooks"
-import type { ApiSession, ApiWorker, GlobalSession, MachineSession } from "@/api/client"
+import { PiServerApiError, type ApiSession, type ApiWorker, type GlobalSession, type MachineSession } from "@/api/client"
 import type { PiServerClient } from "@/api/client"
 import { CreateSessionDialog } from "@/components/create-session-dialog"
 import { ServerConnectionsDialog } from "@/components/server-connections-dialog"
@@ -71,7 +71,7 @@ export function WorkspaceShell() {
     selectSession(sessionId)
     navigate(sessionId ? `/sessions/${encodeURIComponent(sessionId)}` : "/")
   }
-  const { data: health, error: healthError } = useServerHealth()
+  const { data: health, error: healthError, refetch: refetchHealth } = useServerHealth()
   const { data: sessionResult, isLoading: sessionsLoading } = useSessions()
   const { data: workers = [] } = useWorkers()
   const { data: globalResult } = useGlobalSessions()
@@ -109,8 +109,21 @@ export function WorkspaceShell() {
   return (
     <main className="relative h-svh overflow-hidden bg-background p-3 text-foreground">
       {healthError && (
-        <div role="alert" className="absolute top-3 right-3 z-10 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive shadow-sm">
-          Not connected to pi-server. Check the selected server and retry.
+        <div role="alert" className="absolute top-3 right-3 z-10 flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive shadow-sm">
+          <span>
+            {healthError instanceof PiServerApiError && healthError.status === 401
+              ? "Authentication required. Re-enter the server token."
+              : "Not connected to pi-server. Check the selected server and retry."}
+          </span>
+          <Button
+            size="xs"
+            variant="outline"
+            onClick={() => healthError instanceof PiServerApiError && healthError.status === 401
+              ? setServerConnectionsOpen(true)
+              : void refetchHealth()}
+          >
+            {healthError instanceof PiServerApiError && healthError.status === 401 ? "Reconnect" : "Retry"}
+          </Button>
         </div>
       )}
       <div className="hidden h-full lg:block">
