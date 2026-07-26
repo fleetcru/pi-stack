@@ -18,12 +18,11 @@ on:
 permissions:
   contents: read
 
-defaults:
-  run:
-    working-directory: pi-server-exp
-
 jobs:
   build:
+    defaults:
+      run:
+        working-directory: pi-server-exp
     name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
     runs-on: ubuntu-latest
     strategy:
@@ -86,17 +85,13 @@ jobs:
         with:
           path: artifacts
 
-      - name: Package release assets
+      - name: Stage raw release assets
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p release
-
           cp artifacts/pi-server-linux-amd64/pi-server-linux-amd64 release/
-          tar -C release -czf release/pi-server-linux-amd64.tar.gz pi-server-linux-amd64
-
           cp artifacts/pi-server-windows-amd64.exe/pi-server-windows-amd64.exe release/
-          (cd release && zip pi-server-windows-amd64.zip pi-server-windows-amd64.exe)
 
       - name: Publish GitHub release
         env:
@@ -105,5 +100,5 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "pi-server ${GITHUB_REF_NAME#server-}" \
             --generate-notes \
-            release/pi-server-linux-amd64.tar.gz \
-            release/pi-server-windows-amd64.zip
+            release/pi-server-linux-amd64 \
+            release/pi-server-windows-amd64.exe
