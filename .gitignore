@@ -47,7 +47,7 @@ REVIEW_FINDINGS.md
 REVIEW_PROMPT.md
 
 # ── Non-exp originals (if they exist) ────────────────────
-pi-server/
+/pi-server/
 pi-webby/
 pi-companion/
 pi-desktop-app/node_modules/
