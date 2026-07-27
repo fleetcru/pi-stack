@@ -4,8 +4,9 @@ import { createJSONStorage, persist } from "zustand/middleware"
 export interface ServerConnectionSettings {
   baseUrl: string
   name?: string
-  /** Kept in memory only; never written to localStorage. */
+  /** Persisted only when rememberToken is enabled. */
   token?: string
+  rememberToken?: boolean
 }
 
 interface AppState {
@@ -26,7 +27,7 @@ interface AppState {
 
 /**
  * UI state shared by future tree, workspace, and inspector components.
- * Connection tokens deliberately remain outside persisted storage.
+ * Connection tokens are persisted only when the user explicitly opts in.
  */
 export const useAppStore = create<AppState>()(
   persist(
@@ -53,7 +54,7 @@ export const useAppStore = create<AppState>()(
             servers: exists
               ? state.servers.map((item) => item.baseUrl === baseUrl ? { ...item, ...server } : item)
               : [...state.servers, server],
-            connection: state.connection ?? server,
+            connection: state.connection?.baseUrl === baseUrl ? server : state.connection ?? server,
           }
         }),
       removeServer: (baseUrl) =>
@@ -104,8 +105,22 @@ export const useAppStore = create<AppState>()(
       },
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
-        connection: state.connection ? { baseUrl: state.connection.baseUrl, name: state.connection.name } : undefined,
-        servers: state.servers.map(({ baseUrl, name }) => ({ baseUrl, name })),
+        connection: state.connection
+          ? {
+              baseUrl: state.connection.baseUrl,
+              name: state.connection.name,
+              ...(state.connection.rememberToken && state.connection.token
+                ? { token: state.connection.token, rememberToken: true }
+                : {}),
+            }
+          : undefined,
+        servers: state.servers.map((server) => ({
+          baseUrl: server.baseUrl,
+          name: server.name,
+          ...(server.rememberToken && server.token
+            ? { token: server.token, rememberToken: true }
+            : {}),
+        })),
         selectedSessionId: state.selectedSessionId,
         expandedTreeNodes: state.expandedTreeNodes,
         pinnedSessionIds: state.pinnedSessionIds,
@@ -115,9 +130,7 @@ export const useAppStore = create<AppState>()(
         return {
           ...currentState,
           ...persisted,
-          connection: persisted.connection
-            ? { ...persisted.connection, token: undefined }
-            : undefined,
+          connection: persisted.connection ? { ...persisted.connection } : undefined,
           servers: persisted.servers?.length ? persisted.servers : currentState.servers,
         }
       },

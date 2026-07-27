@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Checkbox } from "@/components/ui/checkbox"
 import { useAppStore } from "@/state/app-store"
 
 /** A small connection picker; it intentionally uses the existing dialog style. */
@@ -29,6 +30,7 @@ export function ServerConnectionsDialog({
   const [name, setName] = useState("")
   const [baseUrl, setBaseUrl] = useState("")
   const [token, setToken] = useState("")
+  const [rememberToken, setRememberToken] = useState(false)
 
   function add() {
     const normalized = baseUrl.trim().replace(/\/+$/, "")
@@ -38,10 +40,16 @@ export function ServerConnectionsDialog({
     } catch {
       return // invalid URL
     }
-    addServer({ baseUrl: normalized, name: name.trim() || normalized, token: token || undefined })
+    addServer({
+      baseUrl: normalized,
+      name: name.trim() || normalized,
+      token: token.trim() || undefined,
+      rememberToken,
+    })
     setName("")
     setBaseUrl("")
     setToken("")
+    setRememberToken(false)
   }
 
   return (
@@ -50,7 +58,7 @@ export function ServerConnectionsDialog({
         <DialogHeader>
           <DialogTitle>Pi servers</DialogTitle>
           <DialogDescription>
-            Switch between trusted pi-server instances. Tokens stay in memory and are never saved to browser storage.
+            Switch between trusted pi-server instances. Tokens stay in memory unless you explicitly choose to remember one on this browser.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-2">
@@ -60,7 +68,7 @@ export function ServerConnectionsDialog({
                 type="button"
                 className="min-w-0 flex-1 text-left text-sm"
                 onClick={() => {
-                  setConnection({ ...server, token: server.baseUrl === active?.baseUrl ? active.token : undefined })
+                  setConnection({ ...server, token: server.token ?? (server.baseUrl === active?.baseUrl ? active.token : undefined) })
                   onOpenChange(false)
                 }}
               >
@@ -90,7 +98,11 @@ export function ServerConnectionsDialog({
             } catch { /* ignore invalid URL while typing */ }
             return null
           })()}
-          <Input value={token} onChange={(event) => setToken(event.target.value)} placeholder="Bearer token (not saved)" type="password" />
+          <Input value={token} onChange={(event) => setToken(event.target.value)} placeholder="Auth token (raw value; do not include Bearer)" type="password" />
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Checkbox checked={rememberToken} onCheckedChange={(checked: boolean) => setRememberToken(checked)} />
+            Remember token on this browser
+          </label>
         </div>
         <DialogFooter>
           <Button type="button" onClick={add} disabled={!baseUrl.trim()}>Add server</Button>
