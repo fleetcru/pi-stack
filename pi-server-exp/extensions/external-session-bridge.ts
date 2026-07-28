@@ -7,11 +7,8 @@ function loadConfig(): BridgeConfig {
   const path = join(process.env.USERPROFILE ?? process.env.HOME ?? "", ".pi", "agent", "bridge-config.json");
   try { return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) as BridgeConfig : {}; } catch { return {}; }
 }
-const bridgeConfig = loadConfig();
-const baseUrl = (process.env.PI_EXTERNAL_RELAY_URL ?? bridgeConfig.relayUrl)?.replace(/\/$/, "");
-const token = process.env.PI_EXTERNAL_RELAY_TOKEN ?? bridgeConfig.relayToken;
 const eventQueueLimit = 200;
-const headers = () => ({ "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) });
+const requestTimeoutMs = 15_000;
 
 function sessionId(file?: string): string {
   const match = file?.match(/_([0-9a-f-]{16,})\.jsonl$/i);
@@ -37,6 +34,9 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   let sessionPath = "";
   let title = "";
   let stopped = false;
+  let baseUrl = "";
+  let token: string | undefined;
+  const headers = () => ({ "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) });
   let registered = false;
   let pollRunning = false;
   let flushRunning = false;
@@ -45,12 +45,47 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   let relaySocket: WebSocket | undefined;
   let relayReconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let abortCurrent: (() => void) | undefined;
+  /** Generation counter bumped on every new socket or registration so stale
+   *  callbacks (onopen/onclose/onmessage) cannot mutate live state or schedule
+   *  duplicate reconnects after we have already moved on. */
+  let socketGen = 0;
+  /** In-flight registration promise so concurrent callers serialize. */
+  let registerInFlight: Promise<boolean> | undefined;
+  /** Exponential backoff state for reconnect attempts (ms). */
+  let backoffMs = 1_000;
+  const backoffCeiling = 30_000;
   const pendingEvents: unknown[] = [];
   const handledCommands = new Set<string>();
 
+  /** Reload URL/token configuration so /bridge-reconnect can apply changes
+   * without restarting Pi. The config file is canonical for the relay URL;
+   * the token still prefers the process environment. */
+  const refreshConfig = (): boolean => {
+    const config = loadConfig();
+    const nextBaseUrl = (config.relayUrl ?? process.env.PI_EXTERNAL_RELAY_URL)?.replace(/\/$/, "") ?? "";
+    const nextToken = process.env.PI_EXTERNAL_RELAY_TOKEN ?? config.relayToken;
+    const changed = nextBaseUrl !== baseUrl || nextToken !== token;
+    baseUrl = nextBaseUrl;
+    token = nextToken;
+    return changed;
+  };
+
+  // ── helpers ────────────────────────────────────────────────────────────
+
+  /** Wrap fetch with AbortController so requests never hang forever. */
+  const fetchWithTimeout = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+    try {
+      return await fetch(input, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   const request = async (path: string, method = "GET", body?: unknown) => {
     if (!baseUrl) throw new Error("PI_EXTERNAL_RELAY_URL is not configured");
-    const response = await fetch(`${baseUrl}${path}`, {
+    const response = await fetchWithTimeout(`${baseUrl}${path}`, {
       method,
       headers: method === "GET" ? (token ? { authorization: `Bearer ${token}` } : {}) : headers(),
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -59,7 +94,29 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     return response;
   };
 
-  const register = async () => {
+  /** Compute the next exponential backoff with jitter, capped. */
+  const nextBackoff = (): number => {
+    const jitter = backoffMs * (0.5 + Math.random() * 0.5); // 50-100% of current
+    backoffMs = Math.min(backoffMs * 2, backoffCeiling);
+    return jitter;
+  };
+
+  /** Reset backoff after a healthy registration or WS open. */
+  const resetBackoff = () => { backoffMs = 1_000; };
+
+  /** Safe one-line status string for diagnostics (no tokens). */
+  const bridgeSummary = (): string => {
+    const wsState = relaySocket ? ["CONNECTING", "OPEN", "CLOSING", "CLOSED"][relaySocket.readyState] ?? "UNKNOWN" : "none";
+    let host = "n/a";
+    if (baseUrl) {
+      try { host = new URL(baseUrl).host; } catch { host = "invalid-url"; }
+    }
+    return `host=${host} session=${id || "(none)"} ws=${wsState} queued=${pendingEvents.length}`;
+  };
+
+  // ── registration (serialized) ─────────────────────────────────────────
+
+  const registerInner = async (): Promise<boolean> => {
     if (!id) return false;
     try {
       const response = await request("/v1/external-sessions/register", "POST", { id, cwd, title, sessionPath, bridgeId });
@@ -67,16 +124,31 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       if (!data.lease) throw new Error("relay did not issue a command lease");
       lease = data.lease;
       registered = true;
+      resetBackoff();
       ui?.setStatus("external-session-bridge", "Bridge: connected");
       return true;
-    } catch {
+    } catch (err) {
       registered = false;
-      ui?.setStatus("external-session-bridge", "Bridge: reconnecting");
+      ui?.setStatus("external-session-bridge", `Bridge: reconnecting (${err instanceof Error ? err.message : "unknown"})`);
       return false;
     }
   };
 
+  /**
+   * Serialized register: concurrent callers (poll, flush, event handlers)
+   * share the same in-flight promise so we never fire two parallel
+   * registrations that race over the lease.
+   */
+  const register = async (): Promise<boolean> => {
+    if (registerInFlight) return registerInFlight;
+    registerInFlight = registerInner().finally(() => { registerInFlight = undefined; });
+    return registerInFlight;
+  };
+
+  // ── event transport ───────────────────────────────────────────────────
+
   const emit = (event: unknown) => {
+    if (stopped) return;
     // Single ordered sender: only use the socket when no backlog exists and no
     // HTTP flush is in flight, otherwise newer events could overtake older ones.
     if (relaySocket?.readyState === WebSocket.OPEN && pendingEvents.length === 0 && !flushRunning) {
@@ -88,25 +160,38 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     void flushEvents();
   };
 
+  /** Send one event over HTTP, returning whether it succeeded. */
+  const sendEventHttp = async (event: unknown): Promise<boolean> => {
+    try {
+      if (!registered && !(await register())) return false;
+      await request(`/v1/external-sessions/${id}/events`, "POST", event);
+      return true;
+    } catch {
+      registered = false;
+      return false;
+    }
+  };
+
   const flushEvents = async () => {
-    if (flushRunning || !id || stopped || relaySocket?.readyState === WebSocket.OPEN) return;
+    if (flushRunning || !id || stopped) return;
+    // If a healthy socket is open, prefer it — the onopen handler drains
+    // the backlog, so we just wait for that.
+    if (relaySocket?.readyState === WebSocket.OPEN) return;
     flushRunning = true;
     try {
-      if (!registered && !(await register())) return;
       while (pendingEvents.length && !stopped) {
-        const event = pendingEvents[0];
-        try {
-          await request(`/v1/external-sessions/${id}/events`, "POST", event);
-          pendingEvents.shift();
-        } catch {
-          registered = false;
-          break;
-        }
+        // If a socket appeared while we were flushing, hand off to it.
+        if (relaySocket?.readyState === WebSocket.OPEN) break;
+        const ok = await sendEventHttp(pendingEvents[0]);
+        if (ok) pendingEvents.shift();
+        else break;
       }
     } finally {
       flushRunning = false;
     }
   };
+
+  // ── command ack / delivery ────────────────────────────────────────────
 
   const acknowledge = async (commandId: string) => {
     if (relaySocket?.readyState === WebSocket.OPEN) {
@@ -132,23 +217,46 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     emit({ type: "bridge_receipt", commandId: command.id, status: "delivered" });
     ui?.notify(`Remote ${delivery === "steer" ? "steer" : "message"} received`, "info");
     handledCommands.add(command.id);
-    if (handledCommands.size > 500) handledCommands.delete(handledCommands.values().next().value!);
+    if (handledCommands.size > 500) {
+      const first = handledCommands.values().next().value;
+      if (first !== undefined) handledCommands.delete(first);
+    }
     await acknowledge(command.id);
   };
 
+  // ── WebSocket ─────────────────────────────────────────────────────────
+
   const connectRelay = () => {
-    if (stopped || !id || !baseUrl || relaySocket?.readyState === WebSocket.OPEN || relaySocket?.readyState === WebSocket.CONNECTING) return;
+    if (stopped || !id || !baseUrl) return;
+    // Guard: don't open a duplicate socket.
+    if (relaySocket?.readyState === WebSocket.OPEN || relaySocket?.readyState === WebSocket.CONNECTING) return;
+    // Require registration + lease before attempting WS so the handshake
+    // never proceeds without a valid lease.
+    if (!registered || !lease) { void register().then((ok) => { if (ok && !stopped) connectRelay(); }); return; }
+
+    const gen = ++socketGen;
+
     // Authenticate via a WebSocket subprotocol instead of a URL query token so
     // the secret stays out of URLs, proxy logs, and process listings. Tokens
     // outside the subprotocol grammar fall back to the deprecated query param.
     const subprotocolSafe = token ? /^[A-Za-z0-9._~-]+$/.test(token) : false;
+    if (token && !subprotocolSafe) {
+      // Never put a bearer token in the WebSocket URL. The server deliberately
+      // accepts relay credentials only through Sec-WebSocket-Protocol. HTTP
+      // polling remains available as the safe fallback for unusual tokens.
+      ui?.setStatus("external-session-bridge", "Bridge: connected (HTTP fallback; token is not WebSocket-safe)");
+      return;
+    }
     const relayQuery = new URLSearchParams({ lease });
-    if (token && !subprotocolSafe) relayQuery.set("relayToken", token);
     const wsUrl = baseUrl.replace(/^http/, "ws") + `/v1/external-sessions/relay/${encodeURIComponent(id)}?${relayQuery}`;
     try {
       const socket = subprotocolSafe ? new WebSocket(wsUrl, [`pi-relay.${token}`]) : new WebSocket(wsUrl);
       relaySocket = socket;
+
       socket.onopen = async () => {
+        // Stale-guard: a newer socket already took over.
+        if (gen !== socketGen) return;
+        resetBackoff();
         ui?.setStatus("external-session-bridge", "Bridge: connected");
         // Re-emit current model/thinking state so the server refreshes after
         // any events that were dropped during the disconnect window.
@@ -157,21 +265,42 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
         // Wait for any in-flight HTTP flush before draining the backlog over the
         // socket so both paths never send the same queue concurrently.
         while (flushRunning) await new Promise((resolve) => setTimeout(resolve, 50));
-        while (pendingEvents.length && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "event", event: pendingEvents.shift() }));
+        while (pendingEvents.length && socket.readyState === WebSocket.OPEN && gen === socketGen) {
+          socket.send(JSON.stringify({ type: "event", event: pendingEvents.shift() }));
+        }
       };
+
       socket.onmessage = async (message) => {
+        if (gen !== socketGen) return; // stale socket — ignore
         try {
           const envelope = JSON.parse(String(message.data)) as { type?: string; command?: { id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt" } };
           if (envelope.type === "command" && envelope.command) await deliverCommand(envelope.command);
         } catch (error) { ui?.notify(`Bridge command failed: ${error instanceof Error ? error.message : "unknown error"}`, "error"); }
       };
+
       socket.onclose = () => {
+        if (gen !== socketGen) return; // stale socket — don't mutate state or reschedule
         if (relaySocket === socket) relaySocket = undefined;
-        if (!stopped) { ui?.setStatus("external-session-bridge", "Bridge: reconnecting"); relayReconnectTimer = setTimeout(connectRelay, 1_000); }
+        if (!stopped) {
+          ui?.setStatus("external-session-bridge", `Bridge: reconnecting (ws closed)`);
+          scheduleReconnect();
+        }
       };
+
       socket.onerror = () => socket.close();
-    } catch { relayReconnectTimer = setTimeout(connectRelay, 2_000); }
+    } catch {
+      scheduleReconnect();
+    }
   };
+
+  /** Schedule a reconnect with exponential backoff + jitter. */
+  const scheduleReconnect = () => {
+    if (relayReconnectTimer) clearTimeout(relayReconnectTimer);
+    const delay = nextBackoff();
+    relayReconnectTimer = setTimeout(() => { relayReconnectTimer = undefined; connectRelay(); }, delay);
+  };
+
+  // ── HTTP polling fallback ─────────────────────────────────────────────
 
   async function pollCommands() {
     if (pollRunning) return;
@@ -183,6 +312,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       }
       try {
         if (!registered && !(await register())) throw new Error("not registered");
+        if (registered && !relaySocket) connectRelay();
         const response = await request(`/v1/external-sessions/${id}/commands?lease=${encodeURIComponent(lease)}`);
         const data = await response.json() as { commands?: Array<{ id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt" }> };
         for (const command of data.commands ?? []) await deliverCommand(command);
@@ -195,22 +325,38 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     pollRunning = false;
   }
 
+  // ── reconnect ─────────────────────────────────────────────────────────
+
   const reconnectBridge = async () => {
+    const configChanged = refreshConfig();
     stopped = false;
     registered = false;
+    // Bump generation so any in-flight socket callbacks become no-ops.
+    socketGen++;
     relaySocket?.close();
     relaySocket = undefined;
+    if (configChanged) lease = "";
     if (relayReconnectTimer) clearTimeout(relayReconnectTimer);
+    relayReconnectTimer = undefined;
+    resetBackoff();
     const ok = await register();
     if (ok) { await flushEvents(); connectRelay(); }
   };
 
+  // ── commands ──────────────────────────────────────────────────────────
+
   pi.registerCommand("bridge-status", {
     description: "Show external session bridge status",
     handler: async (_args, ctx) => {
-      ctx.ui.notify(baseUrl
-        ? `Bridge: ${registered ? "connected" : "reconnecting"} · ${id || "no session"} · queued events: ${pendingEvents.length}`
-        : "Bridge: disabled — set PI_EXTERNAL_RELAY_URL, then restart Pi.", "info");
+      if (!baseUrl) {
+        ctx.ui.notify("Bridge: disabled — set PI_EXTERNAL_RELAY_URL, then restart Pi.", "info");
+        return;
+      }
+      const regState = registered ? "registered" : "unregistered";
+      ctx.ui.notify(
+        `Bridge: ${regState} · ${bridgeSummary()}`,
+        registered ? "info" : "warning",
+      );
     },
   });
 
@@ -219,7 +365,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       ctx.ui.setStatus("external-session-bridge", "Bridge: reconnecting");
       await reconnectBridge();
-      ctx.ui.notify(`Bridge: ${registered ? "connected" : "unable to connect"}`, registered ? "info" : "error");
+      ctx.ui.notify(`Bridge: ${registered ? "connected" : "unable to connect"} (${bridgeSummary()})`, registered ? "info" : "error");
     },
   });
 
@@ -227,22 +373,30 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     description: "Disconnect this Pi session from pi-server until the next reconnect",
     handler: async (_args, ctx) => {
       stopped = true;
+      socketGen++; // invalidate any outstanding socket callbacks
       relaySocket?.close();
+      relaySocket = undefined;
+      if (relayReconnectTimer) clearTimeout(relayReconnectTimer);
+      relayReconnectTimer = undefined;
       ui?.setStatus("external-session-bridge", "Bridge: disconnected");
       ctx.ui.notify("Bridge disconnected. Use /bridge-reconnect to restore it.", "info");
     },
   });
 
+  // ── Pi events ─────────────────────────────────────────────────────────
+
   pi.on("session_start", async (_event, ctx) => {
     ui = ctx.ui;
     sessionCtx = ctx;
     abortCurrent = () => ctx.abort();
+    refreshConfig();
     if (!baseUrl) {
       ui.setStatus("external-session-bridge", "Bridge: disabled (set PI_EXTERNAL_RELAY_URL)");
       return;
     }
     stopped = false;
     registered = false;
+    socketGen++;
     sessionPath = ctx.sessionManager.getSessionFile() ?? "";
     id = sessionId(sessionPath);
     cwd = process.cwd();
@@ -252,15 +406,19 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     ui.setStatus("external-session-bridge", "Bridge: connecting");
     await register();
     void flushEvents();
+    // connectRelay now gates on registered + lease being present.
     connectRelay();
     // HTTP polling remains a temporary fallback if a network blocks WebSockets.
     void pollCommands();
   });
   pi.on("session_shutdown", async () => {
     stopped = true;
+    socketGen++;
     relaySocket?.close();
+    relaySocket = undefined;
     abortCurrent = undefined;
     if (relayReconnectTimer) clearTimeout(relayReconnectTimer);
+    relayReconnectTimer = undefined;
     ui?.setStatus("external-session-bridge", undefined);
     emit({ type: "message_end", message: { role: "assistant" } });
   });

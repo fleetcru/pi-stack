@@ -27,7 +27,18 @@ func (s *Server) externalRelayWebSocket(w http.ResponseWriter, r *http.Request) 
 		writeErrorText(w, http.StatusConflict, "external relay lease is no longer current")
 		return
 	}
-	conn, err := s.upgrader.Upgrade(w, r, nil)
+	// Echo the authenticated relay subprotocol. WebSocket clients that offer a
+	// subprotocol require the server to select one in the handshake; omitting it
+	// causes the client to close immediately even though HTTP registration works.
+	responseHeader := http.Header{}
+	for _, protocol := range strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
+		protocol = strings.TrimSpace(protocol)
+		if strings.HasPrefix(protocol, "pi-relay.") {
+			responseHeader.Set("Sec-WebSocket-Protocol", protocol)
+			break
+		}
+	}
+	conn, err := s.upgrader.Upgrade(w, r, responseHeader)
 	if err != nil {
 		detach()
 		return
