@@ -101,6 +101,7 @@ fun SessionDetailScreen(
   val extensionRequest by viewModel.extensionRequest.collectAsStateWithLifecycle()
   val modelControls by viewModel.modelControls.collectAsStateWithLifecycle()
   val relayHealth by viewModel.relayHealth.collectAsStateWithLifecycle()
+  val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
   val gitOutput by viewModel.gitOutput.collectAsStateWithLifecycle()
   val hasOlderHistory by viewModel.hasOlderHistory.collectAsStateWithLifecycle()
   val loadingOlderHistory by viewModel.loadingOlderHistory.collectAsStateWithLifecycle()
@@ -132,7 +133,8 @@ fun SessionDetailScreen(
       onBack = onBack,
       connectionState = connectionState,
       relayHealth = relayHealth,
-      onReconnect = { viewModel.reconnect() },
+      refreshing = refreshing,
+      onRefresh = viewModel::refresh,
       onCompact = { viewModel.compact() },
       onControls = { controlsOpen = true },
       onFiles = { filesOpen = true },

@@ -70,6 +70,8 @@ class SessionDetailViewModel(
   val modelControls: StateFlow<ModelControls> = _modelControls.asStateFlow()
   private val _relayHealth = MutableStateFlow<RelayHealth?>(null)
   val relayHealth: StateFlow<RelayHealth?> = _relayHealth.asStateFlow()
+  private val _refreshing = MutableStateFlow(false)
+  val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
 
   private val _extensionRequest = MutableStateFlow<ExtensionUiRequest?>(null)
   val extensionRequest: StateFlow<ExtensionUiRequest?> = _extensionRequest.asStateFlow()
@@ -806,6 +808,23 @@ class SessionDetailViewModel(
   }
 
   fun activeServerForUi(): com.example.picompanion.data.settings.ServerEntry? = activeServer
+
+  fun refresh() {
+    if (closed || _refreshing.value) return
+    viewModelScope.launch {
+      _refreshing.value = true
+      try {
+        loadMetadata()
+        loadHistory()
+        refreshRelayHealth()
+        if (_connectionState.value is ConnectionState.Disconnected || _connectionState.value is ConnectionState.Error) {
+          reconnect()
+        }
+      } finally {
+        _refreshing.value = false
+      }
+    }
+  }
 
   fun reconnect() {
     reconnectJob?.cancel()

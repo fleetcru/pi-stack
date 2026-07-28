@@ -45,7 +45,8 @@ fun SessionHeader(
   onBack: () -> Unit,
   connectionState: ConnectionState,
   relayHealth: RelayHealth?,
-  onReconnect: () -> Unit,
+  refreshing: Boolean,
+  onRefresh: () -> Unit,
   onCompact: () -> Unit,
   onControls: () -> Unit,
   onFiles: () -> Unit,
@@ -100,6 +101,18 @@ fun SessionHeader(
           // Connection state indicator
           ConnectionIndicator(connectionState)
 
+          IconButton(
+            onClick = onRefresh,
+            enabled = !refreshing,
+            modifier = Modifier.size(40.dp),
+          ) {
+            if (refreshing) {
+              CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            } else {
+              Icon(Icons.Default.Refresh, contentDescription = "Refresh session", modifier = Modifier.size(20.dp))
+            }
+          }
+
           if (connectionState is ConnectionState.Connected) {
             IconButton(onClick = onFiles, modifier = Modifier.size(40.dp)) {
               Icon(Icons.Default.Folder, contentDescription = "Browse files", modifier = Modifier.size(20.dp))
@@ -124,12 +137,6 @@ fun SessionHeader(
                   onClick = { menuExpanded = false; onControls() },
                 )
               }
-            }
-          }
-
-          if (connectionState is ConnectionState.Error || connectionState is ConnectionState.Disconnected) {
-            IconButton(onClick = onReconnect, modifier = Modifier.size(40.dp)) {
-              Icon(Icons.Default.Refresh, contentDescription = "Reconnect", modifier = Modifier.size(20.dp))
             }
           }
         }
