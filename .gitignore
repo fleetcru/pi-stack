@@ -2,6 +2,8 @@
 .data/
 *.log
 *.tmp
+*.err
+*.out
 
 # ── Go ────────────────────────────────────────────────────
 pi-server-exp/pi-server

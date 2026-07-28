@@ -27,6 +27,7 @@ Environment variables:
 - `PI_SERVER_MAX_WATCHES` default `2048` directories watched per session; dependency, VCS, cache, and generated-output directories are skipped
 - `PI_SERVER_DEBUG=1` enables debug logging
 - `PI_SERVER_AUTH_TOKEN` enables bearer-token authentication
+- `PI_SERVER_ALLOW_INSECURE` set to `1` to allow non-loopback binding without auth
 - `PI_SERVER_ALLOWED_ORIGINS` comma-separated browser origin allowlist
 - `PI_SERVER_ALLOWED_ROOTS` comma-separated cwd/file API root allowlist
 - `PI_SERVER_ALLOWED_WORKER_HOSTS` comma-separated remote worker host allowlist

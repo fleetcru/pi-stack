@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'pi-webby-exp/**'
+      - 'pi-companion-exp/**'
+      - 'pi-desktop-app/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - 'pi-webby-exp/**'
+      - 'pi-companion-exp/**'
+      - 'pi-desktop-app/**'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  webby:
+    name: Webby — typecheck, lint, test, build
+    # On push/PR the paths filter above already scopes this workflow.
+    # For manual dispatch both projects always run.
+    defaults:
+      run:
+        working-directory: pi-webby-exp
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: pi-webby-exp/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+  desktop:
+    name: Desktop — typecheck, lint, build, Rust check
+    defaults:
+      run:
+        working-directory: pi-desktop-app
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: pi-desktop-app/pnpm-lock.yaml
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Build frontend
+        run: pnpm build
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check Tauri Rust crate
+        working-directory: pi-desktop-app/src-tauri
+        run: cargo check
+
+  android:
+    name: Android — compile & unit tests
+    defaults:
+      run:
+        working-directory: pi-companion-exp
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Compile debug Kotlin
+        run: ./gradlew :app:compileDebugKotlin
+
+      - name: Unit tests
+        run: ./gradlew :app:testDebugUnitTest

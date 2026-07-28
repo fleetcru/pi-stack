@@ -11,16 +11,21 @@
     Port to listen on. Default: 3142
 
 .PARAMETER AuthToken
-    Optional auth token for API authentication.
+    Auth token for API authentication. Auto-generated if not provided.
+
+.PARAMETER AllowInsecure
+    Allow binding to 0.0.0.0 without auth enforcement. Use only on trusted networks.
 
 .EXAMPLE
     .\install-server.ps1
     .\install-server.ps1 -Port 9000 -AuthToken "my-secret"
+    .\install-server.ps1 -AllowInsecure
 #>
 
 param(
     [int]$Port = 3142,
-    [string]$AuthToken = ""
+    [string]$AuthToken = "",
+    [switch]$AllowInsecure
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,6 +43,14 @@ function Write-Step($msg) { Write-Host "[info] $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "[ok] $msg" -ForegroundColor Green }
 function Write-Warn($msg) { Write-Host "[warn] $msg" -ForegroundColor Yellow }
 function Write-Fail($msg) { Write-Host "[error] $msg" -ForegroundColor Red; exit 1 }
+
+# Generate auth token if not provided
+if (-not $AuthToken) {
+    $bytes = New-Object byte[] 32
+    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    $AuthToken = [Convert]::ToBase64String($bytes) -replace '[/+=]', '' | ForEach-Object { $_.Substring(0, [Math]::Min(32, $_.Length)) }
+    Write-Step "Generated auth token: $AuthToken"
+}
 
 # ── Create directories ────────────────────────────────────
 Write-Step "Creating directories..."
@@ -88,11 +101,14 @@ $EnvContent = @"
 PI_SERVER_ADDR=0.0.0.0:$Port
 PI_SERVER_DATA_DIR=$DataDir
 PI_SERVER_ALLOWED_ROOTS=$DataDir
-PI_SERVER_ALLOW_INSECURE=1
-
-# Set a token to require authentication:
-# PI_SERVER_AUTH_TOKEN=your-secret-token
+PI_SERVER_AUTH_TOKEN=$AuthToken
 "@
+
+# Only add ALLOW_INSECURE if explicitly requested
+if ($AllowInsecure) {
+    $EnvContent += "`nPI_SERVER_ALLOW_INSECURE=1"
+    Write-Warn "Running in INSECURE mode — auth token will not be enforced"
+}
 
 Set-Content -Path $EnvFile -Value $EnvContent -Encoding UTF8
 Write-Ok "Config written to $EnvFile"
@@ -183,6 +199,6 @@ Write-Host "    Start-ScheduledTask -TaskName '$TaskName'" -ForegroundColor Cyan
 Write-Host "    Stop-ScheduledTask -TaskName '$TaskName'" -ForegroundColor Cyan
 Write-Host "    Get-ScheduledTask -TaskName '$TaskName'" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Set PI_SERVER_AUTH_TOKEN in $EnvFile" -ForegroundColor Yellow
-Write-Host "  before exposing this to the internet!" -ForegroundColor Yellow
+Write-Host "  Auth token: $AuthToken" -ForegroundColor Cyan
+Write-Host "  Save this token — it is required for all API connections." -ForegroundColor Yellow
 Write-Host "==================================================" -ForegroundColor Green

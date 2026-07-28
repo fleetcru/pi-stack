@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from "react"
+import { memo, useCallback, useMemo, useRef, useState } from "react"
 import { ArrowUp, Bot, Brain, ChevronRight, ImagePlus, Sparkles, Square, Terminal, X } from "lucide-react"
 import { useImageAttachments } from "@/hooks/use-image-attachments"
 import ReactMarkdown from "react-markdown"
@@ -48,7 +48,8 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const [prompt, setPrompt] = useState("")
   const [deliveryNotice, setDeliveryNotice] = useState<string | undefined>()
   const [deliveryCommandId, setDeliveryCommandId] = useState<string | undefined>()
-  const imageAttachments = useImageAttachments()
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const imageAttachments = useImageAttachments(imageInputRef)
   const client = usePiServerClient()
   const socket = useActiveSessionSocket(sessionId)
   const historyQuery = useSessionHistory(sessionId)
@@ -294,7 +295,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 </Select>
                   </div>
                 <input
-                  ref={imageAttachments.inputRef}
+                  ref={imageInputRef}
                   type="file"
                   accept="image/*"
                   multiple

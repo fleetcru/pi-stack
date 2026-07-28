@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { GitBranch } from "lucide-react"
 
 import type { ApiSession, RpcResponse } from "@/api/client"
@@ -357,8 +357,11 @@ function Settings({ session }: { session: ApiSession }) {
   const [project, setProject] = useState(session.project ?? "")
   const [autoRetry, setAutoRetry] = useState(true)
   // Sync local state when the session prop changes (e.g., after server-side rename).
-  useEffect(() => { setTitle(session.title ?? "") }, [session.title])
-  useEffect(() => { setProject(session.project ?? "") }, [session.project])
+  // Track previous prop values via state to avoid useEffect cascading renders.
+  const [prevSessionTitle, setPrevSessionTitle] = useState(session.title)
+  const [prevSessionProject, setPrevSessionProject] = useState(session.project)
+  if (prevSessionTitle !== session.title) { setPrevSessionTitle(session.title); setTitle(session.title ?? "") }
+  if (prevSessionProject !== session.project) { setPrevSessionProject(session.project); setProject(session.project ?? "") }
 
   async function refresh() {
     await stateQuery.refetch()

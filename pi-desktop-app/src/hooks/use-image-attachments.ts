@@ -41,10 +41,11 @@ function readFileAsBase64(file: File): Promise<string> {
   })
 }
 
-export function useImageAttachments() {
+export function useImageAttachments(inputRef?: React.RefObject<HTMLInputElement | null>) {
   const [images, setImages] = useState<PendingImage[]>([])
   const [error, setError] = useState<string | undefined>()
-  const inputRef = useRef<HTMLInputElement>(null)
+  const fallbackRef = useRef<HTMLInputElement>(null)
+  const effectiveRef = inputRef ?? fallbackRef
 
   const addFiles = useCallback(async (files: File[]) => {
     setError(undefined)
@@ -156,8 +157,8 @@ export function useImageAttachments() {
 
   /** Open the native file picker. */
   const openPicker = useCallback(() => {
-    inputRef.current?.click()
-  }, [])
+    effectiveRef.current?.click()
+  }, [effectiveRef])
 
   const handlePickerChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -172,7 +173,6 @@ export function useImageAttachments() {
   return {
     images,
     error,
-    inputRef,
     addFiles,
     removeImage,
     clearImages,

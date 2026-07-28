@@ -8,7 +8,7 @@ import { PiServerProvider } from "@/api/provider.tsx"
 import { ThemeProvider } from "@/components/theme-provider.tsx"
 
 // Disable right-click context menu in the desktop app
-if (window.__TAURI_INTERNALS__) {
+if ("__TAURI_INTERNALS__" in window) {
   document.addEventListener("contextmenu", (e) => e.preventDefault())
 }
 

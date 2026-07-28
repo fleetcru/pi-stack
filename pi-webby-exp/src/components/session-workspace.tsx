@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from "react"
+import { memo, useCallback, useMemo, useRef, useState } from "react"
 import { ArrowUp, Bot, Brain, ChevronRight, ImagePlus, Sparkles, Square, Terminal, X } from "lucide-react"
 import { useImageAttachments } from "@/hooks/use-image-attachments"
 import ReactMarkdown from "react-markdown"
@@ -48,7 +48,8 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const [prompt, setPrompt] = useState("")
   const [deliveryNotice, setDeliveryNotice] = useState<string | undefined>()
   const [deliveryCommandId, setDeliveryCommandId] = useState<string | undefined>()
-  const imageAttachments = useImageAttachments()
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const { images: pendingImages, error: imageError, ...imageActions } = useImageAttachments(imageInputRef)
   const client = usePiServerClient()
   const socket = useActiveSessionSocket(sessionId)
   const historyQuery = useSessionHistory(sessionId)
@@ -91,7 +92,10 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // Derive live runtime state from WS events. The runtime_state event is
   // emitted by the server whenever the process state transitions. This is
   // more responsive than HTTP polling which freezes when WS is open.
-  const wsRuntimeState = useMemo(() => {
+  // Derive live runtime state from WS events. The runtime_state event is
+  // emitted by the server whenever the process state transitions. This is
+  // more responsive than HTTP polling which freezes when WS is open.
+  const wsRuntimeState = (() => {
     for (let i = socket.events.length - 1; i >= 0; i--) {
       const ev = socket.events[i]
       if (ev.type === "runtime_state") {
@@ -103,7 +107,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
       }
     }
     return undefined
-  }, [socket.events])
+  })()
   // Use WS runtime state when available (WS open), fall back to HTTP polling (WS closed).
   const isWorking = socket.status === "open"
     ? wsRuntimeState?.state === "working" || wsRuntimeState?.state === "starting" || wsRuntimeState?.state === "reconnecting"
@@ -125,16 +129,16 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   async function sendPrompt(mode: "prompt" | "steer" = "prompt") {
     const message = prompt.trim()
-    if (!message && imageAttachments.images.length === 0) return
+    if (!message && pendingImages.length === 0) return
     try {
       setDeliveryNotice("Sending…")
-      const images = await imageAttachments.toImageContent()
+      const images = await imageActions.toImageContent()
       const request = { message, images: images.length > 0 ? images : undefined }
       const response = mode === "steer" ? await client.steer(sessionId, request) : await client.prompt(sessionId, request)
       const commandId = (response as Record<string, unknown>).commandId
       setDeliveryCommandId(typeof commandId === "string" ? commandId : undefined)
       setPrompt("")
-      imageAttachments.clearImages()
+      imageActions.clearImages()
       setDeliveryNotice(mode === "steer" ? "Steering Pi now…" : "Sent to bridged Pi. It will arrive at the next safe turn boundary.")
     } catch (error) {
       setDeliveryNotice(error instanceof Error ? error.message : "Could not send message to Pi")
@@ -230,13 +234,13 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
           >
             <div
               className="rounded-2xl bg-muted/70 shadow-sm"
-              onPaste={imageAttachments.handlePaste}
-              onDragOver={imageAttachments.handleDragOver}
-              onDrop={imageAttachments.handleDrop}
+              onPaste={imageActions.handlePaste}
+              onDragOver={imageActions.handleDragOver}
+              onDrop={imageActions.handleDrop}
             >
-              {imageAttachments.images.length > 0 && (
+              {pendingImages.length > 0 && (
                 <div className="flex flex-wrap gap-2 px-4 pt-3 pb-1">
-                  {imageAttachments.images.map((img) => (
+                  {pendingImages.map((img) => (
                     <div key={img.id} className="group relative shrink-0">
                       <div className="h-16 w-16 overflow-hidden rounded-lg border border-border">
                         <img
@@ -247,7 +251,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                       </div>
                       <button
                         type="button"
-                        onClick={() => imageAttachments.removeImage(img.id)}
+                        onClick={() => imageActions.removeImage(img.id)}
                         className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-border bg-background text-muted-foreground opacity-0 transition-opacity hover:bg-destructive hover:text-white group-hover:opacity-100"
                         aria-label="Remove image"
                       >
@@ -257,8 +261,8 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   ))}
                 </div>
               )}
-              {imageAttachments.error && (
-                <p className="px-4 pt-2 text-xs text-destructive">{imageAttachments.error}</p>
+              {imageError && (
+                <p className="px-4 pt-2 text-xs text-destructive">{imageError}</p>
               )}
               <InputGroup className="rounded-2xl !border-0 !shadow-none !outline-none !ring-0 !ring-offset-0 has-[data-slot=input-group-control:focus-visible]:!ring-0 has-[data-slot=input-group-control:focus-visible]:!border-0">
               <InputGroupTextarea
@@ -313,19 +317,19 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 </Select>
                   </div>
                 <input
-                  ref={imageAttachments.inputRef}
+                  ref={imageInputRef}
                   type="file"
                   accept="image/*"
                   multiple
                   className="hidden"
-                  onChange={imageAttachments.handlePickerChange}
+                  onChange={imageActions.handlePickerChange}
                 />
                 <InputGroupButton
                   type="button"
                   size="icon-xs"
                   variant="ghost"
                   className="rounded-xl text-muted-foreground"
-                  onClick={imageAttachments.openPicker}
+                  onClick={imageActions.openPicker}
                   aria-label="Attach image"
                   title="Attach image (or paste/drop)"
                 >
@@ -336,7 +340,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   size="sm"
                   variant="outline"
                   className="rounded-xl"
-                  disabled={!prompt.trim() && imageAttachments.images.length === 0}
+                  disabled={!prompt.trim() && pendingImages.length === 0}
                   onClick={() => void sendPrompt("steer")}
                 >
                   Steer
@@ -345,7 +349,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   type={isWorking ? "button" : "submit"}
                   size="icon-sm"
                   className={`ml-auto rounded-full text-white ${isWorking ? "bg-red-600 hover:bg-red-500" : "bg-blue-600 hover:bg-blue-500"}`}
-                  disabled={isWorking ? false : !prompt.trim() && imageAttachments.images.length === 0}
+                  disabled={isWorking ? false : !prompt.trim() && pendingImages.length === 0}
                   onClick={isWorking ? () => void abortSession() : undefined}
                   aria-label={isWorking ? "Stop Pi" : "Send prompt"}
                   title={isWorking ? "Stop Pi" : "Send prompt"}

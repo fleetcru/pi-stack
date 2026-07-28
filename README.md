@@ -78,7 +78,7 @@ irm https://get.fleetcru.dev | iex
 - Runs at logon under your user account
 - No admin/root required
 
-### With authentication
+### With custom auth token
 
 ```bash
 # Linux
@@ -87,6 +87,16 @@ PI_SERVER_AUTH_TOKEN="my-secret" curl -sSL linux.fleetcru.dev | sudo bash
 # Windows
 irm https://windows.fleetcru.dev -OutFile install.ps1
 .\install.ps1 -AuthToken "my-secret"
+```
+
+### Insecure mode (local/trusted networks only)
+
+```bash
+# Linux
+curl -sSL linux.fleetcru.dev | sudo bash -s -- --insecure
+
+# Windows
+.\install-server.ps1 -AllowInsecure
 ```
 
 ## Quick start (development)
@@ -146,7 +156,7 @@ All configuration is via environment variables (or CLI flags for the server):
 | `PI_SERVER_ALLOWED_ROOTS` | `.` | Restrict session CWDs to these paths |
 | `PI_SERVER_ALLOWED_ORIGINS` | _(none)_ | CORS allowed origins (comma-separated) |
 | `PI_SERVER_MAX_SESSIONS` | `8` | Max concurrent Pi sessions (0 = unlimited) |
-| `PI_SERVER_ALLOW_INSECURE` | _(empty)_ | Set to `1` to allow non-loopback binding without auth |
+| `PI_SERVER_ALLOW_INSECURE` | _(empty)_ | Set to `1` to allow non-loopback binding without auth (install scripts use `--insecure` / `-AllowInsecure` flag) |
 | `PI_SERVER_PI_BINARY` | `pi` | Path to the Pi CLI executable |
 
 ## Building

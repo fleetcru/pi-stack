@@ -634,6 +634,8 @@ function MachineSessionList({ sessions, onOpen }: { sessions: MachineSession[]; 
     return cwds
   }, [sessionResult?.sessions])
 
+  const [expanded, setExpanded] = useState(false)
+
   // Filter out sessions with empty or missing CWD (defensive — server also filters)
   const validSessions = sessions.filter((s) => s.cwd && s.cwd.trim().length > 0)
   const invalidCount = sessions.length - validSessions.length
@@ -643,8 +645,6 @@ function MachineSessionList({ sessions, onOpen }: { sessions: MachineSession[]; 
   const alreadyOpenSessions = validSessions.filter((s) => liveSessionCwds.has(s.cwd))
 
   if (validSessions.length === 0 && invalidCount === 0) return null
-
-  const [expanded, setExpanded] = useState(false)
 
   return (
     <div className="mt-3 border-t border-border/60 pt-2">

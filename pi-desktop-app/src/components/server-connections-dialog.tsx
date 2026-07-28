@@ -92,12 +92,10 @@ export function ServerConnectionsDialog({
           {(() => {
             try {
               const url = new URL(baseUrl.trim())
-              if (url.protocol === "http:" && url.hostname !== "localhost" && url.hostname !== "127.0.0.1") {
-                return <p className="text-xs text-amber-600 dark:text-amber-400">HTTP sends your token in plaintext. Use HTTPS for remote servers.</p>
-              }
+              return url.protocol === "http:" && url.hostname !== "localhost" && url.hostname !== "127.0.0.1"
             } catch { /* ignore invalid URL while typing */ }
-            return null
-          })()}
+            return false
+          })() && <p className="text-xs text-amber-600 dark:text-amber-400">HTTP sends your token in plaintext. Use HTTPS for remote servers.</p>}
           <Input value={token} onChange={(event) => setToken(event.target.value)} placeholder="Auth token (raw value; do not include Bearer)" type="password" />
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             <Checkbox checked={rememberToken} onCheckedChange={(checked: boolean) => setRememberToken(checked)} />

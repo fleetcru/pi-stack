@@ -174,7 +174,7 @@ External Pi TUI sessions bridge into pi-server via the `external-session-bridge.
 | `PI_SERVER_ALLOWED_ROOTS` | `.` | Restrict session CWDs |
 | `PI_SERVER_ALLOWED_ORIGINS` | _(none)_ | CORS origins (comma-separated) |
 | `PI_SERVER_MAX_SESSIONS` | `8` | Max concurrent sessions (0 = unlimited) |
-| `PI_SERVER_ALLOW_INSECURE` | _(empty)_ | `1` to allow non-loopback without auth |
+| `PI_SERVER_ALLOW_INSECURE` | _(empty)_ | `1` to allow non-loopback without auth (install scripts use `--insecure` / `-AllowInsecure` flag) |
 | `PI_SERVER_PI_BINARY` | `pi` | Path to Pi CLI |
 | `PI_SERVER_PI_EXTENSIONS` | _(none)_ | Extensions to load |
 

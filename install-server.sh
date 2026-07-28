@@ -10,6 +10,7 @@ CONFIG_DIR="/etc/pi-server"
 USER="pi-server"
 PORT="${PI_SERVER_PORT:-3142}"
 AUTH_TOKEN="${PI_SERVER_AUTH_TOKEN:-}"
+ALLOW_INSECURE="${PI_SERVER_ALLOW_INSECURE:-}"
 
 # ── Colors ────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -22,6 +23,13 @@ info()  { echo -e "${CYAN}[info]${NC} $*"; }
 ok()    { echo -e "${GREEN}[ok]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[warn]${NC} $*"; }
 fail()  { echo -e "${RED}[error]${NC} $*" >&2; exit 1; }
+
+# ── Parse flags ──────────────────────────────────────────
+for arg in "$@"; do
+  case "$arg" in
+    --insecure) ALLOW_INSECURE=1 ;;
+  esac
+done
 
 # ── Checks ────────────────────────────────────────────────
 [[ $EUID -eq 0 ]] || fail "Run as root: curl -sSL ... | sudo bash"
@@ -96,6 +104,12 @@ else
   ok "Built from source"
 fi
 
+# ── Generate auth token if needed ────────────────────────
+if [[ -z "$AUTH_TOKEN" ]]; then
+  AUTH_TOKEN=$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)
+  info "Generated auth token: ${AUTH_TOKEN}"
+fi
+
 # ── Write config ──────────────────────────────────────────
 info "Writing configuration..."
 
@@ -106,11 +120,14 @@ cat > "${CONFIG_DIR}/pi-server.env" <<EOF
 PI_SERVER_ADDR=0.0.0.0:${PORT}
 PI_SERVER_DATA_DIR=${DATA_DIR}
 PI_SERVER_ALLOWED_ROOTS=${DATA_DIR}
-PI_SERVER_ALLOW_INSECURE=1
-
-# Set a token to require authentication:
-# PI_SERVER_AUTH_TOKEN=your-secret-token
+PI_SERVER_AUTH_TOKEN=${AUTH_TOKEN}
 EOF
+
+# Only add ALLOW_INSECURE if explicitly requested
+if [[ "$ALLOW_INSECURE" == "1" ]]; then
+  echo "PI_SERVER_ALLOW_INSECURE=1" >> "${CONFIG_DIR}/pi-server.env"
+  warn "Running in INSECURE mode — auth token will not be enforced"
+fi
 
 ok "Config written to ${CONFIG_DIR}/pi-server.env"
 
@@ -179,6 +196,6 @@ echo -e "    ${CYAN}systemctl restart ${SERVICE_NAME}${NC}   Restart"
 echo -e "    ${CYAN}systemctl stop ${SERVICE_NAME}${NC}      Stop"
 echo -e "    ${CYAN}systemctl status ${SERVICE_NAME}${NC}    Status"
 echo ""
-echo -e "${YELLOW}  Set PI_SERVER_AUTH_TOKEN in ${CONFIG_DIR}/pi-server.env${NC}"
-echo -e "${YELLOW}  before exposing this to the internet!${NC}"
+echo -e "  Auth token: ${CYAN}${AUTH_TOKEN}${NC}"
+echo -e "${YELLOW}  Save this token — it is required for all API connections.${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
