@@ -88,11 +88,13 @@ jobs:
         run: |
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
               --title "pi-companion v${{ steps.version.outputs.name }}" \
               --generate-notes \
               "staging/pi-companion-${{ steps.version.outputs.name }}.apk"
           else
             gh release create "v${{ steps.version.outputs.name }}-${{ github.run_number }}" \
+              --repo "$GITHUB_REPOSITORY" \
               --title "pi-companion ${{ steps.version.outputs.name }} (build ${{ github.run_number }})" \
               --notes "Manual build from ${{ github.sha }}" \
               --prerelease \
