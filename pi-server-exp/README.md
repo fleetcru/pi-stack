@@ -12,6 +12,54 @@ Go is the least-headache choice here: simple single-binary deployment, excellent
 go run ./cmd/pi-server --addr 127.0.0.1:3141
 ```
 
+### CLI flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--addr` | `127.0.0.1:3141` | HTTP listen address |
+| `--pi` | `pi` | Path to the pi executable |
+| `--cwd` | current directory | Default working directory for pi child processes |
+| `--data-dir` | `~/.pi/server` | Data directory for persisted session registry |
+| `--shutdown-timeout` | `10s` | Graceful shutdown timeout |
+| `--log-file` | *(stdout)* | Append log output to a file instead of stdout |
+| `--log-format` | `text` | Log format: `text`, `json`, or `logfmt` |
+| `--log-level` | `info` | Log level: `debug`, `info`, `warn`, `error` |
+| `--bg` | `false` | Detach and run in the background (see below) |
+
+### Logging
+
+pi-server uses [charmbracelet/log](https://github.com/charmbracelet/log) for colourful, structured output.  On a terminal you get colourised text with timestamps; when stdout is not a TTY (or when writing to a file) ANSI codes are automatically suppressed.
+
+**Examples:**
+
+```bash
+# JSON log to a file, debug level
+pi-server --log-format json --log-file /var/log/pi-server.log --log-level debug
+
+# logfmt for machine parsing
+pi-server --log-format logfmt
+
+# Default: colourised text to stdout
+pi-server
+```
+
+The `PI_SERVER_DEBUG=1` environment variable still works and is equivalent to `--log-level debug`.
+
+### Background mode (`--bg`)
+
+The `--bg` flag re-launches the server detached from the terminal so it continues running after you close the shell.  On Unix it calls `setsid(2)`; on Windows it uses `CREATE_NO_WINDOW` so no console window appears.
+
+```bash
+# Start in the background — parent exits immediately, child PID is printed.
+pi-server --bg
+
+# Logs go to PI_SERVER_DATA_DIR/stderr.log when running detached.
+```
+
+**Important:** `--bg` is for manual, interactive use only.  Systemd services and Windows Task Scheduler already run pi-server detached — do **not** use `--bg` under those launchers.  The install scripts (`install-server.sh`, `install-server.ps1`, `install-server-user.ps1`) never pass `--bg`.
+
+When `--bg` is used, the `--bg` flag is stripped from the child's argv, so the restarted process inherits the same flags (`--addr`, `--log-file`, etc.) but no longer detaches.
+
 Environment variables:
 
 - `PI_SERVER_ADDR` default `127.0.0.1:3141`
