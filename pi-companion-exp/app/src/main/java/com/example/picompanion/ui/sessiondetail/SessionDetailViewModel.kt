@@ -136,6 +136,17 @@ class SessionDetailViewModel(
   }
 
   private fun connect() {
+    // A reconnect must not let buffered tokens from the old socket append to
+    // the first assistant message received on the new socket.
+    assistantFlushJob?.cancel()
+    assistantFlushJob = null
+    pendingAssistantDeltas.clear()
+    toolFlushJob?.cancel()
+    toolFlushJob = null
+    pendingToolUpdates.clear()
+    assistantTextOpen = false
+    receivedAssistantTextInMessage = false
+
     viewModelScope.launch {
       _connectionState.value = ConnectionState.Connecting
       val appSettings = settingsDataStore.settingsFlow.first()
@@ -247,14 +258,31 @@ class SessionDetailViewModel(
               time = message.getString("timestamp").orEmpty(),
               isUser = role == "user",
             )
+          }.distinctBy { item ->
+            // A history refresh can contain the same persisted message twice
+            // around a compaction/replay boundary. Keep one copy per stable
+            // timestamp/content tuple, but do not collapse repeated prompts
+            // that have different timestamps.
+            "${item.isUser}|${item.time}|${item.text}"
           }
           val historyMeta = result.value["data"]?.jsonObject?.get("history")?.jsonObject
           _hasOlderHistory.value = historyMeta?.get("hasOlder")?.jsonPrimitive?.booleanOrNull == true
           nextHistoryOffset = historyMeta?.get("nextOffset")?.jsonPrimitive?.intOrNull ?: 0
           // Keep a canonical history list so refreshes do not discard older
           // pages, while live events remain at the bottom during reconnects.
-          val live = _items.value.filter { item -> item !in historicalItems }
-          historicalItems = if (appendOld) history + historicalItems else history
+          val live = _items.value.filter { item ->
+            item !in historicalItems && !(item is SessionTimelineItem.Chat &&
+              item.time == "now" && history.any { historical ->
+                historical.isUser == item.isUser && historical.text == item.text
+              })
+          }
+          historicalItems = (if (appendOld) history + historicalItems else history)
+            .distinctBy { item ->
+              when (item) {
+                is SessionTimelineItem.Chat -> "chat|${item.isUser}|${item.time}|${item.text}"
+                else -> item.toString()
+              }
+            }
           _items.value = historicalItems + live
         }
       }

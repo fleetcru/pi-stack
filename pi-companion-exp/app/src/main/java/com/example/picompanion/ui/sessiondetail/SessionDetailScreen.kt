@@ -117,8 +117,31 @@ fun SessionDetailScreen(
   }
   LaunchedEffect(items.size, streamVersion) {
     if (items.isNotEmpty()) {
+      // Check the position before moving. A one-row tolerance prevents a new
+      // streamed row from unexpectedly pulling the reader away from the end,
+      // while still following replies when the reader was already there.
       val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-      if (lastVisible >= items.lastIndex - 1) listState.scrollToItem(items.lastIndex)
+      if (!listState.isScrollInProgress && lastVisible >= items.lastIndex - 1) {
+        listState.scrollToItem(items.lastIndex)
+      }
+    }
+  }
+
+  // Index-based keys caused every row to be recreated when older history was
+  // prepended, which made the list jump and made fast swipes feel unreliable.
+  // Keep keys stable for existing rows, while suffixing repeated messages.
+  val itemKeys = remember(items) {
+    val occurrences = mutableMapOf<String, Int>()
+    items.map { item ->
+      val identity = when (item) {
+        is SessionTimelineItem.Chat -> "chat:${item.author}:${item.time}:${item.text}"
+        is SessionTimelineItem.Tool -> "tool:${item.callId}"
+        is SessionTimelineItem.FileChange -> "file:${item.operation}:${item.path}"
+        is SessionTimelineItem.System -> "system:${item.text}"
+      }
+      val occurrence = occurrences.getOrDefault(identity, 0)
+      occurrences[identity] = occurrence + 1
+      "$identity#$occurrence"
     }
   }
 
@@ -254,16 +277,7 @@ fun SessionDetailScreen(
         }
         // Stable timestamps/call IDs preserve the reader's anchor while an
         // older page is prepended. Live rows fall back to their current index.
-        itemsIndexed(items, key = { index, item ->
-          when (item) {
-            // Include the current index so duplicate timestamps, repeated file
-            // changes, and replayed system rows can never collide in Compose.
-            is SessionTimelineItem.Chat -> "chat-$index-${item.time}"
-            is SessionTimelineItem.Tool -> "tool-$index-${item.callId}"
-            is SessionTimelineItem.FileChange -> "file-$index-${item.operation}-${item.path}"
-            is SessionTimelineItem.System -> "system-$index"
-          }
-        }, contentType = { _, item ->
+        itemsIndexed(items, key = { index, _ -> itemKeys[index] }, contentType = { _, item ->
           when (item) {
             is SessionTimelineItem.Chat -> "chat"
             is SessionTimelineItem.Tool -> "tool"
