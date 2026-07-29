@@ -59,6 +59,10 @@ class SessionEventSocket(
     webSocket = null
     connected = false
     resynchronizing = false
+    // A reconnect may replay events that were observed on the previous
+    // socket. Deduplication is scoped to one connection; retaining this map
+    // can incorrectly discard valid replayed events after a reconnect.
+    synchronized(seenEventIds) { seenEventIds.clear() }
     // Long.MAX_VALUE deliberately suppresses replay on first open; history is
     // loaded separately, so it cannot serve as a gap-detection baseline.
     lastEventId = since?.takeUnless { it == Long.MAX_VALUE }

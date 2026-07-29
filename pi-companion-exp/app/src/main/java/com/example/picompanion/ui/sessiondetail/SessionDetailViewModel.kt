@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -87,6 +89,10 @@ class SessionDetailViewModel(
   private var nextHistoryOffset = 0
   private var historicalItems: List<SessionTimelineItem> = emptyList()
   private val historyMutex = kotlinx.coroutines.sync.Mutex()
+
+  private fun appendItem(item: SessionTimelineItem) {
+    _items.update { current -> current + item }
+  }
 
   private var lastEventId: Long = 0
   private var lastSentPrompt: String? = null
@@ -182,12 +188,17 @@ class SessionDetailViewModel(
               flushQueuedPrompts()
             }
             is SocketEvent.EventsLost -> {
-              _items.value = _items.value + SessionTimelineItem.System("Connection missed session events; restoring conversation history")
+              appendItem(SessionTimelineItem.System("Connection missed session events; restoring conversation history"))
               // Full replay plus persisted JSONL history reconciles any gap
               // caused by a bounded server ring or slow subscriber.
               activeServer?.let { server ->
-                viewModelScope.launch { openTicketedStream(server, null) }
-                viewModelScope.launch { loadHistory() }
+                // Reconcile the persisted conversation before replacing the
+                // socket. This prevents the history snapshot and replayed
+                // events from racing to overwrite one another.
+                viewModelScope.launch {
+                  loadHistory()
+                  openTicketedStream(server, null)
+                }
               }
             }
             is SocketEvent.Disconnected -> {
@@ -203,7 +214,7 @@ class SessionDetailViewModel(
               handleEvent(event.raw, event.type)
             }
             is SocketEvent.RawMessage -> {
-              _items.value = _items.value + SessionTimelineItem.System(event.text)
+              appendItem(SessionTimelineItem.System(event.text))
             }
           }
         }
@@ -239,60 +250,72 @@ class SessionDetailViewModel(
   }
 
   private suspend fun loadHistory(offset: Int = 0, appendOld: Boolean = false) {
-    // Prevent concurrent loads from interleaving and creating duplicate items.
-    if (!historyMutex.tryLock()) return
-    try {
-    if (appendOld) _loadingOlderHistory.value = true
-    when (val result = repository.getSessionMessages(sessionId, offset = offset)) {
-      is com.example.picompanion.data.api.HttpResult.Success -> {
-        val messages = result.value["data"]?.jsonObject?.get("messages") as? JsonArray
-        if (messages != null) {
-          val history = messages.mapNotNull { element ->
-            val message = element as? JsonObject ?: return@mapNotNull null
-            val role = message.getString("role") ?: return@mapNotNull null
-            if (role != "user" && role != "assistant") return@mapNotNull null
-            val text = message.findText()?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-            SessionTimelineItem.Chat(
-              author = if (role == "user") "You" else "Pi Agent",
-              text = text,
-              time = message.getString("timestamp").orEmpty(),
-              isUser = role == "user",
-            )
-          }.distinctBy { item ->
-            // A history refresh can contain the same persisted message twice
-            // around a compaction/replay boundary. Keep one copy per stable
-            // timestamp/content tuple, but do not collapse repeated prompts
-            // that have different timestamps.
-            "${item.isUser}|${item.time}|${item.text}"
-          }
-          val historyMeta = result.value["data"]?.jsonObject?.get("history")?.jsonObject
-          _hasOlderHistory.value = historyMeta?.get("hasOlder")?.jsonPrimitive?.booleanOrNull == true
-          nextHistoryOffset = historyMeta?.get("nextOffset")?.jsonPrimitive?.intOrNull ?: 0
-          // Keep a canonical history list so refreshes do not discard older
-          // pages, while live events remain at the bottom during reconnects.
-          val live = _items.value.filter { item ->
-            item !in historicalItems && !(item is SessionTimelineItem.Chat &&
-              item.time == "now" && history.any { historical ->
-                historical.isUser == item.isUser && historical.text == item.text
-              })
-          }
-          historicalItems = (if (appendOld) history + historicalItems else history)
-            .distinctBy { item ->
-              when (item) {
-                is SessionTimelineItem.Chat -> "chat|${item.isUser}|${item.time}|${item.text}"
-                else -> item.toString()
+    // Queue concurrent refreshes instead of silently dropping one while a
+    // previous history request is still in flight.
+    historyMutex.withLock {
+      if (appendOld) _loadingOlderHistory.value = true
+      try {
+        when (val result = repository.getSessionMessages(sessionId, offset = offset)) {
+          is com.example.picompanion.data.api.HttpResult.Success -> {
+            val data = result.value["data"]?.jsonObject
+            val messages = data?.get("messages") as? JsonArray
+            if (messages != null) {
+              val history = messages.mapNotNull { element ->
+                val message = element as? JsonObject ?: return@mapNotNull null
+                val role = message.getString("role") ?: return@mapNotNull null
+                if (role != "user" && role != "assistant") return@mapNotNull null
+                val text = message.findText()?.trim()?.takeIf { it.isNotEmpty() }
+                  ?: return@mapNotNull null
+                SessionTimelineItem.Chat(
+                  author = if (role == "user") "You" else "Pi Agent",
+                  text = text,
+                  time = message.getString("timestamp").orEmpty(),
+                  isUser = role == "user",
+                )
+              }.distinctBy { item ->
+                // A refresh can contain the same persisted message twice
+                // around a compaction/replay boundary.
+                "${item.isUser}|${item.time}|${item.text}"
+              }
+              val historyMeta = data["history"]?.jsonObject
+              _hasOlderHistory.value = historyMeta?.get("hasOlder")
+                ?.jsonPrimitive?.booleanOrNull == true
+              nextHistoryOffset = historyMeta?.get("nextOffset")
+                ?.jsonPrimitive?.intOrNull ?: 0
+
+              // Preserve already-loaded older pages while keeping live socket
+              // items at the bottom of the timeline.
+              historicalItems = (if (appendOld) history + historicalItems else history)
+                .distinctBy { item ->
+                  when (item) {
+                    is SessionTimelineItem.Chat ->
+                      "chat|${item.isUser}|${item.time}|${item.text}"
+                    else -> item.toString()
+                  }
+                }
+              // Atomic update prevents live events arriving during the HTTP
+              // request from being overwritten by the history snapshot.
+              _items.update { current ->
+                val live = current.filter { item ->
+                  item !in historicalItems && !(item is SessionTimelineItem.Chat &&
+                    item.time == "now" && history.any { historical ->
+                      historical.isUser == item.isUser && historical.text == item.text
+                    })
+                }
+                historicalItems + live
               }
             }
-          _items.value = historicalItems + live
+          }
+          is com.example.picompanion.data.api.HttpResult.Failure -> {
+            android.util.Log.w(
+              "SessionWS",
+              "Could not load session history: ${result.message}",
+            )
+          }
         }
+      } finally {
+        if (appendOld) _loadingOlderHistory.value = false
       }
-      is com.example.picompanion.data.api.HttpResult.Failure -> {
-        android.util.Log.w("SessionWS", "Could not load session history: ${result.message}")
-      }
-    }
-    if (appendOld) _loadingOlderHistory.value = false
-    } finally {
-      historyMutex.unlock()
     }
   }
 
@@ -500,7 +523,7 @@ class SessionDetailViewModel(
           val error = raw.getString("error") ?: "Prompt rejected"
           pendingPromptId = null
           _sendState.value = SendState.Failed(error)
-          _items.value = _items.value + SessionTimelineItem.System("Prompt failed: $error")
+          appendItem(SessionTimelineItem.System("Prompt failed: $error"))
           return
         }
         _sendState.value = SendState.Accepted
@@ -510,7 +533,7 @@ class SessionDetailViewModel(
       // does not render yet. They remain available in Logcat for diagnosis.
       else -> return
     }
-    _items.value = _items.value + item
+    appendItem(item)
   }
 
   private data class ToolUpdate(val callId: String?, val output: String?, val status: String)
@@ -526,14 +549,16 @@ class SessionDetailViewModel(
       delay(16)
       val batch = pendingToolUpdates.toList()
       pendingToolUpdates.clear()
-      val items = _items.value.toMutableList()
-      for (update in batch) {
-        val index = items.indexOfLast { it is SessionTimelineItem.Tool && it.callId == update.callId }
-        if (index < 0) continue
-        val current = items[index] as SessionTimelineItem.Tool
-        items[index] = current.copy(status = update.status, output = update.output ?: current.output)
+      _items.update { currentItems ->
+        val items = currentItems.toMutableList()
+        for (update in batch) {
+          val index = items.indexOfLast { it is SessionTimelineItem.Tool && it.callId == update.callId }
+          if (index < 0) continue
+          val current = items[index] as SessionTimelineItem.Tool
+          items[index] = current.copy(status = update.status, output = update.output ?: current.output)
+        }
+        items
       }
-      _items.value = items
     }
   }
 
@@ -551,7 +576,9 @@ class SessionDetailViewModel(
       if (buffered.isEmpty()) return@launch
       val last = _items.value.lastOrNull()
       if (assistantTextOpen && last is SessionTimelineItem.Chat && !last.isUser && last.author == "Pi Agent") {
-        _items.value = _items.value.dropLast(1) + last.copy(text = last.text + buffered)
+        _items.update { current ->
+          if (current.lastOrNull() == last) current.dropLast(1) + last.copy(text = last.text + buffered) else current
+        }
       } else {
         appendAssistantMessage(buffered)
         assistantTextOpen = true
@@ -560,12 +587,12 @@ class SessionDetailViewModel(
   }
 
   private fun appendAssistantMessage(text: String) {
-    _items.value = _items.value + SessionTimelineItem.Chat(
+    appendItem(SessionTimelineItem.Chat(
       author = "Pi Agent",
       text = text,
       time = "",
       isUser = false,
-    )
+    ))
   }
 
   private fun formatTime(raw: JsonObject): String {
@@ -592,9 +619,9 @@ class SessionDetailViewModel(
     if (message.isBlank() && imageUris.isEmpty()) return
     if (imageUris.isNotEmpty()) {
       val server = activeServer ?: return
-      _items.value = _items.value + SessionTimelineItem.Chat(
+      appendItem(SessionTimelineItem.Chat(
         author = "You", text = message, time = "now", isUser = true, imageUris = imageUris,
-      )
+      ))
       viewModelScope.launch {
         _sendState.value = SendState.Sending
         val images = withContext(Dispatchers.IO) {
@@ -633,7 +660,7 @@ class SessionDetailViewModel(
       // Previously the prompt was silently discarded here. Queue it and flush
       // once the stream connects so slow networks don't eat typed messages.
       if (queuedPrompts.size < 20) queuedPrompts.add(message)
-      _items.value = _items.value + SessionTimelineItem.System("Connecting — message will be sent when the session is reachable")
+      appendItem(SessionTimelineItem.System("Connecting — message will be sent when the session is reachable"))
       return
     }
 
@@ -643,12 +670,12 @@ class SessionDetailViewModel(
     lastSentPrompt = message
 
     // Optimistic: add user message to timeline immediately
-    _items.value = _items.value + SessionTimelineItem.Chat(
+    appendItem(SessionTimelineItem.Chat(
       author = "You",
       text = message,
       time = "now",
       isUser = true,
-    )
+    ))
 
     // REST is the authoritative route for both local RPC and bridged TUI
     // sessions. Raw session WebSocket commands bypassed the relay queue on
@@ -659,7 +686,7 @@ class SessionDetailViewModel(
         is com.example.picompanion.data.api.HttpResult.Failure -> {
           pendingPromptId = null
           _sendState.value = SendState.Idle
-          _items.value = _items.value + SessionTimelineItem.System("Could not send prompt: ${result.message}")
+          appendItem(SessionTimelineItem.System("Could not send prompt: ${result.message}"))
         }
       }
     }
@@ -689,7 +716,7 @@ class SessionDetailViewModel(
         is com.example.picompanion.data.api.HttpResult.Success -> _sendState.value = SendState.Accepted
         is com.example.picompanion.data.api.HttpResult.Failure -> {
           _sendState.value = SendState.Idle
-          _items.value = _items.value + SessionTimelineItem.System("Could not steer: ${result.message}")
+          appendItem(SessionTimelineItem.System("Could not steer: ${result.message}"))
         }
       }
     }
@@ -702,9 +729,9 @@ class SessionDetailViewModel(
         is com.example.picompanion.data.api.HttpResult.Success -> {
           _sendState.value = SendState.Idle
           _agentWorking.value = false
-          _items.value = _items.value + SessionTimelineItem.System("Stop requested")
+          appendItem(SessionTimelineItem.System("Stop requested"))
         }
-        is com.example.picompanion.data.api.HttpResult.Failure -> _items.value = _items.value + SessionTimelineItem.System("Could not stop Pi: ${result.message}")
+        is com.example.picompanion.data.api.HttpResult.Failure -> appendItem(SessionTimelineItem.System("Could not stop Pi: ${result.message}"))
       }
     }
   }
@@ -717,9 +744,9 @@ class SessionDetailViewModel(
     viewModelScope.launch {
       when (val result = withContext(Dispatchers.IO) { client.postSessionAction(server, sessionId, "compact") }) {
         is com.example.picompanion.data.api.HttpResult.Success ->
-          _items.value = _items.value + SessionTimelineItem.System("Compacting…")
+          appendItem(SessionTimelineItem.System("Compacting…"))
         is com.example.picompanion.data.api.HttpResult.Failure ->
-          _items.value = _items.value + SessionTimelineItem.System("Could not compact: ${result.message}")
+          appendItem(SessionTimelineItem.System("Could not compact: ${result.message}"))
       }
     }
   }
@@ -733,10 +760,10 @@ class SessionDetailViewModel(
         is com.example.picompanion.data.api.HttpResult.Success -> {
           _sessionTitle.value = title
           _sessionProject.value = project
-          _items.value = _items.value + SessionTimelineItem.System("Session details saved")
+          appendItem(SessionTimelineItem.System("Session details saved"))
         }
         is com.example.picompanion.data.api.HttpResult.Failure ->
-          _items.value = _items.value + SessionTimelineItem.System("Could not save session details: ${result.userMessage}")
+          appendItem(SessionTimelineItem.System("Could not save session details: ${result.userMessage}"))
       }
     }
   }
@@ -748,9 +775,9 @@ class SessionDetailViewModel(
         client.postSessionAction(server, sessionId, action, body)
       }) {
         is com.example.picompanion.data.api.HttpResult.Success ->
-          _items.value = _items.value + SessionTimelineItem.System("${action.replace('-', ' ')} requested")
+          appendItem(SessionTimelineItem.System("${action.replace('-', ' ')} requested"))
         is com.example.picompanion.data.api.HttpResult.Failure ->
-          _items.value = _items.value + SessionTimelineItem.System("Could not ${action.replace('-', ' ')}: ${result.userMessage}")
+          appendItem(SessionTimelineItem.System("Could not ${action.replace('-', ' ')}: ${result.userMessage}"))
       }
     }
   }
