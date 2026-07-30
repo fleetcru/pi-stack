@@ -74,13 +74,13 @@ fun SessionsScreen(
   var showBrowser by remember { mutableStateOf(false) }
   var actionSession by remember { mutableStateOf<ServerSession?>(null) }
 
-  // Auto-navigate when a session is created
+  // Sessions created from the directory picker still navigate through state.
+  // Machine/global opens use their request callback directly below so two quick
+  // taps cannot overwrite a single shared createdSessionId value.
   LaunchedEffect(createdSessionId) {
-    val id = createdSessionId
-    if (id != null) {
-      onSessionClick(id)
-      viewModel.clearCreatedSession()
-    }
+    val id = createdSessionId?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+    onSessionClick(id)
+    viewModel.clearCreatedSession()
   }
 
   // Surface open/attach failures instead of silently refreshing
@@ -302,7 +302,7 @@ fun SessionsScreen(
                 items(filteredMachine, key = { it.id }, contentType = { "machine_item" }) { session ->
                   MachineSessionListItem(
                     session = session,
-                    onClick = { viewModel.openMachineSession(session.id) },
+                    onClick = { viewModel.openMachineSession(session.id, onSessionClick) },
                   )
                 }
               }
@@ -336,7 +336,7 @@ fun SessionsScreen(
                 items(filteredGlobal, key = { it.id }, contentType = { "global_item" }) { session ->
                   GlobalSessionListItem(
                     session = session,
-                    onClick = { viewModel.attachGlobalSession(session.id) },
+                    onClick = { viewModel.attachGlobalSession(session.id, onSessionClick) },
                   )
                 }
               }
@@ -414,6 +414,11 @@ private fun MachineSessionListItem(
   modifier: Modifier = Modifier,
 ) {
   val sessionShape = RoundedCornerShape(16.dp)
+  val displayTitle = session.cwd
+    .trimEnd('/', '\\')
+    .substringAfterLast('/')
+    .substringAfterLast('\\')
+    .ifBlank { "Local session" }
   Surface(
     modifier = modifier
       .fillMaxWidth()
@@ -446,7 +451,7 @@ private fun MachineSessionListItem(
 
       Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
-          text = session.id,
+          text = displayTitle,
           style = MaterialTheme.typography.titleSmall,
           fontWeight = FontWeight.Bold,
           maxLines = 1,
@@ -480,7 +485,10 @@ private fun GlobalSessionListItem(
   modifier: Modifier = Modifier,
 ) {
   val sessionShape = RoundedCornerShape(16.dp)
-  val displayTitle = session.session.title ?: session.session.project ?: session.originId
+  val displayTitle = session.session.title
+    ?: session.session.project
+    ?: session.session.cwd?.trimEnd('/', '\\')?.substringAfterLast('/')?.substringAfterLast('\\')
+    ?: "${session.workerId} session"
   Surface(
     modifier = modifier
       .fillMaxWidth()

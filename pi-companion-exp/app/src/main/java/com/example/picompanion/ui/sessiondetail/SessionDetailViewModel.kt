@@ -129,6 +129,10 @@ class SessionDetailViewModel(
   private var assistantTextOpen = false
   private val pendingAssistantDeltas = StringBuilder()
   private var assistantFlushJob: Job? = null
+  // Property initializers run before the init block. Keep this buffer above
+  // init because connect() clears it immediately when the screen opens.
+  private val pendingToolUpdates = mutableListOf<ToolUpdate>()
+  private var toolFlushJob: Job? = null
 
   init {
     // ACCESS_NETWORK_STATE is a normal manifest permission, but keep the
@@ -294,15 +298,23 @@ class SessionDetailViewModel(
                   }
                 }
               // Atomic update prevents live events arriving during the HTTP
-              // request from being overwritten by the history snapshot.
+              // request from being overwritten by the history snapshot. HTTP
+              // history and WS replay use different timestamp formats, so data
+              // class equality is not sufficient for cross-source deduplication.
               _items.update { current ->
-                val live = current.filter { item ->
-                  item !in historicalItems && !(item is SessionTimelineItem.Chat &&
-                    item.time == "now" && history.any { historical ->
-                      historical.isUser == item.isUser && historical.text == item.text
-                    })
-                }
-                historicalItems + live
+                val merged = LinkedHashMap<String, SessionTimelineItem>()
+                historicalItems.forEach { merged[timelineItemId(it)] = it }
+                // Keep local image URIs when the server history only returns the
+                // text portion of a multimodal user message.
+                current.filter {
+                  it is SessionTimelineItem.Chat && it.time == "now" && it.imageUris.isNotEmpty()
+                }.forEach { merged[timelineItemId(it)] = it }
+                current.filter { item ->
+                  val isOptimisticImage = item is SessionTimelineItem.Chat &&
+                    item.time == "now" && item.imageUris.isNotEmpty()
+                  !isOptimisticImage && timelineItemId(item) !in merged
+                }.forEach { merged[timelineItemId(it)] = it }
+                merged.values.toList()
               }
             }
           }
@@ -537,8 +549,6 @@ class SessionDetailViewModel(
   }
 
   private data class ToolUpdate(val callId: String?, val output: String?, val status: String)
-  private val pendingToolUpdates = mutableListOf<ToolUpdate>()
-  private var toolFlushJob: Job? = null
 
   private fun updateTool(callId: String?, output: String?, status: String) {
     pendingToolUpdates.add(ToolUpdate(callId, output, status))
@@ -574,10 +584,22 @@ class SessionDetailViewModel(
       val buffered = pendingAssistantDeltas.toString()
       pendingAssistantDeltas.clear()
       if (buffered.isEmpty()) return@launch
-      val last = _items.value.lastOrNull()
-      if (assistantTextOpen && last is SessionTimelineItem.Chat && !last.isUser && last.author == "Pi Agent") {
+      if (assistantTextOpen) {
         _items.update { current ->
-          if (current.lastOrNull() == last) current.dropLast(1) + last.copy(text = last.text + buffered) else current
+          // Tool/system events can arrive between token batches. Find the
+          // assistant row instead of requiring it to be the final list item;
+          // otherwise the response can split or visibly jump.
+          val index = current.indexOfLast {
+            it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent"
+          }
+          if (index >= 0) {
+            val existing = current[index] as SessionTimelineItem.Chat
+            current.toMutableList().also {
+              it[index] = existing.copy(text = existing.text + buffered)
+            }
+          } else {
+            current + SessionTimelineItem.Chat("Pi Agent", buffered, "", false)
+          }
         }
       } else {
         appendAssistantMessage(buffered)
@@ -593,6 +615,15 @@ class SessionDetailViewModel(
       time = "",
       isUser = false,
     ))
+  }
+
+  private fun timelineItemId(item: SessionTimelineItem): String = when (item) {
+    // Ignore timestamps because persisted history and WS events serialize them
+    // differently. Role + text identifies the same message across both paths.
+    is SessionTimelineItem.Chat -> "chat|${item.isUser}|${item.text.trim()}"
+    is SessionTimelineItem.Tool -> "tool|${item.callId}"
+    is SessionTimelineItem.FileChange -> "file|${item.operation}|${item.path}"
+    is SessionTimelineItem.System -> "system|${item.text}"
   }
 
   private fun formatTime(raw: JsonObject): String {
@@ -619,6 +650,10 @@ class SessionDetailViewModel(
     if (message.isBlank() && imageUris.isEmpty()) return
     if (imageUris.isNotEmpty()) {
       val server = activeServer ?: return
+      // The socket echoes the user message without local Uri attachments.
+      // Mark it so message_start is ignored and the image-bearing optimistic
+      // row remains the only visible user message.
+      lastSentPrompt = message
       appendItem(SessionTimelineItem.Chat(
         author = "You", text = message, time = "now", isUser = true, imageUris = imageUris,
       ))

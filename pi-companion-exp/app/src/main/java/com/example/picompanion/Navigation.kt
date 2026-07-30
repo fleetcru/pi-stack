@@ -96,9 +96,9 @@ fun MainNavigation(
             sessionId = key.sessionId,
             onBack = {
               backStack.removeLastOrNull()
-              if (backStack.lastOrNull() !is AppRoute.Sessions) {
-                backStack.add(AppRoute.Sessions)
-              }
+              // Preserve the screen that launched the detail view. Only add a
+              // fallback when the detail was the root entry.
+              if (backStack.isEmpty()) backStack.add(AppRoute.Home)
             },
             sharedTransitionScope = sharedTransitionScope,
             animatedVisibilityScope = LocalNavAnimatedContentScope.current,

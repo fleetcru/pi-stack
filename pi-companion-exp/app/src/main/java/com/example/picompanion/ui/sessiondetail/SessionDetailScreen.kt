@@ -53,6 +53,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import androidx.core.content.FileProvider
 import java.io.File
 import kotlinx.serialization.json.Json
@@ -116,10 +117,10 @@ fun SessionDetailScreen(
     else -> items.size
   }
   LaunchedEffect(items.size, streamVersion) {
+    // Coalesce token updates. Scrolling once per 16ms update makes the list
+    // fight layout/recomposition and is the visible source of the spasms.
+    delay(80)
     if (items.isNotEmpty()) {
-      // Check the position before moving. A one-row tolerance prevents a new
-      // streamed row from unexpectedly pulling the reader away from the end,
-      // while still following replies when the reader was already there.
       val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
       if (!listState.isScrollInProgress && lastVisible >= items.lastIndex - 1) {
         listState.scrollToItem(items.lastIndex)
@@ -134,7 +135,9 @@ fun SessionDetailScreen(
     val occurrences = mutableMapOf<String, Int>()
     items.map { item ->
       val identity = when (item) {
-        is SessionTimelineItem.Chat -> "chat:${item.author}:${item.time}:${item.text}"
+        // Text changes on every streamed token; it must not be part of the
+        // key or LazyColumn recreates the row on every update.
+        is SessionTimelineItem.Chat -> "chat:${item.author}:${item.time}:${item.isUser}"
         is SessionTimelineItem.Tool -> "tool:${item.callId}"
         is SessionTimelineItem.FileChange -> "file:${item.operation}:${item.path}"
         is SessionTimelineItem.System -> "system:${item.text}"
@@ -277,7 +280,15 @@ fun SessionDetailScreen(
         }
         // Stable timestamps/call IDs preserve the reader's anchor while an
         // older page is prepended. Live rows fall back to their current index.
-        itemsIndexed(items, key = { index, _ -> itemKeys[index] }, contentType = { _, item ->
+        itemsIndexed(
+          items,
+          // Compose can evaluate a lazy-list key during a snapshot where the
+          // derived key list is one frame behind the timeline. Never index
+          // blindly here or an empty/stale key list crashes session opening.
+          key = { index, item ->
+            itemKeys.getOrNull(index) ?: "timeline-fallback-$index-${item.hashCode()}"
+          },
+          contentType = { _, item ->
           when (item) {
             is SessionTimelineItem.Chat -> "chat"
             is SessionTimelineItem.Tool -> "tool"

@@ -108,21 +108,43 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
     _actionError.value = null
   }
 
-  fun openMachineSession(machineId: String) {
+  fun openMachineSession(machineId: String, onOpened: (String) -> Unit) {
     viewModelScope.launch {
-      val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
+      val server = settingsDataStore.settingsFlow.first().activeServer ?: run {
+        _actionError.value = "No server is configured"
+        return@launch
+      }
       when (val result = kotlinx.coroutines.withContext(Dispatchers.IO) { client.openMachineSession(server, machineId) }) {
-        is HttpResult.Success -> _createdSessionId.value = result.value.id
+        is HttpResult.Success -> {
+          val sessionId = result.value.id.trim()
+          if (sessionId.isEmpty()) {
+            _actionError.value = "The server returned an invalid session ID"
+          } else {
+            // Do not route through _createdSessionId: a second tap could replace
+            // the first result before the UI's LaunchedEffect consumes it.
+            onOpened(sessionId)
+          }
+        }
         is HttpResult.Failure -> _actionError.value = "Could not open session: ${result.userMessage}"
       }
     }
   }
 
-  fun attachGlobalSession(globalId: String) {
+  fun attachGlobalSession(globalId: String, onAttached: (String) -> Unit) {
     viewModelScope.launch {
-      val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
+      val server = settingsDataStore.settingsFlow.first().activeServer ?: run {
+        _actionError.value = "No server is configured"
+        return@launch
+      }
       when (val result = kotlinx.coroutines.withContext(Dispatchers.IO) { client.attachGlobalSession(server, globalId) }) {
-        is HttpResult.Success -> _createdSessionId.value = result.value.id
+        is HttpResult.Success -> {
+          val sessionId = result.value.id.trim()
+          if (sessionId.isEmpty()) {
+            _actionError.value = "The server returned an invalid session ID"
+          } else {
+            onAttached(sessionId)
+          }
+        }
         is HttpResult.Failure -> _actionError.value = "Could not attach session: ${result.userMessage}"
       }
     }
