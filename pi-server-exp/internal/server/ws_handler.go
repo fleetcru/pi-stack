@@ -38,7 +38,14 @@ func (s *Server) sessionWebSocket(w http.ResponseWriter, r *http.Request, p *PiP
 	})
 	since, _ := strconv.ParseUint(r.URL.Query().Get("since"), 10, 64)
 	events, replay, unsubscribe := p.SubscribeSince(since)
-	defer unsubscribe()
+	defer func() {
+		unsubscribe()
+		// Stop the file watcher when the last WS subscriber disconnects.
+		// Without this, watchers accumulate until session deletion.
+		if r.URL.Query().Get("watch") == "files" && p.SubscriberCount() == 0 {
+			s.stopWatcher(p.id)
+		}
+	}()
 	// Keep a stalled client from retaining a large backlog of Pi events. Start
 	// the sole writer before queuing replay: a replay may legitimately exceed
 	// this buffer (the configured history defaults to 100 events).

@@ -10,7 +10,7 @@ import (
 )
 
 func (s *Server) proxyWorkerWebSocket(w http.ResponseWriter, r *http.Request, worker Worker, remotePath string) {
-	remoteURL, err := workerWebSocketURL(worker.URL, remotePath)
+	remoteURL, err := workerWebSocketURL(worker.URL, remotePath, r.URL.RawQuery)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
@@ -48,7 +48,7 @@ func proxyWS(dst, src *websocket.Conn, done func()) {
 	}
 }
 
-func workerWebSocketURL(baseURL, remotePath string) (string, error) {
+func workerWebSocketURL(baseURL, remotePath string, rawQuery string) (string, error) {
 	u, err := url.Parse(strings.TrimRight(baseURL, "/"))
 	if err != nil {
 		return "", err
@@ -60,5 +60,6 @@ func workerWebSocketURL(baseURL, remotePath string) (string, error) {
 		u.Scheme = "wss"
 	}
 	u.Path = remotePath
+	u.RawQuery = rawQuery
 	return u.String(), nil
 }

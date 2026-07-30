@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -84,14 +83,7 @@ func (r *WorkerRegistry) Save() error {
 		}
 	}
 	r.mu.RUnlock()
-	if err := os.MkdirAll(filepath.Dir(r.path), 0o755); err != nil {
-		return err
-	}
-	b, err := json.MarshalIndent(workers, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(r.path, b, 0o600)
+	return writeJSONAtomic(r.path, workers)
 }
 func (r *WorkerRegistry) Add(w Worker) error {
 	r.mu.Lock()

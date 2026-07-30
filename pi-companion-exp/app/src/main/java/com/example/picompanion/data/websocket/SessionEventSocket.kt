@@ -27,8 +27,10 @@ class SessionEventSocket(
 ) {
 
   private var webSocket: WebSocket? = null
-  // Unlimited: a stalled collector must never silently drop session events.
-  private val _events = Channel<SocketEvent>(Channel.UNLIMITED)
+  // Bounded buffer prevents OOM from a stalled collector while still
+  // retaining enough events for normal interactive use. 2000 events
+  // covers ~10 minutes of typical streaming at 3 events/sec.
+  private val _events = Channel<SocketEvent>(2000)
   val events: Flow<SocketEvent> = _events.receiveAsFlow()
 
   @Volatile

@@ -105,6 +105,7 @@ data class CreateSessionRequest(
   val labels: List<String> = emptyList(),
   val metadata: Map<String, String> = emptyMap(),
   val sessionPath: String? = null,
+  val worktreePath: String? = null,
   val id: String? = null,
 )
 

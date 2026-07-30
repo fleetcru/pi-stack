@@ -231,18 +231,19 @@ class PiServerClient(
       val requestBuilder = Request.Builder().url(url).get()
       addAuth(server, requestBuilder)
 
-      val response = okHttpClient.newCall(requestBuilder.build()).execute()
-      val body = response.body?.string() ?: ""
+      okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+        val body = response.body?.string() ?: ""
 
-      if (!response.isSuccessful) {
-        return HttpResult.Failure(
-          message = "HTTP ${response.code}: ${body.take(200)}",
-          code = response.code,
-        )
+        if (!response.isSuccessful) {
+          return HttpResult.Failure(
+            message = "HTTP ${response.code}: ${body.take(200)}",
+            code = response.code,
+          )
+        }
+
+        val decoded = json.decodeFromString(serializer, body)
+        HttpResult.Success(decoded)
       }
-
-      val decoded = json.decodeFromString(serializer, body)
-      HttpResult.Success(decoded)
     } catch (e: ConnectException) {
       HttpResult.Failure(message = "Connection refused — is pi-server running?", cause = e)
     } catch (e: UnknownHostException) {
@@ -269,18 +270,19 @@ class PiServerClient(
       val requestBuilder = Request.Builder().url(url).post(requestBody)
       addAuth(server, requestBuilder)
 
-      val response = okHttpClient.newCall(requestBuilder.build()).execute()
-      val responseBody = response.body?.string() ?: ""
+      okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+        val responseBody = response.body?.string() ?: ""
 
-      if (!response.isSuccessful) {
-        return HttpResult.Failure(
-          message = "HTTP ${response.code}: ${responseBody.take(200)}",
-          code = response.code,
-        )
+        if (!response.isSuccessful) {
+          return HttpResult.Failure(
+            message = "HTTP ${response.code}: ${responseBody.take(200)}",
+            code = response.code,
+          )
+        }
+
+        val decoded = json.decodeFromString(serializer, responseBody)
+        HttpResult.Success(decoded)
       }
-
-      val decoded = json.decodeFromString(serializer, responseBody)
-      HttpResult.Success(decoded)
     } catch (e: ConnectException) {
       HttpResult.Failure(message = "Connection refused — is pi-server running?", cause = e)
     } catch (e: UnknownHostException) {
@@ -298,10 +300,11 @@ class PiServerClient(
     return try {
       val request = Request.Builder().url("${server.url.trimEnd('/')}$path")
         .put(body.toRequestBody("application/json".toMediaType())).also { addAuth(server, it) }.build()
-      val response = okHttpClient.newCall(request).execute()
-      val responseBody = response.body?.string() ?: ""
-      if (!response.isSuccessful) return HttpResult.Failure("HTTP ${response.code}: ${responseBody.take(200)}", response.code)
-      HttpResult.Success(json.decodeFromString(serializer, responseBody))
+      okHttpClient.newCall(request).execute().use { response ->
+        val responseBody = response.body?.string() ?: ""
+        if (!response.isSuccessful) return HttpResult.Failure("HTTP ${response.code}: ${responseBody.take(200)}", response.code)
+        HttpResult.Success(json.decodeFromString(serializer, responseBody))
+      }
     } catch (e: IOException) {
       HttpResult.Failure(message = "Network error: ${e.message ?: "unknown"}", cause = e)
     } catch (e: Exception) {
@@ -313,10 +316,11 @@ class PiServerClient(
     return try {
       val request = Request.Builder().url("${server.url.trimEnd('/')}$path")
         .patch(body.toRequestBody("application/json".toMediaType())).also { addAuth(server, it) }.build()
-      val response = okHttpClient.newCall(request).execute()
-      val responseBody = response.body?.string() ?: ""
-      if (!response.isSuccessful) return HttpResult.Failure("HTTP ${response.code}: ${responseBody.take(200)}", response.code)
-      HttpResult.Success(json.decodeFromString(serializer, responseBody))
+      okHttpClient.newCall(request).execute().use { response ->
+        val responseBody = response.body?.string() ?: ""
+        if (!response.isSuccessful) return HttpResult.Failure("HTTP ${response.code}: ${responseBody.take(200)}", response.code)
+        HttpResult.Success(json.decodeFromString(serializer, responseBody))
+      }
     } catch (e: IOException) {
       HttpResult.Failure(message = "Network error: ${e.message ?: "unknown"}", cause = e)
     } catch (e: Exception) {

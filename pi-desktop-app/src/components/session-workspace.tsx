@@ -89,7 +89,26 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const models = responseModels(modelsQuery.data)
   const state = stateQuery.data?.data as { model?: { provider?: string; id?: string }; thinkingLevel?: string; isStreaming?: boolean; external?: boolean; relayConnected?: boolean; relayLatencyMs?: number } | undefined
-  const isWorking = state?.isStreaming === true
+  // Derive live runtime state from WS events. The runtime_state event is
+  // emitted by the server whenever the process state transitions. This is
+  // more responsive than HTTP polling which freezes when WS is open.
+  const wsRuntimeState = (() => {
+    for (let i = socket.events.length - 1; i >= 0; i--) {
+      const ev = socket.events[i]
+      if (ev.type === "runtime_state") {
+        return {
+          state: ev.runtimeState as string | undefined,
+          reason: ev.runtimeReason as string | undefined,
+          detail: ev.runtimeDetail as string | undefined,
+        }
+      }
+    }
+    return undefined
+  })()
+  // Use WS runtime state when available (WS open), fall back to HTTP polling (WS closed).
+  const isWorking = socket.status === "open"
+    ? wsRuntimeState?.state === "working" || wsRuntimeState?.state === "starting" || wsRuntimeState?.state === "reconnecting"
+    : state?.isStreaming === true
   const relayStatus = state?.external
     ? state.relayConnected
       ? `Relay connected${typeof state.relayLatencyMs === "number" ? ` · ${state.relayLatencyMs} ms` : ""}`
@@ -500,12 +519,15 @@ type ToolItem = {
   output?: string
   done: boolean
 }
-type TimelineItem = TextItem | ToolItem
+type SystemItem = { id: string; kind: "system"; text: string }
+type TimelineItem = TextItem | ToolItem | SystemItem
 
 // The composer updates on every keystroke. Keep historical Markdown/tool rows
 // out of that render path unless their own item object actually changed.
 const TimelineRow = memo(function TimelineRow({ item }: { item: TimelineItem }) {
-  return item.kind === "tool" ? <ToolTurn item={item} /> : <ChatTurn item={item} />
+  if (item.kind === "tool") return <ToolTurn item={item} />
+  if (item.kind === "system") return <div className="py-1 px-4 text-xs text-muted-foreground italic">{item.text}</div>
+  return <ChatTurn item={item} />
 })
 
 function buildTimeline(events: Array<Record<string, unknown>>): TimelineItem[] {
@@ -544,6 +566,21 @@ function buildTimeline(events: Array<Record<string, unknown>>): TimelineItem[] {
     }
 
     if (event.type === "message_end") activeAssistant = undefined
+
+    // System events surfaced in the timeline for visibility.
+    if (event.type === "file_change") {
+      const path = event.path as string | undefined
+      const change = event.change as string | undefined
+      if (path) items.push({ id: `file-${String(event._daemonEventId ?? index)}`, kind: "system", text: `File ${change ?? "changed"}: ${path}` })
+    }
+    if (event.type === "model_select") {
+      const model = event.model as { provider?: string; id?: string } | undefined
+      if (model?.id) items.push({ id: `model-${String(event._daemonEventId ?? index)}`, kind: "system", text: `Model changed: ${model.provider ?? "?"}/${model.id}` })
+    }
+    if (event.type === "thinking_level_select") {
+      const level = event.level as string | undefined
+      if (level) items.push({ id: `think-${String(event._daemonEventId ?? index)}`, kind: "system", text: `Thinking level: ${level}` })
+    }
 
     if (event.type === "tool_execution_start") {
       items.push({

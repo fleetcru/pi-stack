@@ -1,0 +1,21 @@
+{
+  "name": "@pi-stack/webby-shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./api/client": "./src/api/client.ts",
+    "./api/session-socket": "./src/api/session-socket.ts",
+    "./api/hooks": "./src/api/hooks.ts",
+    "./api/types": "./src/api/types.ts",
+    "./state/app-store": "./src/state/app-store.ts"
+  },
+  "peerDependencies": {
+    "@tanstack/react-query": "^5.0.0",
+    "zustand": "^5.0.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

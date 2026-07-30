@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useParams } from "react-router"
 
 import { WorkspaceShell } from "@/components/workspace-shell"
 import { useAppStore } from "@/state/app-store"
+import "./init-shared"
 
 function SessionRoute() {
   const { sessionId } = useParams<{ sessionId: string }>()

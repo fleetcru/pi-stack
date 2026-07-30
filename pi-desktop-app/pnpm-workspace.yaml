@@ -1,5 +1,6 @@
 packages:
   - '.'
+  - '../pi-webby-shared'
 
 allowBuilds:
   esbuild: true

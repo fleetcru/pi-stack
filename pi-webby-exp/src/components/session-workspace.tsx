@@ -522,12 +522,15 @@ type ToolItem = {
   output?: string
   done: boolean
 }
-type TimelineItem = TextItem | ToolItem
+type SystemItem = { id: string; kind: "system"; text: string }
+type TimelineItem = TextItem | ToolItem | SystemItem
 
 // The composer updates on every keystroke. Keep historical Markdown/tool rows
 // out of that render path unless their own item object actually changed.
 const TimelineRow = memo(function TimelineRow({ item }: { item: TimelineItem }) {
-  return item.kind === "tool" ? <ToolTurn item={item} /> : <ChatTurn item={item} />
+  if (item.kind === "tool") return <ToolTurn item={item} />
+  if (item.kind === "system") return <div className="py-1 px-4 text-xs text-muted-foreground italic">{item.text}</div>
+  return <ChatTurn item={item} />
 })
 
 function buildTimeline(events: Array<Record<string, unknown>>): TimelineItem[] {
@@ -566,6 +569,21 @@ function buildTimeline(events: Array<Record<string, unknown>>): TimelineItem[] {
     }
 
     if (event.type === "message_end") activeAssistant = undefined
+
+    // System events surfaced in the timeline for visibility.
+    if (event.type === "file_change") {
+      const path = event.path as string | undefined
+      const change = event.change as string | undefined
+      if (path) items.push({ id: `file-${String(event._daemonEventId ?? index)}`, kind: "system", text: `File ${change ?? "changed"}: ${path}` })
+    }
+    if (event.type === "model_select") {
+      const model = event.model as { provider?: string; id?: string } | undefined
+      if (model?.id) items.push({ id: `model-${String(event._daemonEventId ?? index)}`, kind: "system", text: `Model changed: ${model.provider ?? "?"}/${model.id}` })
+    }
+    if (event.type === "thinking_level_select") {
+      const level = event.level as string | undefined
+      if (level) items.push({ id: `think-${String(event._daemonEventId ?? index)}`, kind: "system", text: `Thinking level: ${level}` })
+    }
 
     if (event.type === "tool_execution_start") {
       items.push({

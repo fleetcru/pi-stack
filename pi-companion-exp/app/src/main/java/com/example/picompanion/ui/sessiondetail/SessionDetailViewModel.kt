@@ -439,31 +439,9 @@ class SessionDetailViewModel(
         }
         return
       }
-      // Compatibility with older/custom event names.
-      "assistant_text", "assistant", "assistant_message", "text", "output", "chunk", "delta" -> {
-        _sendState.value = SendState.Idle
-        val text = raw.getString("text") ?: raw.getString("message") ?: raw.getString("content")
-          ?: raw.getString("output") ?: raw.getString("chunk") ?: return
-        SessionTimelineItem.Chat(
-          author = "Pi Agent",
-          text = text,
-          time = formatTime(raw),
-          isUser = false,
-        )
-      }
-      // User messages
-      "user_text", "user", "user_message", "prompt", "input" -> {
-        val text = raw.getString("message") ?: raw.getString("text") ?: raw.getString("content") ?: return
-        SessionTimelineItem.Chat(
-          author = "You",
-          text = text,
-          time = formatTime(raw),
-          isUser = true,
-        )
-      }
       // Tool events use toolCallId; update the existing card rather than
       // adding a misleading start and completion row for the same operation.
-      "tool_execution_start", "tool_use", "tool_start" -> {
+      "tool_execution_start" -> {
         _agentWorking.value = true
         val name = raw.getString("toolName") ?: raw.getString("name") ?: raw.getString("tool") ?: "tool"
         SessionTimelineItem.Tool(
@@ -481,7 +459,7 @@ class SessionDetailViewModel(
         )
         return
       }
-      "tool_execution_end", "tool_result", "tool_end" -> {
+      "tool_execution_end" -> {
         val callId = raw.getString("toolCallId")
         val isError = raw["isError"]?.toString() == "true" || raw.getString("success") == "false"
         updateTool(
@@ -491,10 +469,10 @@ class SessionDetailViewModel(
         )
         return
       }
-      // File changes
-      "file_change", "file_write", "file_edit" -> {
+      // File changes (server emits file_change; file_write/file_edit are legacy)
+      "file_change" -> {
         val path = raw.getString("path") ?: raw.getString("file") ?: return
-        val op = raw.getString("operation") ?: raw.getString("type") ?: "modified"
+        val op = raw.getString("change") ?: raw.getString("operation") ?: raw.getString("type") ?: "modified"
         SessionTimelineItem.FileChange(path = path, operation = op)
       }
       "extension_ui_request" -> {
@@ -521,10 +499,34 @@ class SessionDetailViewModel(
         }
         return
       }
+      // Runtime state transitions from the server (authoritative source of truth)
+      "runtime_state" -> {
+        val state = raw.getString("runtimeState")
+        _agentWorking.value = state == "working" || state == "starting" || state == "reconnecting"
+        if (state == "idle" || state == "stopped" || state == "failed") {
+          _sendState.value = SendState.Idle
+        }
+        return
+      }
+      // Model/thinking level changes (from TUI or other clients)
+      "model_select" -> {
+        val model = raw["model"]?.jsonObject
+        val provider = model?.getString("provider") ?: "?"
+        val modelId = model?.getString("id") ?: "?"
+        SessionTimelineItem.System("Model changed: $provider/$modelId")
+      }
+      "thinking_level_select" -> {
+        val level = raw.getString("level") ?: return
+        SessionTimelineItem.System("Thinking level: $level")
+      }
       // Daemon events
-      "daemon_error", "daemon_start", "daemon_exit" -> {
+      "daemon_error" -> {
         _sendState.value = SendState.Idle
-        val text = raw.getString("error") ?: raw.getString("message") ?: type
+        val text = raw.getString("error") ?: raw.getString("message") ?: "daemon_error"
+        SessionTimelineItem.System(text)
+      }
+      "daemon_start", "daemon_exit" -> {
+        val text = raw.getString("message") ?: type
         SessionTimelineItem.System(text)
       }
       // Response to commands

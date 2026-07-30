@@ -11,14 +11,14 @@ import (
 )
 
 func TestWorkerWebSocketURL(t *testing.T) {
-	u, err := workerWebSocketURL("http://example.test:3141/", "/v1/sessions/s1/ws")
+	u, err := workerWebSocketURL("http://example.test:3141/", "/v1/sessions/s1/ws", "ticket=abc&since=42")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u != "ws://example.test:3141/v1/sessions/s1/ws" {
+	if u != "ws://example.test:3141/v1/sessions/s1/ws?ticket=abc&since=42" {
 		t.Fatalf("bad url %s", u)
 	}
-	u, err = workerWebSocketURL("https://example.test", "/v1/sessions/s1/ws")
+	u, err = workerWebSocketURL("https://example.test", "/v1/sessions/s1/ws", "")
 	if err != nil {
 		t.Fatal(err)
 	}

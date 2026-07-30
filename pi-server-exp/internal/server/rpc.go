@@ -532,6 +532,13 @@ func (p *PiProcess) Status() map[string]any {
 func (p *PiProcess) Emit(event RPCEvent) { p.dispatch(event) }
 func (p *PiProcess) CWD() string         { return p.spec.CWD }
 
+// SubscriberCount returns the number of active WS subscribers.
+func (p *PiProcess) SubscriberCount() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return len(p.subs)
+}
+
 func (p *PiProcess) Events(limit int, since uint64) []EventRecord {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

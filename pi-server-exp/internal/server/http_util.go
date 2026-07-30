@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -183,8 +185,11 @@ func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 	})
 }
 
+var tmpSeq atomic.Uint64
+
 // writeJSONAtomic writes data to path atomically using temp+rename so a crash
-// mid-write cannot leave a truncated file.
+// mid-write cannot leave a truncated file. Each call uses a unique temp file
+// name to prevent concurrent callers from colliding on the same .tmp path.
 func writeJSONAtomic(path string, data any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -193,7 +198,7 @@ func writeJSONAtomic(path string, data any) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
+	tmp := fmt.Sprintf("%s.%d.%d.tmp", path, os.Getpid(), tmpSeq.Add(1))
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}

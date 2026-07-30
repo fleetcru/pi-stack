@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,13 +30,15 @@ func loadRelayCommands(path string) (persistedRelayCommands, error) {
 	return commands, nil
 }
 
+var cmdTmpSeq atomic.Uint64
+
 // saveRelayCommands writes atomically (temp file + rename) so a crash mid-write
 // cannot leave a truncated store that discards every queued command.
 func saveRelayCommands(path string, commands persistedRelayCommands) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil { return err }
 	data, err := json.MarshalIndent(commands, "", "  ")
 	if err != nil { return err }
-	tmp := path + ".tmp"
+	tmp := fmt.Sprintf("%s.%d.%d.tmp", path, os.Getpid(), cmdTmpSeq.Add(1))
 	if err := os.WriteFile(tmp, data, 0o600); err != nil { return err }
 	return os.Rename(tmp, path)
 }
