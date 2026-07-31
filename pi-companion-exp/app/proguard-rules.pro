@@ -20,6 +20,9 @@
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
 
+# Google Tink / errorprone annotations (used by EncryptedSharedPreferences)
+-dontwarn com.google.errorprone.annotations.**
+
 # Coroutines
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
 -keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
