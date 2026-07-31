@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -160,7 +161,7 @@ func publicWorker(w Worker) map[string]any {
 }
 
 func (s *Server) workerCapacity() map[string]any {
-	return map[string]any{"activeSessions": s.sessions.ActiveCount(), "maxSessions": s.cfg.MaxSessions}
+	return map[string]any{"activeSessions": s.sessions.ActiveCount(), "maxSessions": atomic.LoadInt64(&s.maxSessionsAtomic)}
 }
 
 func (s *Server) updateCapacity(w http.ResponseWriter, r *http.Request) {
@@ -176,10 +177,13 @@ func (s *Server) updateCapacity(w http.ResponseWriter, r *http.Request) {
 		writeErrorText(w, http.StatusBadRequest, "maxSessions must be >= 0 (0 = unlimited)")
 		return
 	}
-	s.cfg.MaxSessions = input.MaxSessions
 	s.sessions.mu.Lock()
 	s.sessions.maxSessions = input.MaxSessions
 	s.sessions.mu.Unlock()
+	// s.cfg.MaxSessions is read by workerCapacity() and other paths that
+	// don't hold the session lock. Update it under the same lock to avoid a
+	// data race. The session registry's copy is the authoritative source.
+	atomic.StoreInt64(&s.maxSessionsAtomic, int64(input.MaxSessions))
 	writeJSON(w, http.StatusOK, s.workerCapacity())
 }
 

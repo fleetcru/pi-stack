@@ -4,11 +4,10 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.picompanion.data.api.HttpResult
-import com.example.picompanion.data.api.PiServerClient
+import com.example.picompanion.di.AppModule
 import com.example.picompanion.data.model.CreateSessionRequest
 import com.example.picompanion.data.model.ServerSession
 import com.example.picompanion.data.repository.SessionsRepository
-import com.example.picompanion.data.settings.SettingsDataStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,8 +18,8 @@ import kotlinx.coroutines.launch
 
 class SessionsViewModel(application: Application) : AndroidViewModel(application) {
 
-  private val client = PiServerClient()
-  private val settingsDataStore = SettingsDataStore(application)
+  private val client = AppModule.client
+  private val settingsDataStore = AppModule.settingsDataStore
   private val repository = SessionsRepository(client, settingsDataStore)
 
   private val _uiState = MutableStateFlow<SessionsUiState>(SessionsUiState.Loading)

@@ -4,10 +4,9 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.picompanion.data.api.HttpResult
-import com.example.picompanion.data.api.PiServerClient
+import com.example.picompanion.di.AppModule
 import com.example.picompanion.data.settings.AppSettings
 import com.example.picompanion.data.settings.ServerEntry
-import com.example.picompanion.data.settings.SettingsDataStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -20,8 +19,8 @@ import java.util.UUID
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
 
-  private val dataStore = SettingsDataStore(application)
-  private val client = PiServerClient()
+  private val dataStore = AppModule.settingsDataStore
+  private val client = AppModule.client
 
   val settings: StateFlow<AppSettings> = dataStore.settingsFlow
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings())

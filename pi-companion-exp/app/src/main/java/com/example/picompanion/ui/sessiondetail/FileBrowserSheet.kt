@@ -31,7 +31,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.picompanion.data.api.HttpResult
-import com.example.picompanion.data.api.PiServerClient
+import com.example.picompanion.di.AppModule
 import com.example.picompanion.data.model.FileEntry
 import com.example.picompanion.data.settings.ServerEntry
 import kotlinx.coroutines.Dispatchers
@@ -43,7 +43,7 @@ import kotlinx.coroutines.withContext
 fun FileBrowserSheet(server: ServerEntry?, initialPath: String, onDismiss: () -> Unit) {
   if (server == null) return
   val scope = rememberCoroutineScope()
-  val client = remember { PiServerClient() }
+  val client = AppModule.client
   var path by remember { mutableStateOf(initialPath) }
   var files by remember { mutableStateOf<List<FileEntry>>(emptyList()) }
   var preview by remember { mutableStateOf<String?>(null) }

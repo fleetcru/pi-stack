@@ -4,10 +4,9 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.picompanion.data.api.HttpResult
-import com.example.picompanion.data.api.PiServerClient
+import com.example.picompanion.di.AppModule
 import com.example.picompanion.data.model.ServerWorker
 import com.example.picompanion.data.repository.WorkersRepository
-import com.example.picompanion.data.settings.SettingsDataStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -18,8 +17,8 @@ import kotlinx.coroutines.withContext
 
 class WorkersViewModel(application: Application) : AndroidViewModel(application) {
 
-  private val client = PiServerClient()
-  private val settingsDataStore = SettingsDataStore(application)
+  private val client = AppModule.client
+  private val settingsDataStore = AppModule.settingsDataStore
   private val repository = WorkersRepository(client, settingsDataStore)
 
   private val _uiState = MutableStateFlow<WorkersUiState>(WorkersUiState.Loading)

@@ -44,7 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.picompanion.data.api.HttpResult
-import com.example.picompanion.data.api.PiServerClient
+import com.example.picompanion.di.AppModule
 import com.example.picompanion.data.model.DirectoryEntry
 import com.example.picompanion.data.settings.ServerEntry
 import kotlinx.coroutines.Dispatchers
@@ -63,7 +63,7 @@ fun DirectoryBrowserSheet(
 
   val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
   val scope = rememberCoroutineScope()
-  val client = remember { PiServerClient() }
+  val client = AppModule.client
 
   var currentPath by remember { mutableStateOf<String?>(null) }
   var parentPath by remember { mutableStateOf<String?>(null) }

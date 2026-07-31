@@ -4,12 +4,11 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.picompanion.data.api.HttpResult
-import com.example.picompanion.data.api.PiServerClient
+import com.example.picompanion.di.AppModule
 import com.example.picompanion.data.model.ServerSession
 import com.example.picompanion.data.model.ServerWorker
 import com.example.picompanion.data.model.GlobalSession
 import com.example.picompanion.data.model.MachineSession
-import com.example.picompanion.data.settings.SettingsDataStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -24,8 +23,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
-  private val client = PiServerClient()
-  private val settingsDataStore = SettingsDataStore(application)
+  private val client = AppModule.client
+  private val settingsDataStore = AppModule.settingsDataStore
 
   private val _uiState = MutableStateFlow<HomeUiState>(HomeUiState.Loading)
   val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()

@@ -16,16 +16,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.example.picompanion.AppRoute
 import com.example.picompanion.data.api.HttpResult
-import com.example.picompanion.data.api.PiServerClient
+import com.example.picompanion.di.AppModule
 import com.example.picompanion.data.model.CreateSessionRequest
 import com.example.picompanion.data.model.ServerSession
 import com.example.picompanion.data.settings.AppSettings
-import com.example.picompanion.data.settings.SettingsDataStore
 import com.example.picompanion.ui.components.BottomNavBar
 import com.example.picompanion.ui.components.DirectoryBrowserSheet
 import com.example.picompanion.ui.components.NavTab
@@ -58,9 +56,8 @@ fun ShellScreen(
   // Sessions for the drawer
   var drawerSessions by remember { mutableStateOf<List<ServerSession>>(emptyList()) }
   var drawerLoading by remember { mutableStateOf(false) }
-  val context = LocalContext.current
-  val client = remember { PiServerClient() }
-  val settingsDataStore = remember { SettingsDataStore(context) }
+  val client = AppModule.client
+  val settingsDataStore = AppModule.settingsDataStore
   val settings by settingsDataStore.settingsFlow.collectAsStateWithLifecycle(initialValue = AppSettings())
   val coroutineScope = rememberCoroutineScope()
 

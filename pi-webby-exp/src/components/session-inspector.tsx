@@ -20,8 +20,10 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useState as useStateInspector } from "react"
 
 export function SessionInspector({ session }: { session?: ApiSession }) {
+  const [activeTab, setActiveTab] = useStateInspector("overview")
   return (
     <aside className="flex h-full min-w-0 flex-col rounded-xl border border-border bg-muted/[0.15] shadow-sm select-none">
       <div className="flex h-12 shrink-0 items-center px-4">
@@ -33,6 +35,8 @@ export function SessionInspector({ session }: { session?: ApiSession }) {
       {session ? (
         <Tabs
           defaultValue="overview"
+          value={activeTab}
+          onValueChange={setActiveTab}
           className="flex min-h-0 flex-1 flex-col gap-0"
         >
           <TabsList
@@ -69,7 +73,7 @@ export function SessionInspector({ session }: { session?: ApiSession }) {
             value="workspace"
             className="min-h-0 flex-1 overflow-hidden"
           >
-            <Workspace session={session} />
+            {activeTab === "workspace" && <Workspace session={session} />}
           </TabsContent>
           <TabsContent
             value="settings"

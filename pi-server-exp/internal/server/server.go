@@ -13,8 +13,9 @@ import (
 )
 
 type Server struct {
-	cfg            Config
-	logger         *slog.Logger
+	cfg              Config
+	maxSessionsAtomic int64 // atomic; mirrors cfg.MaxSessions for lock-free reads
+	logger           *slog.Logger
 	httpSrv        *http.Server
 	sessions       *SessionRegistry
 	workers        *WorkerRegistry
@@ -37,7 +38,8 @@ type Server struct {
 
 func New(cfg Config, logger *slog.Logger) *Server {
 	s := &Server{
-		cfg:            cfg,
+		cfg:              cfg,
+		maxSessionsAtomic: int64(cfg.MaxSessions),
 		logger:         logger,
 		sessions:       NewSessionRegistry(filepath.Join(cfg.DataDir, "sessions.json"), cfg.MaxSessions),
 		workers:        NewWorkerRegistry(filepath.Join(cfg.DataDir, "workers.json")),

@@ -14,7 +14,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.picompanion.data.settings.SettingsDataStore
+import com.example.picompanion.di.AppModule
 import com.example.picompanion.data.repository.SessionsRepository
 import com.example.picompanion.data.websocket.SessionEventSocket
 import com.example.picompanion.data.websocket.SocketEvent
@@ -48,9 +48,9 @@ class SessionDetailViewModel(
   private val sessionId: String,
 ) : AndroidViewModel(application) {
 
-  private val settingsDataStore = SettingsDataStore(application)
+  private val settingsDataStore = AppModule.settingsDataStore
   private val socket = SessionEventSocket()
-  private val client = com.example.picompanion.data.api.PiServerClient()
+  private val client = AppModule.client
   private val repository = SessionsRepository(client, settingsDataStore)
 
   private val _items = MutableStateFlow<List<SessionTimelineItem>>(emptyList())

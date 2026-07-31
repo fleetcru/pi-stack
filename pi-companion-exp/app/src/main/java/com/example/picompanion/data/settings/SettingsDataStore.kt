@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -20,6 +22,9 @@ class SettingsDataStore(private val context: Context) {
 
   private val json = Json { ignoreUnknownKeys = true }
   private val secureTokens = SecureTokenStore(context)
+  // Mutex ensures migration runs exactly once, even if called concurrently.
+  private val migrationMutex = Mutex()
+  @Volatile private var migrationDone = false
 
   private object Keys {
     val TOKENS_MIGRATED = booleanPreferencesKey("tokens_migrated")
@@ -37,9 +42,9 @@ class SettingsDataStore(private val context: Context) {
   private val defaultSettings = AppSettings()
 
   val settingsFlow: Flow<AppSettings> = context.dataStore.data
-    .onStart { migrateTokensIfNeeded() }
+    .onStart { ensureMigrationDone() }
     .map { prefs ->
-    var servers = try {
+    val servers = try {
       prefs[Keys.SERVERS_JSON]?.let { json.decodeFromString<List<ServerEntry>>(it) }
     } catch (_: Exception) {
       null
@@ -78,10 +83,25 @@ class SettingsDataStore(private val context: Context) {
 
   /**
    * One-time migration: move plaintext tokens from DataStore to
-   * EncryptedSharedPreferences. Safe to call repeatedly — it's idempotent.
-   * Must NOT be called from inside a DataStore read transform (deadlock).
+   * EncryptedSharedPreferences. Uses a mutex to ensure it runs exactly once
+   * and never re-enters DataStore while a read transform is active.
    */
-  suspend fun migrateTokensIfNeeded() {
+  private suspend fun ensureMigrationDone() {
+    if (migrationDone) return
+    migrationMutex.withLock {
+      if (migrationDone) return // double-check after acquiring lock
+      migrateTokensIfNeeded()
+      migrationDone = true
+    }
+  }
+
+  /**
+   * Actual migration logic. Reads DataStore, moves tokens to secure storage,
+   * writes back stripped entries. Idempotent — safe to call repeatedly.
+   */
+  private suspend fun migrateTokensIfNeeded() {
+    // Read the raw preferences directly (not through settingsFlow) to avoid
+    // re-entering the flow's transform chain.
     val prefs = context.dataStore.data.first()
     if (prefs[Keys.TOKENS_MIGRATED] == true) return
     var servers = try {
@@ -89,6 +109,8 @@ class SettingsDataStore(private val context: Context) {
     } catch (_: Exception) {
       null
     } ?: return
+    // migrateTokens stores tokens in EncryptedSharedPreferences and returns
+    // copies with authToken stripped.
     servers = secureTokens.migrateTokens(servers)
     context.dataStore.edit {
       it[Keys.SERVERS_JSON] = json.encodeToString(servers)
