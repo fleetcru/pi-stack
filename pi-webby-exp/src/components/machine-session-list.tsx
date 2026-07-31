@@ -37,7 +37,7 @@ function relativeTime(dateStr?: string): string {
 
 export function MachineSessionList({ sessions, onOpen }: { sessions: MachineSession[]; onOpen: (id: string) => Promise<void> }) {
   const [openError, setOpenError] = useState<string | null>(null)
-  const errorTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => { if (errorTimerRef.current) clearTimeout(errorTimerRef.current) }, [])
 
   const handleOpen = async (id: string) => {

@@ -9,6 +9,7 @@
 /node_modules/
 /pnpm-lock.yaml
 pi-webby-shared/node_modules/
+pi-webby-shared/dist/
 
 # ── Go ────────────────────────────────────────────────────
 pi-server-exp/pi-server

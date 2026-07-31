@@ -1,0 +1,1 @@
+{"root":["./src/api/client.ts","./src/api/hooks.ts","./src/api/index.ts","./src/api/session-socket.ts","./src/api/types.ts","./src/state/app-store.ts"],"version":"6.0.3"}

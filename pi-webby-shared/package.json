@@ -10,10 +10,14 @@
     "./api/types": "./src/api/types.ts",
     "./state/app-store": "./src/state/app-store.ts"
   },
+  "dependencies": {
+    "@types/react": "^19.0.0"
+  },
   "peerDependencies": {
     "@tanstack/react-query": "^5.0.0",
     "zustand": "^5.0.0",
-    "react": "^19.0.0"
+    "react": "^19.0.0",
+    "vite": "^6.0.0 || ^7.0.0 || ^8.0.0"
   },
   "devDependencies": {
     "typescript": "^5.0.0"

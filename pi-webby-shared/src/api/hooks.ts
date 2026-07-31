@@ -31,6 +31,7 @@ type AppState = {
   connection?: ServerConnectionSettings
   servers: ServerConnectionSettings[]
   selectedSessionId?: string
+  selectSession: (sessionId?: string) => void
 }
 type UseAppStore = <T>(selector: (state: AppState) => T) => T
 
