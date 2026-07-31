@@ -129,7 +129,14 @@ func envList(key string) []string {
 	if v == "" {
 		return nil
 	}
-	return strings.Split(v, ",")
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, s := range parts {
+		if trimmed := strings.TrimSpace(s); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func envDuration(key string, fallback time.Duration) time.Duration {

@@ -103,7 +103,11 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 			wg.Add(1)
 			go func(spec SessionSpec) {
 				defer wg.Done()
-				p, _ := s.sessions.Get(spec.ID)
+				p, ok := s.sessions.Get(spec.ID)
+				if !ok {
+					ch <- stateResult{id: spec.ID, runtime: map[string]any{}, running: false}
+					return
+				}
 				ps := p.Status()
 				res := stateResult{id: spec.ID, runtime: map[string]any{}, running: false}
 				if rt, ok := ps["runtimeStatus"].(map[string]any); ok {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router"
 import { usePanelRef } from "react-resizable-panels"
@@ -611,16 +611,18 @@ function CapacityControl({ capacity, client }: { capacity?: { activeSessions: nu
 
 function MachineSessionList({ sessions, onOpen }: { sessions: MachineSession[]; onOpen: (id: string) => Promise<void> }) {
   const [openError, setOpenError] = useState<string | null>(null)
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  useEffect(() => () => { if (errorTimerRef.current) clearTimeout(errorTimerRef.current) }, [])
 
   const handleOpen = async (id: string) => {
     setOpenError(null)
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current)
     try {
       await onOpen(id)
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to open session"
       setOpenError(message)
-      // Auto-clear after 5 seconds
-      setTimeout(() => setOpenError(null), 5000)
+      errorTimerRef.current = setTimeout(() => setOpenError(null), 5000)
     }
   }
 

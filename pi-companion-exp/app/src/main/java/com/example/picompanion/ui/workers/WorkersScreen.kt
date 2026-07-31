@@ -32,6 +32,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,8 +52,8 @@ fun WorkersScreen(
   viewModel: WorkersViewModel = viewModel(),
 ) {
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-  var editingWorker by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<ServerWorker?>(null) }
-  var addingWorker by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+  var editingWorker by remember { mutableStateOf<ServerWorker?>(null) }
+  var addingWorker by remember { mutableStateOf(false) }
 
   if (addingWorker || editingWorker != null) WorkerEditorDialog(
     worker = editingWorker,

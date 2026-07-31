@@ -172,9 +172,9 @@ fun SettingsScreen(
 
     // About
     SettingsSection(title = "About") {
-      SettingsRow(label = "App version", value = "0.1 debug")
+      SettingsRow(label = "App version", value = com.example.picompanion.BuildConfig.VERSION_NAME)
       SettingsRow(label = "API target", value = "pi-server /v1")
-      SettingsRow(label = "Build type", value = "Debug")
+      SettingsRow(label = "Build type", value = com.example.picompanion.BuildConfig.BUILD_TYPE)
     }
 
     // Bottom spacer

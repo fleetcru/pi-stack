@@ -8,11 +8,13 @@ import com.example.picompanion.data.api.PiServerClient
 import com.example.picompanion.data.model.ServerWorker
 import com.example.picompanion.data.repository.WorkersRepository
 import com.example.picompanion.data.settings.SettingsDataStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class WorkersViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -31,7 +33,7 @@ class WorkersViewModel(application: Application) : AndroidViewModel(application)
     viewModelScope.launch {
       val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
       val request = com.example.picompanion.data.model.WorkerWriteRequest(id, url, token.ifBlank { null }, tags)
-      kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+      withContext(Dispatchers.IO) {
         if ((_uiState.value as? WorkersUiState.Content)?.workers?.any { it.id == id } == true) client.updateWorker(server, request) else client.addWorker(server, request)
       }
       refresh()
@@ -41,7 +43,7 @@ class WorkersViewModel(application: Application) : AndroidViewModel(application)
   fun deleteWorker(id: String) {
     viewModelScope.launch {
       val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
-      kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { client.deleteWorker(server, id) }
+      withContext(Dispatchers.IO) { client.deleteWorker(server, id) }
       refresh()
     }
   }
@@ -49,7 +51,7 @@ class WorkersViewModel(application: Application) : AndroidViewModel(application)
   fun checkHealth(id: String) {
     viewModelScope.launch {
       val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
-      kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { client.checkWorkerHealth(server, id) }
+      withContext(Dispatchers.IO) { client.checkWorkerHealth(server, id) }
       refresh()
     }
   }
