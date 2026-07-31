@@ -3,13 +3,13 @@
     "target": "ES2020",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "strict": true,
+    "strict": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "declaration": true,
     "rootDir": "src",
     "outDir": "dist",
-    "types": ["vite/client"]
+    "types": []
   },
   "include": ["src"]
 }

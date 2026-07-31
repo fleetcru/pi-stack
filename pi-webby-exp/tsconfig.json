@@ -2,12 +2,12 @@
   "files": [],
   "references": [
     { "path": "./tsconfig.app.json" },
-    { "path": "./tsconfig.node.json" },
-    { "path": "../pi-webby-shared" }
+    { "path": "./tsconfig.node.json" }
   ],
   "compilerOptions": {
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@pi-stack/webby-shared/*": ["../pi-webby-shared/src/*"]
     }
   }
 }

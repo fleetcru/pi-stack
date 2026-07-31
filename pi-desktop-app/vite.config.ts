@@ -9,7 +9,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@pi-stack/webby-shared": path.resolve(__dirname, "../pi-webby-shared/src"),
     },
+    dedupe: ["react", "react-dom", "zustand", "@tanstack/react-query"],
   },
   server: {
     watch: {

@@ -22,7 +22,8 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@pi-stack/webby-shared/*": ["../pi-webby-shared/src/*"]
     }
   },
   "include": ["src"]
