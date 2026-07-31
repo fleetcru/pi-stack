@@ -10,10 +10,10 @@
 
 | Category | Fixed | Remaining |
 |----------|-------|-----------|
-| Bugs & correctness | 12 | 5 |
-| Performance | 1 | 6 |
-| Code quality | 10 | 8 |
-| **Total** | **23** | **19** |
+| Bugs & correctness | 16 | 3 |
+| Performance | 5 | 3 |
+| Code quality | 12 | 6 |
+| **Total** | **33** | **12** |
 
 ---
 
@@ -68,31 +68,27 @@
 
 ## ⚠️ Remaining Medium-Priority Issues
 
-### Server
-
-| # | File | Issue |
-|---|------|-------|
-| 1 | `server.go:57-67` | **Dead code — session re-link never executes.** Checks `s.sessionBridge != nil` before it's assigned in `New()`. Sessions loaded from disk never get re-linked to the bridge after restart. |
-| 2 | `security.go:23-40` | **`allowedCWD` calls `EvalSymlinks()` on every request.** Symlink resolution involves syscalls. Should pre-resolve and cache at startup. |
-| 3 | `openapi.go` | **OpenAPI spec rebuilt on every request.** The entire spec (schemas + paths) is computed from scratch on every `GET /openapi.json`. Should be computed once and cached. |
-| 4 | `session_inventory.go:170-185` | **Title update goroutine panic leaves permanent entry.** If the debounce goroutine panics before the deferred `delete`, the entry stays forever and all future title updates for that session are silently dropped. |
-
 ### Webby/Desktop
 
 | # | File | Issue |
 |---|------|-------|
-| 5 | `session-inspector.tsx:356` | **`autoRetry` toggle never synced from server.** Initialized to `true` locally, never fetched. Toggle shows "on" regardless of actual server state. |
-| 6 | `session-inspector.tsx:92,347` | **Aggressive polling.** `state` every 2s, `stats` every 5s, plus a duplicate `state` query in Settings. |
-| 7 | `workspace-shell.tsx` | **1113-line file with 15+ components.** Should be split into 3-4 files. |
-
-### Companion
-
-| # | File | Issue |
-|---|------|-------|
-| 8 | `SessionsViewModel`, `HomeViewModel` | **No pagination for session lists.** Fetches all sessions in one call every 10 seconds. |
-| 9 | `build.gradle.kts:34` | **`isMinifyEnabled = false` in release.** Ships unoptimized APK without R8 minification. |
+| 1 | `session-inspector.tsx:356` | **`autoRetry`/`autoCompactionEnabled` not returned by server.** The toggle syncs from `state?.autoRetryEnabled` but the server doesn't emit this field. Defaults to `true`. Same for `autoCompactionEnabled`. Server needs to track and return these settings. |
 
 ---
+
+## ✅ Medium-Priority Issues Fixed in Round 4
+
+| # | Project | File | Fix |
+|---|---------|------|-----|
+| 31 | Server | `server.go` | Moved session re-link loop after `sessionBridge` initialization (was dead code) |
+| 32 | Server | `security.go`, `server.go` | Pre-resolve allowed root symlinks at startup via `resolveAllowedRoots()` |
+| 33 | Server | `openapi.go` | Cache OpenAPI spec with `sync.Once` instead of rebuilding per request |
+| 34 | Server | `session_inventory.go` | Added `recover()` in title update goroutine to prevent permanent entry leak |
+| 35 | Webby | `session-inspector.tsx` | `autoRetry` toggle now syncs from `state?.autoRetryEnabled` (ready for server support) |
+| 36 | Webby | `session-inspector.tsx` | Reduced `state` poll from 2s→10s, `stats` from 5s→15s; Settings poll matched to 10s |
+| 37 | Webby | `workspace-shell.tsx` | Split 1113-line file into 4 files: `sidebar-tree.tsx`, `capacity-control.tsx`, `machine-session-list.tsx`, `workspace-shell.tsx` (498 lines) |
+| 38 | Companion | `PiServerClient.kt`, `HomeViewModel.kt` | Added `listRecentSessions()` with client-side limit of 50 for home screen |
+| 39 | Companion | `build.gradle.kts`, `proguard-rules.pro` | Enabled R8 minification + shrinkResources with keep rules for kotlinx.serialization |
 
 ## ⚠️ Remaining Low-Priority Issues
 

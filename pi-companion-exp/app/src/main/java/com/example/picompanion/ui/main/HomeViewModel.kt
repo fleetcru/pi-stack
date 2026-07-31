@@ -70,7 +70,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
       // Fetch all data in parallel
       val healthDeferred = async(Dispatchers.IO) { client.checkHealth(server) }
-      val sessionsDeferred = async(Dispatchers.IO) { client.listSessions(server) }
+      val sessionsDeferred = async(Dispatchers.IO) { client.listRecentSessions(server) }
       val workersDeferred = async(Dispatchers.IO) { client.listWorkers(server) }
       val globalDeferred = async(Dispatchers.IO) { client.listGlobalSessions(server) }
       val machineDeferred = async(Dispatchers.IO) { client.listMachineSessions(server) }

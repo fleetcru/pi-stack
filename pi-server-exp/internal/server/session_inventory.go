@@ -174,6 +174,9 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 							s.pendingTitleMu.Unlock()
 							go func(id, title string) {
 								defer func() {
+									if r := recover(); r != nil {
+										s.logger.Warn("title update goroutine panicked", "session", id, "recover", r)
+									}
 									s.pendingTitleMu.Lock()
 									delete(s.pendingTitle, id)
 									s.pendingTitleMu.Unlock()

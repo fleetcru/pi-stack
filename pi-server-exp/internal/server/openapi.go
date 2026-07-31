@@ -1,18 +1,33 @@
 package server
 
-import "net/http"
+import (
+	"encoding/json"
+	"net/http"
+	"sync"
+)
+
+var (
+	openAPISpec     []byte
+	openAPISpecOnce sync.Once
+)
 
 func (s *Server) openapi(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"openapi":  "3.1.0",
-		"info":     map[string]any{"title": "pi-server", "version": APIVersion, "description": "HTTP/WebSocket daemon for Pi RPC"},
-		"security": []map[string][]string{{"bearerAuth": []string{}}},
-		"components": map[string]any{
-			"securitySchemes": map[string]any{"bearerAuth": map[string]any{"type": "http", "scheme": "bearer"}},
-			"schemas":         schemas(),
-		},
-		"paths": paths(),
+	openAPISpecOnce.Do(func() {
+		spec := map[string]any{
+			"openapi":  "3.1.0",
+			"info":     map[string]any{"title": "pi-server", "version": APIVersion, "description": "HTTP/WebSocket daemon for Pi RPC"},
+			"security": []map[string][]string{{"bearerAuth": []string{}}},
+			"components": map[string]any{
+				"securitySchemes": map[string]any{"bearerAuth": map[string]any{"type": "http", "scheme": "bearer"}},
+				"schemas":         schemas(),
+			},
+			"paths": paths(),
+		}
+		openAPISpec, _ = json.Marshal(spec)
 	})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(openAPISpec)
 }
 
 func schemas() map[string]any {

@@ -32,6 +32,7 @@ type Server struct {
 	stateCache     map[string]cachedSessionState
 	pendingTitleMu sync.Mutex
 	pendingTitle   map[string]bool
+	resolvedRoots  []string // pre-resolved allowed roots (symlinks evaluated)
 	stopHeartbeat  chan struct{}
 	sessionBridge  *SessionBridge
 }
@@ -51,6 +52,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		historyCache:   map[string]historyCacheEntry{},
 		stateCache:     map[string]cachedSessionState{},
 		pendingTitle:   map[string]bool{},
+		resolvedRoots:  resolveAllowedRoots(cfg.AllowedRoots),
 		stopHeartbeat:  make(chan struct{}),
 	}
 	if err := s.sessions.Load(); err != nil {
@@ -63,19 +65,6 @@ func New(cfg Config, logger *slog.Logger) *Server {
 			logger.Info("removing stale relay session spec", "id", spec.ID)
 			_ = s.sessions.Delete(spec.ID)
 		}
-	}
-	// Re-link managed sessions to Pi's native session store after restart.
-	// This ensures pi -r can discover sessions created via the API.
-	if s.sessionBridge != nil {
-		go func() {
-			for _, spec := range s.sessions.ListSpecs() {
-				if spec.ManagedSessionDir != "" && spec.Transport == "rpc" {
-					if err := s.sessionBridge.LinkManagedSession(spec.ID, spec.ManagedSessionDir); err != nil {
-						logger.Debug("failed to re-link managed session", "id", spec.ID, "error", err)
-					}
-				}
-			}
-		}()
 	}
 	if err := s.workers.Load(); err != nil {
 		logger.Warn("failed to load worker registry", "error", err)
@@ -104,6 +93,17 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		logger.Warn("session bridge disabled", "error", err)
 	} else {
 		s.sessionBridge = bridge
+		// Re-link managed sessions to Pi's native session store after restart.
+		// This ensures pi -r can discover sessions created via the API.
+		go func() {
+			for _, spec := range s.sessions.ListSpecs() {
+				if spec.ManagedSessionDir != "" && spec.Transport == "rpc" {
+					if err := bridge.LinkManagedSession(spec.ID, spec.ManagedSessionDir); err != nil {
+						logger.Debug("failed to re-link managed session", "id", spec.ID, "error", err)
+					}
+				}
+			}
+		}()
 	}
 	s.httpSrv = &http.Server{
 		Addr:              cfg.Addr,

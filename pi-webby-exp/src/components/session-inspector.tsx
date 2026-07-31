@@ -94,10 +94,10 @@ export function SessionInspector({ session }: { session?: ApiSession }) {
 function Overview({ session }: { session: ApiSession }) {
   const client = usePiServerClient()
   const stateQuery = useSessionData(session.id, "state", {
-    refetchInterval: 2_000,
+    refetchInterval: 10_000,
   })
   const statsQuery = useSessionData(session.id, "stats", {
-    refetchInterval: 5_000,
+    refetchInterval: 15_000,
   })
   const state = responseData<StateData>(stateQuery.data)
   const stats = responseData<StatsData>(statsQuery.data)
@@ -349,7 +349,7 @@ function Workspace({ session }: { session: ApiSession }) {
 function Settings({ session }: { session: ApiSession }) {
   const client = usePiServerClient()
   const stateQuery = useSessionData(session.id, "state", {
-    refetchInterval: 5_000,
+    refetchInterval: 10_000,
   })
   const forksQuery = useSessionData(session.id, "fork-messages")
   const state = responseData<StateData>(stateQuery.data)
@@ -359,13 +359,14 @@ function Settings({ session }: { session: ApiSession }) {
     )?.messages ?? []
   const [title, setTitle] = useState(session.title ?? "")
   const [project, setProject] = useState(session.project ?? "")
-  const [autoRetry, setAutoRetry] = useState(true)
-  // Sync local state when the session prop changes (e.g., after server-side rename).
-  // Track previous prop values via state to avoid useEffect cascading renders.
+  const [autoRetry, setAutoRetry] = useState(state?.autoRetryEnabled ?? true)
+  // Sync local state when the session prop or server state changes.
   const [prevSessionTitle, setPrevSessionTitle] = useState(session.title)
   const [prevSessionProject, setPrevSessionProject] = useState(session.project)
+  const [prevAutoRetry, setPrevAutoRetry] = useState(state?.autoRetryEnabled)
   if (prevSessionTitle !== session.title) { setPrevSessionTitle(session.title); setTitle(session.title ?? "") }
   if (prevSessionProject !== session.project) { setPrevSessionProject(session.project); setProject(session.project ?? "") }
+  if (state?.autoRetryEnabled !== undefined && prevAutoRetry !== state.autoRetryEnabled) { setPrevAutoRetry(state.autoRetryEnabled); setAutoRetry(state.autoRetryEnabled) }
 
   async function refresh() {
     await stateQuery.refetch()
@@ -595,6 +596,7 @@ type StateData = {
   pendingMessageCount?: number
   messageCount?: number
   autoCompactionEnabled?: boolean
+  autoRetryEnabled?: boolean
 }
 type StatsData = {
   totalMessages?: number
