@@ -89,14 +89,26 @@ class SessionDetailViewModel(
   private var nextHistoryOffset = 0
   private var historicalItems: List<SessionTimelineItem> = emptyList()
   private val historyMutex = kotlinx.coroutines.sync.Mutex()
+  // Monotonic counter to give every timeline item a stable insertion order.
+  // Prevents items from appearing out of sequence when history and live WS
+  // events merge after reconnect.
+  private var timelineSeq: Long = 0
 
   private fun appendItem(item: SessionTimelineItem) {
     // Deduplicate before appending — prevents duplicates from history/live overlap
     val id = timelineItemId(item)
     _items.update { current ->
       if (current.any { timelineItemId(it) == id }) current
-      else current + item
+      else current + withOrder(item)
     }
+  }
+
+  /** Stamp an item with a monotonic order value if it doesn't have one yet. */
+  private fun withOrder(item: SessionTimelineItem): SessionTimelineItem = when (item) {
+    is SessionTimelineItem.Chat -> if (item.order > 0) item else item.copy(order = ++timelineSeq)
+    is SessionTimelineItem.Tool -> if (item.order > 0) item else item.copy(order = ++timelineSeq)
+    is SessionTimelineItem.FileChange -> if (item.order > 0) item else item.copy(order = ++timelineSeq)
+    is SessionTimelineItem.System -> if (item.order > 0) item else item.copy(order = ++timelineSeq)
   }
 
   private var lastEventId: Long = 0
@@ -133,6 +145,9 @@ class SessionDetailViewModel(
   // A new Pi message_start must always create a new assistant row. Without
   // this boundary, consecutive turns were merged into one giant response.
   private var assistantTextOpen = false
+  // Tracks the order value of the current assistant bubble so post-tool
+  // deltas don't merge back into a pre-tool bubble.
+  private var currentAssistantOrder: Long = 0
   private val pendingAssistantDeltas = StringBuilder()
   private var assistantFlushJob: Job? = null
   // Property initializers run before the init block. Keep this buffer above
@@ -162,6 +177,7 @@ class SessionDetailViewModel(
     pendingToolUpdates.clear()
     assistantTextOpen = false
     receivedAssistantTextInMessage = false
+    currentAssistantOrder = 0
 
     viewModelScope.launch {
       _connectionState.value = ConnectionState.Connecting
@@ -271,10 +287,14 @@ class SessionDetailViewModel(
             val data = result.value["data"]?.jsonObject
             val messages = data?.get("messages") as? JsonArray
             if (messages != null) {
-              val history = messages.mapNotNull { element ->
+              // First pass: parse all entries. tool_result entries carry the
+              // output of a tool_use, so we collect them separately and merge
+              // into the matching tool_use in a second pass.
+              data class RawToolUse(val callId: String, val name: String, val args: String?)
+              val toolResults = mutableMapOf<String, String>() // callId → output text
+              val parsed = messages.mapNotNull { element ->
                 val message = element as? JsonObject ?: return@mapNotNull null
                 val role = message.getString("role") ?: return@mapNotNull null
-                // Include tool_use and tool_result entries from history
                 val historyType = message.getString("_historyType")
                 if (historyType == "tool_use") {
                   val name = message.getString("name") ?: "tool"
@@ -287,7 +307,13 @@ class SessionDetailViewModel(
                   )
                 }
                 if (historyType == "tool_result") {
-                  // Tool results are paired with tool_use — skip standalone results
+                  // Collect tool_result output keyed by tool_use_id so we can
+                  // attach it to the matching Tool item below.
+                  val toolUseId = message.getString("tool_use_id") ?: message.getString("id")
+                  if (toolUseId != null) {
+                    val output = message.findText() ?: message["content"]?.findText()
+                    if (output != null) toolResults[toolUseId] = output
+                  }
                   return@mapNotNull null
                 }
                 if (role != "user" && role != "assistant") return@mapNotNull null
@@ -299,6 +325,14 @@ class SessionDetailViewModel(
                   time = message.getString("timestamp").orEmpty(),
                   isUser = role == "user",
                 )
+              }
+              // Second pass: merge tool_result output into matching tool_use items.
+              val history = parsed.map { item ->
+                if (item is SessionTimelineItem.Tool && item.callId in toolResults) {
+                  item.copy(output = toolResults[item.callId])
+                } else {
+                  item
+                }
               }.distinctBy { timelineItemId(it) }
               val historyMeta = data["history"]?.jsonObject
               _hasOlderHistory.value = historyMeta?.get("hasOlder")
@@ -324,9 +358,9 @@ class SessionDetailViewModel(
                 }.forEach { merged[timelineItemId(it)] = it }
                 // Keep live items that aren't in history.
                 // After reconnect, WS replays all events including tools/files/system.
-                // Strategy: keep Chat items not in history, plus any Tool items that are
-                // still running (i.e., the agent is mid-tool-call). Completed/failed tools
-                // from replay are redundant with the history's final assistant text.
+                // Strategy: keep Chat items not in history, plus Tool items not in history
+                // (both running and completed — completed tools carry output that the
+                // history's tool_use entries may lack). Drop redundant file_change/system.
                 current.filter { item ->
                   val isOptimisticImage = item is SessionTimelineItem.Chat &&
                     item.time == "now" && item.imageUris.isNotEmpty()
@@ -334,12 +368,15 @@ class SessionDetailViewModel(
                   val id = timelineItemId(item)
                   if (id in merged) return@filter false
                   when (item) {
-                    is SessionTimelineItem.Chat -> true // keep new chat not in history
-                    is SessionTimelineItem.Tool -> item.status == "running" // only keep in-progress tools
-                    else -> false // drop replayed file_change, system, etc.
+                    is SessionTimelineItem.Chat -> true
+                    is SessionTimelineItem.Tool -> true // keep all tools not in history
+                    else -> false
                   }
                 }.forEach { merged[timelineItemId(it)] = it }
-                merged.values.toList()
+                // Sort by insertion order so history and live items interleave
+                // correctly after reconnect. Items with order=0 (stamped before
+                // the order field existed) sort first.
+                merged.values.sortedBy { it.order }
               }
             }
           }
@@ -465,7 +502,7 @@ class SessionDetailViewModel(
         if (remaining.isNotEmpty() && assistantTextOpen) {
           _items.update { current ->
             val index = current.indexOfLast {
-              it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent"
+              it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
             }
             if (index >= 0) {
               val existing = current[index] as SessionTimelineItem.Chat
@@ -480,6 +517,7 @@ class SessionDetailViewModel(
           appendAssistantMessage(remaining)
         }
         assistantTextOpen = false
+        currentAssistantOrder = 0
         // Some providers do not emit text_delta. Show their final text once.
         if (!receivedAssistantTextInMessage) {
           message.findText()?.takeIf { it.isNotBlank() }?.let(::appendAssistantMessage)
@@ -641,27 +679,18 @@ class SessionDetailViewModel(
       val buffered = pendingAssistantDeltas.toString()
       pendingAssistantDeltas.clear()
       if (buffered.isEmpty()) return@launch
-      if (assistantTextOpen) {
-        _items.update { current ->
-          val index = current.indexOfLast {
-            it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent"
-          }
-          if (index >= 0) {
-            val existing = current[index] as SessionTimelineItem.Chat
-            current.toMutableList().also {
-              it[index] = existing.copy(text = existing.text + buffered)
-            }
-          } else {
-            current + SessionTimelineItem.Chat("Pi Agent", buffered, "", false)
-          }
-        }
+      if (!assistantTextOpen) {
+        // Open a new assistant bubble.
+        val newBubble = SessionTimelineItem.Chat("Pi Agent", buffered, "", false)
+        val stamped = withOrder(newBubble) as SessionTimelineItem.Chat
+        currentAssistantOrder = stamped.order
+        assistantTextOpen = true
+        appendItem(stamped)
       } else {
-        // assistantTextOpen is false — message_end already arrived.
-        // Append to the last assistant row if one exists, otherwise create new.
-        // This prevents orphan bubbles from late-arriving deltas.
+        // Append to the current assistant bubble, identified by its order.
         _items.update { current ->
           val index = current.indexOfLast {
-            it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent"
+            it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
           }
           if (index >= 0) {
             val existing = current[index] as SessionTimelineItem.Chat
@@ -669,7 +698,11 @@ class SessionDetailViewModel(
               it[index] = existing.copy(text = existing.text + buffered)
             }
           } else {
-            current + SessionTimelineItem.Chat("Pi Agent", buffered, "", false)
+            // Bubble was lost (shouldn't happen) — create a new one.
+            val newBubble = SessionTimelineItem.Chat("Pi Agent", buffered, "", false)
+            val stamped = withOrder(newBubble) as SessionTimelineItem.Chat
+            currentAssistantOrder = stamped.order
+            current + stamped
           }
         }
       }
@@ -677,12 +710,16 @@ class SessionDetailViewModel(
   }
 
   private fun appendAssistantMessage(text: String) {
-    appendItem(SessionTimelineItem.Chat(
+    val bubble = SessionTimelineItem.Chat(
       author = "Pi Agent",
       text = text,
       time = "",
       isUser = false,
-    ))
+    )
+    val stamped = withOrder(bubble) as SessionTimelineItem.Chat
+    currentAssistantOrder = stamped.order
+    assistantTextOpen = false
+    appendItem(stamped)
   }
 
   /**
@@ -700,7 +737,7 @@ class SessionDetailViewModel(
     if (remaining.isNotEmpty() && assistantTextOpen) {
       _items.update { current ->
         val index = current.indexOfLast {
-          it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent"
+          it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
         }
         if (index >= 0) {
           val existing = current[index] as SessionTimelineItem.Chat
@@ -713,12 +750,14 @@ class SessionDetailViewModel(
       }
     }
     assistantTextOpen = false
+    currentAssistantOrder = 0
   }
 
   private fun timelineItemId(item: SessionTimelineItem): String = when (item) {
-    // Ignore timestamps because persisted history and WS events serialize them
-    // differently. Role + text identifies the same message across both paths.
-    is SessionTimelineItem.Chat -> "chat|${item.isUser}|${item.text.trim()}"
+    // Tool and FileChange IDs are naturally unique (callId / path).
+    // Chat dedup uses role + a hash of the full text so that two identical
+    // messages from the same role (e.g. user sending "yes" twice) are kept.
+    is SessionTimelineItem.Chat -> "chat|${item.isUser}|${item.time}|${item.text.hashCode()}"
     is SessionTimelineItem.Tool -> "tool|${item.callId}"
     is SessionTimelineItem.FileChange -> "file|${item.operation}|${item.path}"
     is SessionTimelineItem.System -> "system|${item.text}"
@@ -1073,12 +1112,15 @@ sealed interface SendState {
 }
 
 sealed interface SessionTimelineItem {
+  val order: Long
+
   data class Chat(
     val author: String,
     val text: String,
     val time: String,
     val isUser: Boolean,
     val imageUris: List<Uri> = emptyList(),
+    override val order: Long = 0,
   ) : SessionTimelineItem
 
   data class Tool(
@@ -1089,12 +1131,14 @@ sealed interface SessionTimelineItem {
     val output: String? = null,
     val startedAt: Long? = null,
     val endedAt: Long? = null,
+    override val order: Long = 0,
   ) : SessionTimelineItem
 
   data class FileChange(
     val path: String,
     val operation: String,
+    override val order: Long = 0,
   ) : SessionTimelineItem
 
-  data class System(val text: String) : SessionTimelineItem
+  data class System(val text: String, override val order: Long = 0) : SessionTimelineItem
 }
