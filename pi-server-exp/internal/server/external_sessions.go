@@ -17,6 +17,11 @@ type ExternalCommand struct {
 	Type     string `json:"type"`
 	Message  string `json:"message,omitempty"`
 	Delivery string `json:"delivery,omitempty"`
+	// For set_model commands
+	Provider string `json:"provider,omitempty"`
+	ModelID  string `json:"modelId,omitempty"`
+	// For set_thinking_level commands
+	Level string `json:"level,omitempty"`
 }
 
 type ExternalSession struct {
@@ -25,6 +30,7 @@ type ExternalSession struct {
 	Title           string
 	SessionPath     string
 	Model           map[string]any
+	AvailableModels []any
 	ThinkingLevel   string
 	LastUsage       map[string]any
 	TotalCost       float64
@@ -202,6 +208,10 @@ func (r *ExternalRegistry) publish(id string, ev RPCEvent) bool {
 	case "model_select":
 		if model, ok := ev["model"].(map[string]any); ok {
 			s.Model = model
+		}
+	case "available_models":
+		if models, ok := ev["models"].([]any); ok {
+			s.AvailableModels = models
 		}
 	case "thinking_level_select":
 		if level, ok := ev["level"].(string); ok {

@@ -50,8 +50,27 @@ func (t relayTransport) Send(command RPCCommand) error {
 			return fmt.Errorf("relay is unavailable: session may be stale or stopped")
 		}
 		return nil
+	case "set_model":
+		provider, _ := command["provider"].(string)
+		modelID, _ := command["modelId"].(string)
+		if provider == "" || modelID == "" {
+			return fmt.Errorf("provider and modelId are required")
+		}
+		if !t.external.enqueue(t.id, ExternalCommand{ID: NewSessionID(), Type: "set_model", Provider: provider, ModelID: modelID}) {
+			return fmt.Errorf("relay is unavailable: session may be stale or stopped")
+		}
+		return nil
+	case "set_thinking_level":
+		level, _ := command["level"].(string)
+		if level == "" {
+			return fmt.Errorf("level is required")
+		}
+		if !t.external.enqueue(t.id, ExternalCommand{ID: NewSessionID(), Type: "set_thinking_level", Level: level}) {
+			return fmt.Errorf("relay is unavailable: session may be stale or stopped")
+		}
+		return nil
 	default:
-		return fmt.Errorf("relay transport does not support %q; supported commands: prompt, steer, follow-up, abort", command["type"])
+		return fmt.Errorf("relay transport does not support %q; supported commands: prompt, steer, follow-up, abort, set_model, set_thinking_level", command["type"])
 	}
 }
 func (t relayTransport) Request(_ context.Context, command RPCCommand) (RPCEvent, error) {
@@ -67,9 +86,9 @@ func (t relayTransport) Request(_ context.Context, command RPCCommand) (RPCEvent
 		if !ok {
 			return nil, fmt.Errorf("relay session not found")
 		}
-		models := []any{}
-		if s.Model != nil {
-			models = append(models, s.Model)
+		models := s.AvailableModels
+		if len(models) == 0 && s.Model != nil {
+			models = []any{s.Model}
 		}
 		return RPCEvent{"type": "response", "success": true, "command": "get_available_models", "data": map[string]any{"models": models}}, nil
 	default:

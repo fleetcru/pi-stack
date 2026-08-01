@@ -118,11 +118,11 @@ func (s *Server) sessionGet(w http.ResponseWriter, r *http.Request) {
 		case "messages":
 			s.relaySessionMessages(w, r, external)
 		case "models":
-			// The relay exposes the active TUI model. Model selection itself stays
-			// in Pi TUI until relay control support is added.
-			models := []any{}
-			if external.Model != nil {
-				models = append(models, external.Model)
+			// Return the full available models list reported by the bridge.
+			// Falls back to the active model if the bridge hasn't reported yet.
+			models := external.AvailableModels
+			if len(models) == 0 && external.Model != nil {
+				models = []any{external.Model}
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"command": "get_available_models", "success": true, "data": map[string]any{"models": models}})
 		case "stats":

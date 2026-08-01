@@ -1016,16 +1016,28 @@ class SessionDetailViewModel(
   fun setModel(provider: String, modelId: String) {
     val server = activeServer ?: return
     viewModelScope.launch {
-      withContext(Dispatchers.IO) { client.setSessionModel(server, sessionId, provider, modelId) }
-      loadModelControls()
+      when (val result = withContext(Dispatchers.IO) { client.setSessionModel(server, sessionId, provider, modelId) }) {
+        is com.example.picompanion.data.api.HttpResult.Success -> {
+          appendItem(SessionTimelineItem.System("Model changed: $provider/$modelId"))
+          loadModelControls()
+        }
+        is com.example.picompanion.data.api.HttpResult.Failure ->
+          appendItem(SessionTimelineItem.System("Could not set model: ${result.userMessage}"))
+      }
     }
   }
 
   fun setThinkingLevel(level: String) {
     val server = activeServer ?: return
     viewModelScope.launch {
-      withContext(Dispatchers.IO) { client.setThinkingLevel(server, sessionId, level) }
-      loadModelControls()
+      when (val result = withContext(Dispatchers.IO) { client.setThinkingLevel(server, sessionId, level) }) {
+        is com.example.picompanion.data.api.HttpResult.Success -> {
+          appendItem(SessionTimelineItem.System("Thinking level: $level"))
+          loadModelControls()
+        }
+        is com.example.picompanion.data.api.HttpResult.Failure ->
+          appendItem(SessionTimelineItem.System("Could not set thinking level: ${result.userMessage}"))
+      }
     }
   }
 

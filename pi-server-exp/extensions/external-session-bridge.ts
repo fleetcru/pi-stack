@@ -1,11 +1,19 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 
 type BridgeConfig = { relayUrl?: string; relayToken?: string };
+const configPath = join(process.env.USERPROFILE ?? process.env.HOME ?? "", ".pi", "agent", "bridge-config.json");
 function loadConfig(): BridgeConfig {
-  const path = join(process.env.USERPROFILE ?? process.env.HOME ?? "", ".pi", "agent", "bridge-config.json");
-  try { return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) as BridgeConfig : {}; } catch { return {}; }
+  try { return existsSync(configPath) ? JSON.parse(readFileSync(configPath, "utf8")) as BridgeConfig : {}; } catch { return {}; }
+}
+function saveConfig(config: BridgeConfig): void {
+  try {
+    mkdirSync(dirname(configPath), { recursive: true });
+    writeFileSync(configPath, JSON.stringify(config, null, 2), "utf8");
+  } catch (err) {
+    throw new Error(`Failed to save config: ${err instanceof Error ? err.message : "unknown"}`);
+  }
 }
 const eventQueueLimit = 200;
 const requestTimeoutMs = 15_000;
@@ -201,12 +209,35 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     try { await request(`/v1/external-sessions/${id}/ack`, "POST", { ids: [commandId], lease }); } catch { registered = false; /* server retries delivery after lease renewal */ }
   };
 
-  const deliverCommand = async (command: { id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt" }) => {
+  const deliverCommand = async (command: { id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt"; provider?: string; modelId?: string; level?: string }) => {
     if (handledCommands.has(command.id)) { await acknowledge(command.id); return; }
     if (command.type === "abort") {
       abortCurrent?.();
       emit({ type: "bridge_receipt", commandId: command.id, status: "delivered" });
       ui?.notify("Remote stop requested", "warning");
+      handledCommands.add(command.id);
+      await acknowledge(command.id);
+      return;
+    }
+    if (command.type === "set_model") {
+      const provider = command.provider;
+      const modelId = command.modelId;
+      if (provider && modelId) {
+        const ok = await pi.setModel({ provider, id: modelId });
+        emit({ type: "bridge_receipt", commandId: command.id, status: ok ? "delivered" : "failed" });
+        ui?.notify(ok ? `Model changed to ${provider}/${modelId}` : `Failed to set model ${provider}/${modelId}`, ok ? "info" : "error");
+      }
+      handledCommands.add(command.id);
+      await acknowledge(command.id);
+      return;
+    }
+    if (command.type === "set_thinking_level") {
+      const level = command.level;
+      if (level) {
+        pi.setThinkingLevel(level as any);
+        emit({ type: "bridge_receipt", commandId: command.id, status: "delivered" });
+        ui?.notify(`Thinking level changed to ${level}`, "info");
+      }
       handledCommands.add(command.id);
       await acknowledge(command.id);
       return;
@@ -262,6 +293,14 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
         // any events that were dropped during the disconnect window.
         if (sessionCtx?.model) emit({ type: "model_select", model: sessionCtx.model });
         emit({ type: "thinking_level_select", level: pi.getThinkingLevel() });
+        // Re-emit available models on reconnect.
+        try {
+          const scoped = sessionCtx?.getScopedModels?.();
+          if (scoped && scoped.length > 0) {
+            const models = scoped.map((sm: any) => sm.model ?? sm);
+            emit({ type: "available_models", models });
+          }
+        } catch { /* getScopedModels may not be available */ }
         // Wait for any in-flight HTTP flush before draining the backlog over the
         // socket so both paths never send the same queue concurrently.
         while (flushRunning) await new Promise((resolve) => setTimeout(resolve, 50));
@@ -273,7 +312,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       socket.onmessage = async (message) => {
         if (gen !== socketGen) return; // stale socket — ignore
         try {
-          const envelope = JSON.parse(String(message.data)) as { type?: string; command?: { id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt" } };
+          const envelope = JSON.parse(String(message.data)) as { type?: string; command?: { id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt"; provider?: string; modelId?: string; level?: string } };
           if (envelope.type === "command" && envelope.command) await deliverCommand(envelope.command);
         } catch (error) { ui?.notify(`Bridge command failed: ${error instanceof Error ? error.message : "unknown error"}`, "error"); }
       };
@@ -314,7 +353,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
         if (!registered && !(await register())) throw new Error("not registered");
         if (registered && !relaySocket) connectRelay();
         const response = await request(`/v1/external-sessions/${id}/commands?lease=${encodeURIComponent(lease)}`);
-        const data = await response.json() as { commands?: Array<{ id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt" }> };
+        const data = await response.json() as { commands?: Array<{ id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt"; provider?: string; modelId?: string; level?: string }> };
         for (const command of data.commands ?? []) await deliverCommand(command);
       } catch {
         registered = false;
@@ -383,6 +422,36 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("bridge-register", {
+    description: "Register a new bridge URL (saves to config and reconnects)",
+    handler: async (args, ctx) => {
+      let url = args?.trim();
+      if (!url) {
+        url = await ctx.ui.input("Enter bridge URL:", baseUrl || "");
+        if (!url) {
+          ctx.ui.notify("Bridge registration cancelled.", "info");
+          return;
+        }
+      }
+      // Basic URL validation
+      try {
+        new URL(url);
+      } catch {
+        ctx.ui.notify(`Invalid URL: ${url}`, "error");
+        return;
+      }
+      // Save to config
+      const config = loadConfig();
+      config.relayUrl = url;
+      saveConfig(config);
+      ctx.ui.notify(`Bridge URL saved: ${url}`, "info");
+      // Reconnect with new URL
+      ctx.ui.setStatus("external-session-bridge", "Bridge: reconnecting");
+      await reconnectBridge();
+      ctx.ui.notify(`Bridge: ${registered ? "connected" : "unable to connect"} (${bridgeSummary()})`, registered ? "info" : "error");
+    },
+  });
+
   // ── Pi events ─────────────────────────────────────────────────────────
 
   pi.on("session_start", async (_event, ctx) => {
@@ -403,6 +472,14 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     title = pi.getSessionName() ?? "";
     if (ctx.model) emit({ type: "model_select", model: ctx.model });
     emit({ type: "thinking_level_select", level: pi.getThinkingLevel() });
+    // Report available models so the server can serve them to companion apps.
+    try {
+      const scoped = ctx.getScopedModels?.();
+      if (scoped && scoped.length > 0) {
+        const models = scoped.map((sm: any) => sm.model ?? sm);
+        emit({ type: "available_models", models });
+      }
+    } catch { /* getScopedModels may not be available in all contexts */ }
     ui.setStatus("external-session-bridge", "Bridge: connecting");
     await register();
     void flushEvents();
