@@ -306,10 +306,21 @@ class SessionDetailViewModel(
                 current.filter {
                   it is SessionTimelineItem.Chat && it.time == "now" && it.imageUris.isNotEmpty()
                 }.forEach { merged[timelineItemId(it)] = it }
+                // Keep live items that aren't in history.
+                // After reconnect, WS replays all events including tools/files/system.
+                // These are redundant with the history (which has the final assistant text)
+                // and would show as a massive wall of tool cards. Filter them out,
+                // keeping only Chat items that aren't duplicated in history.
                 current.filter { item ->
                   val isOptimisticImage = item is SessionTimelineItem.Chat &&
                     item.time == "now" && item.imageUris.isNotEmpty()
-                  !isOptimisticImage && timelineItemId(item) !in merged
+                  if (isOptimisticImage) return@filter false
+                  val id = timelineItemId(item)
+                  if (id in merged) return@filter false
+                  // Drop replayed tool/file/system events after history load —
+                  // they're from the replay, not live activity.
+                  if (!appendOld && item !is SessionTimelineItem.Chat) return@filter false
+                  true
                 }.forEach { merged[timelineItemId(it)] = it }
                 merged.values.toList()
               }
