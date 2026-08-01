@@ -1,5 +1,5 @@
-import { memo, useCallback, useMemo, useRef, useState } from "react"
-import { ArrowUp, Bot, Brain, ChevronRight, ImagePlus, Sparkles, Square, Terminal, X } from "lucide-react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { ArrowUp, Bot, Brain, ChevronRight, Code, Copy, CopyCheck, Folder, ImagePlus, Search, Sparkles, Square, Terminal, X } from "lucide-react"
 import { useImageAttachments } from "@/hooks/use-image-attachments"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -11,6 +11,24 @@ import {
   useSessionData,
   useSessionHistory,
 } from "@/api/hooks"
+import {
+  type TimelineItem,
+  type TextItem,
+  type ToolItem,
+  LARGE_RENDER_THRESHOLD,
+  MARKDOWN_HARD_CAP,
+  LARGE_TOOL_OUTPUT_THRESHOLD,
+  buildTimeline,
+  buildHistory,
+  mergeTimeline,
+  responseModels,
+  groupModelsByProvider,
+  findExtensionRequest,
+  toolDisplayName,
+  extractToolSummary,
+  formatDuration,
+  toolDuration,
+} from "@pi-stack/webby-shared/session-workspace"
 import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble"
 import {
   Collapsible,
@@ -30,7 +48,6 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "@/components/ui/input-group"
-import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -409,15 +426,16 @@ function ChatTurn({ item }: { item: TextItem }) {
   )
 }
 
-const largeRenderThreshold = 60_000
-const markdownHardCap = 256_000
-const largeToolOutputThreshold = 80_000
+const toolIcons: Record<string, React.ComponentType<{ className?: string }>> = {
+  terminal: Terminal,
+  code: Code,
+  search: Search,
+  folder: Folder,
+}
 
 function DeferredMarkdown({ text }: { text: string }) {
-  const [expanded, setExpanded] = useState(text.length <= largeRenderThreshold)
-  if (text.length > markdownHardCap) {
-    // Beyond the hard cap, render as plain <pre> to avoid freezing the browser
-    // during Markdown parsing of very large tool outputs (1MB+).
+  const [expanded, setExpanded] = useState(text.length <= LARGE_RENDER_THRESHOLD)
+  if (text.length > MARKDOWN_HARD_CAP) {
     return <pre className="max-h-96 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{text}</pre>
   }
   if (!expanded) {
@@ -474,56 +492,119 @@ function MarkdownResponse({ children }: { children: string }) {
 }
 
 function ToolTurn({ item }: { item: ToolItem }) {
+  const { label, icon } = toolDisplayName(item.name)
+  const IconComponent = toolIcons[icon] ?? Terminal
+  const summary = extractToolSummary(item.name, item.args, item.output)
+  const duration = toolDuration(item.startedAt, item.endedAt)
+  const isRunning = !item.done
+  const isFailed = item.failed === true
+  const [copyState, setCopyState] = useState<"idle" | "copied">("idle")
+
+  const statusColor = isFailed
+    ? "border-l-red-500"
+    : isRunning
+      ? "border-l-blue-500"
+      : "border-l-emerald-500"
+
+  const statusBg = isFailed
+    ? "bg-red-500/5"
+    : isRunning
+      ? "bg-blue-500/5"
+      : ""
+
+  const copyOutput = () => {
+    if (!item.output) return
+    navigator.clipboard.writeText(item.output).then(() => {
+      setCopyState("copied")
+      setTimeout(() => setCopyState("idle"), 2000)
+    }).catch(() => {})
+  }
+
   return (
-    <Message className="w-full">
-      <MessageContent className="w-full">
-        <Collapsible className="w-full">
-          <CollapsibleTrigger className="group w-fit max-w-full py-1">
-            <Marker className="w-fit max-w-full gap-2 text-xs">
-              <MarkerIcon>
-                <Terminal />
-              </MarkerIcon>
-              <MarkerContent className="flex items-center gap-2">
-                <span className="font-medium text-foreground/80">
-                  {item.name}
+    <Collapsible className="w-full">
+      <CollapsibleTrigger className="group/tool w-full text-left">
+        <div className={`flex items-center gap-2 rounded-lg border-l-[3px] px-3 py-2 text-xs transition-colors hover:bg-muted/40 ${statusColor} ${statusBg}`}>
+          {isRunning ? (
+            <span className="relative flex size-4 shrink-0 items-center justify-center">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-blue-400 opacity-40" />
+              <IconComponent className="relative size-3.5 text-blue-500" />
+            </span>
+          ) : (
+            <IconComponent className={`size-3.5 shrink-0 ${isFailed ? "text-red-500" : "text-emerald-500"}`} />
+          )}
+          <span className="min-w-0 flex-1 truncate">
+            <span className="font-medium text-foreground/90">{label}</span>
+            {summary && (
+              <span className="ml-1.5 text-muted-foreground">{summary}</span>
+            )}
+          </span>
+          {duration != null && !isRunning && (
+            <span className="shrink-0 tabular-nums text-muted-foreground">
+              {formatDuration(duration)}
+            </span>
+          )}
+          {isRunning && item.startedAt && (
+            <RunningTimer startedAt={item.startedAt} />
+          )}
+          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/60 transition-transform group-data-[state=open]/tool:rotate-90" />
+        </div>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="mx-3 mt-1 rounded-lg border border-border/60 bg-muted/20">
+          {item.output ? (
+            <>
+              <div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
+                <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                  {isFailed ? "Error output" : "Output"}
                 </span>
-                <span>{item.done ? "Complete" : "Running"}</span>
-              </MarkerContent>
-              <ChevronRight className="size-3.5 shrink-0 transition-transform group-data-open:rotate-90" />
-            </Marker>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="mx-5 mt-2 rounded-lg border border-border bg-muted/30 p-3">
-              {item.output ? (
-                <div className="space-y-2">
-                  <pre className="max-h-48 overflow-auto font-mono text-xs whitespace-pre-wrap text-foreground/80">
-                    {item.output.slice(0, largeToolOutputThreshold)}
-                  </pre>
-                  {item.output.length > largeToolOutputThreshold && <p className="text-xs text-muted-foreground">Output preview limited to {Math.ceil(largeToolOutputThreshold / 1024)} KB.</p>}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Waiting for output…
+                <button
+                  type="button"
+                  onClick={copyOutput}
+                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  {copyState === "copied" ? <><CopyCheck className="size-3" /> Copied</> : <><Copy className="size-3" /> Copy</>}
+                </button>
+              </div>
+              <pre className="max-h-64 overflow-auto p-3 font-mono text-xs leading-5 whitespace-pre-wrap text-foreground/80">
+                {item.output.slice(0, LARGE_TOOL_OUTPUT_THRESHOLD)}
+              </pre>
+              {item.output.length > LARGE_TOOL_OUTPUT_THRESHOLD && (
+                <p className="border-t border-border/40 px-3 py-1.5 text-[10px] text-muted-foreground">
+                  Output truncated — {Math.ceil(item.output.length / 1024)} KB total
                 </p>
               )}
-            </div>
-          </CollapsibleContent>
-        </Collapsible>
-      </MessageContent>
-    </Message>
+            </>
+          ) : (
+            <p className="px-3 py-3 text-xs text-muted-foreground">
+              {isRunning ? "Waiting for output…" : "No output"}
+            </p>
+          )}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
-type TextItem = { id: string; kind: "user" | "assistant"; text: string }
-type ToolItem = {
-  id: string
-  kind: "tool"
-  name: string
-  output?: string
-  done: boolean
+/** Live elapsed timer for running tools. Updates every second. */
+function RunningTimer({ startedAt }: { startedAt: string | number }) {
+  const startMs = typeof startedAt === "string" ? new Date(startedAt).getTime() : startedAt
+  const [elapsed, setElapsed] = useState(() => Date.now() - startMs)
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setElapsed(Date.now() - startMs)
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [startMs])
+
+  return (
+    <span className="shrink-0 tabular-nums text-blue-500">
+      {formatDuration(elapsed)}
+    </span>
+  )
 }
-type SystemItem = { id: string; kind: "system"; text: string }
-type TimelineItem = TextItem | ToolItem | SystemItem
+
+
 
 // The composer updates on every keystroke. Keep historical Markdown/tool rows
 // out of that render path unless their own item object actually changed.
@@ -533,183 +614,4 @@ const TimelineRow = memo(function TimelineRow({ item }: { item: TimelineItem }) 
   return <ChatTurn item={item} />
 })
 
-function buildTimeline(events: Array<Record<string, unknown>>): TimelineItem[] {
-  const items: TimelineItem[] = []
-  let activeAssistant: TextItem | undefined
 
-  for (const [index, event] of events.entries()) {
-    if (event.type === "message_start") {
-      const message = event.message as
-        { role?: string; content?: unknown; timestamp?: number } | undefined
-      const messageId = `${message?.role ?? "message"}-${message?.timestamp ?? event._daemonEventId ?? index}`
-      if (message?.role === "user") {
-        const text = contentText(message.content)
-        if (text) items.push({ id: messageId, kind: "user", text })
-      }
-      if (message?.role === "assistant") {
-        activeAssistant = { id: messageId, kind: "assistant", text: "" }
-        items.push(activeAssistant)
-      }
-    }
-
-    if (event.type === "message_update") {
-      const delta = event.assistantMessageEvent as
-        { type?: string; delta?: string } | undefined
-      if (delta?.type === "text_delta") {
-        if (!activeAssistant) {
-          activeAssistant = {
-            id: `assistant-${event._daemonEventId ?? index}`,
-            kind: "assistant",
-            text: "",
-          }
-          items.push(activeAssistant)
-        }
-        activeAssistant.text += delta.delta ?? ""
-      }
-    }
-
-    if (event.type === "message_end") activeAssistant = undefined
-
-    // System events surfaced in the timeline for visibility.
-    if (event.type === "file_change") {
-      const path = event.path as string | undefined
-      const change = event.change as string | undefined
-      if (path) items.push({ id: `file-${String(event._daemonEventId ?? index)}`, kind: "system", text: `File ${change ?? "changed"}: ${path}` })
-    }
-    if (event.type === "model_select") {
-      const model = event.model as { provider?: string; id?: string } | undefined
-      if (model?.id) items.push({ id: `model-${String(event._daemonEventId ?? index)}`, kind: "system", text: `Model changed: ${model.provider ?? "?"}/${model.id}` })
-    }
-    if (event.type === "thinking_level_select") {
-      const level = event.level as string | undefined
-      if (level) items.push({ id: `think-${String(event._daemonEventId ?? index)}`, kind: "system", text: `Thinking level: ${level}` })
-    }
-
-    if (event.type === "tool_execution_start") {
-      items.push({
-        id: `tool-${String(event.toolCallId ?? event._daemonEventId ?? index)}`,
-        kind: "tool",
-        name: String(event.toolName ?? "tool"),
-        done: false,
-      })
-    }
-
-    if (
-      event.type === "tool_execution_update" ||
-      event.type === "tool_execution_end"
-    ) {
-      const id = `tool-${String(event.toolCallId ?? event._daemonEventId ?? index)}`
-      const tool = items.find((item): item is ToolItem => item.id === id)
-      const result = (event.partialResult ?? event.result) as
-        { content?: Array<{ text?: string }> } | undefined
-      const output = result?.content?.map((part) => part.text ?? "").join("")
-      if (tool) {
-        tool.output = output ?? tool.output
-        tool.done = event.type === "tool_execution_end"
-      } else {
-        items.push({
-          id,
-          kind: "tool",
-          name: String(event.toolName ?? "tool"),
-          output,
-          done: event.type === "tool_execution_end",
-        })
-      }
-    }
-  }
-
-  return items.filter((item) => item.kind !== "assistant" || item.text)
-}
-
-function buildHistory(
-  response: Record<string, unknown> | undefined
-): TimelineItem[] {
-  const data = response?.data as
-    { messages?: Array<Record<string, unknown>> } | undefined
-  return (data?.messages ?? []).flatMap((message, index): TimelineItem[] => {
-    const role = String(message.role ?? "")
-    const timestamp = message.timestamp ?? index
-    if (role === "user" || role === "assistant") {
-      const text = contentText(message.content)
-      return text
-        ? [{ id: `${role}-${String(timestamp)}`, kind: role, text }]
-        : []
-    }
-    if (role === "toolResult") {
-      return [
-        {
-          id: `tool-${String(message.toolCallId ?? timestamp)}`,
-          kind: "tool",
-          name: String(message.toolName ?? "tool"),
-          output: contentText(message.content),
-          done: true,
-        },
-      ]
-    }
-    if (role === "bashExecution") {
-      return [
-        {
-          id: `bash-${String(timestamp)}`,
-          kind: "tool",
-          name: String(message.command ?? "bash"),
-          output: String(message.output ?? ""),
-          done: true,
-        },
-      ]
-    }
-    return []
-  })
-}
-
-function mergeTimeline(
-  history: TimelineItem[],
-  live: TimelineItem[]
-): TimelineItem[] {
-  const merged = new Map(history.map((item) => [item.id, item]))
-  for (const item of live) merged.set(item.id, item)
-  return [...merged.values()]
-}
-
-type AvailableModel = { provider: string; id: string; name?: string }
-
-function responseModels(response: Record<string, unknown> | undefined): AvailableModel[] {
-  const data = response?.data as { models?: unknown } | undefined
-  return Array.isArray(data?.models)
-    ? data.models.filter((model): model is AvailableModel => typeof model === "object" && model !== null && "provider" in model && "id" in model && typeof model.provider === "string" && typeof model.id === "string")
-    : []
-}
-
-function groupModelsByProvider(models: AvailableModel[]) {
-  const groups = new Map<string, AvailableModel[]>()
-  for (const model of models) groups.set(model.provider, [...(groups.get(model.provider) ?? []), model])
-  return [...groups.entries()]
-}
-
-function findExtensionRequest(events: Array<Record<string, unknown>>) {
-  const event = [...events].reverse().find(
-    (item) => item.type === "extension_ui_request" && item._daemonExtensionUiRequiresResponse === true
-  )
-  if (!event || typeof event.id !== "string") return undefined
-  return {
-    id: event.id,
-    message: typeof event.message === "string" ? event.message : typeof event.text === "string" ? event.text : "Extension input requested",
-    placeholder: typeof event.placeholder === "string" ? event.placeholder : undefined,
-  }
-}
-
-function contentText(content: unknown): string {
-  if (typeof content === "string") return content
-  if (!Array.isArray(content)) return ""
-  return content
-    .map((part) => {
-      if (
-        typeof part === "object" &&
-        part !== null &&
-        "text" in part &&
-        typeof part.text === "string"
-      )
-        return part.text
-      return ""
-    })
-    .join("")
-}

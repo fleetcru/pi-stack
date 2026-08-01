@@ -1,10 +1,7 @@
 package com.example.picompanion.ui.sessiondetail
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.SharedTransitionScope
-import androidx.compose.animation.animateContentSize
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,15 +22,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -48,8 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -61,6 +50,8 @@ import kotlinx.serialization.json.jsonObject
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.picompanion.data.model.ServerSession
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 
 @Composable
 fun SessionDetailScreen(
@@ -69,9 +60,6 @@ fun SessionDetailScreen(
   sharedTransitionScope: SharedTransitionScope,
   animatedVisibilityScope: AnimatedVisibilityScope,
   modifier: Modifier = Modifier,
-  // Navigation3 may retain the same ViewModel store while changing detail
-  // entries. Key it by server session ID so history/socket state never leaks
-  // from one conversation into another.
   viewModel: SessionDetailViewModel = viewModel(
     key = "session-detail-$sessionId",
     factory = SessionDetailViewModel.factory(
@@ -85,9 +73,8 @@ fun SessionDetailScreen(
   val sendState by viewModel.sendState.collectAsStateWithLifecycle()
   val agentWorking by viewModel.agentWorking.collectAsStateWithLifecycle()
   val listState = rememberLazyListState()
-  var controlsOpen by rememberSaveable { mutableStateOf(false) }
+  var actionsOpen by rememberSaveable { mutableStateOf(false) }
   var filesOpen by rememberSaveable { mutableStateOf(false) }
-  var modelControlsOpen by rememberSaveable { mutableStateOf(false) }
   var attachments by remember { mutableStateOf<List<android.net.Uri>>(emptyList()) }
   val context = androidx.compose.ui.platform.LocalContext.current
   val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -109,7 +96,6 @@ fun SessionDetailScreen(
   var extensionValue by remember { mutableStateOf("") }
 
   // Follow a streaming reply only while the reader is already at the end.
-  // This keeps live output readable without dragging someone away from history.
   val lastItem = items.lastOrNull()
   val streamVersion = when (lastItem) {
     is SessionTimelineItem.Chat -> lastItem.text.length
@@ -117,8 +103,6 @@ fun SessionDetailScreen(
     else -> items.size
   }
   LaunchedEffect(items.size, streamVersion) {
-    // Coalesce token updates. Scrolling once per 16ms update makes the list
-    // fight layout/recomposition and is the visible source of the spasms.
     delay(80)
     if (items.isNotEmpty()) {
       val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
@@ -128,15 +112,10 @@ fun SessionDetailScreen(
     }
   }
 
-  // Index-based keys caused every row to be recreated when older history was
-  // prepended, which made the list jump and made fast swipes feel unreliable.
-  // Keep keys stable for existing rows, while suffixing repeated messages.
   val itemKeys = remember(items) {
     val occurrences = mutableMapOf<String, Int>()
     items.map { item ->
       val identity = when (item) {
-        // Text changes on every streamed token; it must not be part of the
-        // key or LazyColumn recreates the row on every update.
         is SessionTimelineItem.Chat -> "chat:${item.author}:${item.time}:${item.isUser}"
         is SessionTimelineItem.Tool -> "tool:${item.callId}"
         is SessionTimelineItem.FileChange -> "file:${item.operation}:${item.path}"
@@ -153,7 +132,7 @@ fun SessionDetailScreen(
       .fillMaxSize()
       .imePadding(),
   ) {
-    // Header
+    // Header — simplified with fewer actions
     SessionHeader(
       sessionId = sessionId,
       onBack = onBack,
@@ -162,20 +141,21 @@ fun SessionDetailScreen(
       refreshing = refreshing,
       onRefresh = viewModel::refresh,
       onCompact = { viewModel.compact() },
-      onControls = { controlsOpen = true },
+      onControls = { actionsOpen = true },
       onFiles = { filesOpen = true },
-      onModelControls = { modelControlsOpen = true; viewModel.loadModelControls() },
+      onModelControls = { actionsOpen = true; viewModel.loadModelControls() },
       sharedTransitionScope = sharedTransitionScope,
       animatedVisibilityScope = animatedVisibilityScope,
     )
 
+    // Git output dialog
     gitOutput?.let { (title, output) ->
       androidx.compose.material3.AlertDialog(
         onDismissRequest = viewModel::closeGitOutput,
         title = { Text("Git · $title") },
         text = {
           androidx.compose.foundation.text.selection.SelectionContainer {
-            androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+            Box(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
               Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
                 Text(output, style = MaterialTheme.typography.bodySmall)
               }
@@ -188,6 +168,7 @@ fun SessionDetailScreen(
       )
     }
 
+    // Extension request dialog
     extensionRequest?.let { request ->
       androidx.compose.material3.AlertDialog(
         onDismissRequest = { viewModel.respondToExtension(cancelled = true) },
@@ -196,8 +177,7 @@ fun SessionDetailScreen(
           Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(request.message)
             Text(
-              "Request ID: ${request.id}. Only respond if you expected this extension prompt. " +
-                "A reconnect can replay an older request; Ignore hides it without approving or cancelling it.",
+              "Request ID: ${request.id}. Only respond if you expected this extension prompt.",
               style = MaterialTheme.typography.bodySmall,
               color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -223,36 +203,32 @@ fun SessionDetailScreen(
               extensionValue = ""
             }) { Text("Cancel") }
           }
-        }, 
+        },
       )
     }
 
-    if (modelControlsOpen) {
-      ModelControlsSheet(
+    // Unified actions sheet (replaces separate ModelControlsSheet + SessionControlsDialog)
+    if (actionsOpen) {
+      UnifiedActionsSheet(
+        initialTitle = viewModel.sessionTitle.collectAsStateWithLifecycle().value,
+        initialProject = viewModel.sessionProject.collectAsStateWithLifecycle().value,
         controls = modelControls,
-        onDismiss = { modelControlsOpen = false },
+        onDismiss = { actionsOpen = false },
         onSelectModel = viewModel::setModel,
         onSelectThinking = viewModel::setThinkingLevel,
+        onSaveMetadata = viewModel::updateMetadata,
+        onAction = viewModel::runSessionAction,
+        onGit = viewModel::showGit,
+        onGitWrite = { action, body -> viewModel.writeGit(action, Json.parseToJsonElement(body).jsonObject) },
       )
     }
 
+    // File browser sheet
     if (filesOpen && sessionCwd.isNotBlank()) {
       FileBrowserSheet(
         server = viewModel.activeServerForUi(),
         initialPath = sessionCwd,
         onDismiss = { filesOpen = false },
-      )
-    }
-
-    if (controlsOpen) {
-      SessionControlsDialog(
-        initialTitle = viewModel.sessionTitle.collectAsStateWithLifecycle().value,
-        initialProject = viewModel.sessionProject.collectAsStateWithLifecycle().value,
-        onDismiss = { controlsOpen = false },
-        onSaveMetadata = viewModel::updateMetadata,
-        onAction = viewModel::runSessionAction,
-        onGit = viewModel::showGit,
-        onGitWrite = { action, body -> viewModel.writeGit(action, Json.parseToJsonElement(body).jsonObject) },
       )
     }
 
@@ -269,6 +245,14 @@ fun SessionDetailScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(top = 10.dp, bottom = 118.dp),
       ) {
+        if (items.isEmpty() && !hasOlderHistory) {
+          item {
+            ChatEmptyState(
+              isLoading = loadingOlderHistory,
+              modifier = Modifier.padding(top = 80.dp),
+            )
+          }
+        } else {
         if (hasOlderHistory) {
           item(key = "load-older") {
             androidx.compose.material3.OutlinedButton(
@@ -278,24 +262,19 @@ fun SessionDetailScreen(
             ) { Text(if (loadingOlderHistory) "Loading older messages…" else "Load older messages") }
           }
         }
-        // Stable timestamps/call IDs preserve the reader's anchor while an
-        // older page is prepended. Live rows fall back to their current index.
         itemsIndexed(
           items,
-          // Compose can evaluate a lazy-list key during a snapshot where the
-          // derived key list is one frame behind the timeline. Never index
-          // blindly here or an empty/stale key list crashes session opening.
           key = { index, item ->
             itemKeys.getOrNull(index) ?: "timeline-fallback-$index-${item.hashCode()}"
           },
           contentType = { _, item ->
-          when (item) {
-            is SessionTimelineItem.Chat -> "chat"
-            is SessionTimelineItem.Tool -> "tool"
-            is SessionTimelineItem.FileChange -> "file"
-            is SessionTimelineItem.System -> "system"
-          }
-        }) { _, item ->
+            when (item) {
+              is SessionTimelineItem.Chat -> "chat"
+              is SessionTimelineItem.Tool -> "tool"
+              is SessionTimelineItem.FileChange -> "file"
+              is SessionTimelineItem.System -> "system"
+            }
+          }) { _, item ->
           when (item) {
             is SessionTimelineItem.Chat -> ChatBubble(
               author = item.author,
@@ -309,6 +288,7 @@ fun SessionDetailScreen(
             is SessionTimelineItem.System -> SystemMessageRow(item)
           }
         }
+        } // end else (items not empty)
       }
 
       MessageInputBar(
@@ -338,114 +318,4 @@ fun SessionDetailScreen(
       )
     }
   }
-}
-
-@Composable
-private fun ToolEventRow(item: SessionTimelineItem.Tool, modifier: Modifier = Modifier) {
-  var expanded by rememberSaveable(item.callId) { mutableStateOf(false) }
-  val (icon, label) = when (item.name.lowercase()) {
-    "bash", "terminal" -> Icons.Filled.Terminal to "Terminal"
-    "read", "read_file" -> Icons.Filled.Code to "Read file"
-    "write", "edit", "apply_patch" -> Icons.Filled.Code to "Edit file"
-    "find", "grep", "search" -> Icons.Filled.Search to "Search"
-    "ls", "list", "list_directory" -> Icons.Filled.Folder to "Browse files"
-    else -> Icons.Filled.Code to item.name
-  }
-  val statusIcon = when (item.status) {
-    "running" -> null
-    "completed" -> Icons.Filled.CheckCircle
-    else -> Icons.Filled.Error
-  }
-  val statusColor = when (item.status) {
-    "completed" -> MaterialTheme.colorScheme.primary
-    "failed" -> MaterialTheme.colorScheme.error
-    else -> MaterialTheme.colorScheme.tertiary
-  }
-
-  Surface(
-    modifier = modifier
-      .fillMaxWidth()
-      .clip(RoundedCornerShape(10.dp))
-      .clickable { expanded = !expanded }
-      .animateContentSize(),
-    shape = RoundedCornerShape(10.dp),
-    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
-  ) {
-    Column(Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, contentDescription = null, tint = statusColor, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(8.dp))
-        Text(label, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-        Text(
-          when (item.status) {
-            "running" -> "Running"
-            "completed" -> "Done"
-            else -> "Failed"
-          },
-          style = MaterialTheme.typography.labelSmall,
-          color = statusColor,
-          modifier = Modifier.padding(end = 6.dp),
-        )
-        if (statusIcon == null) {
-          CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = statusColor)
-        } else {
-          Icon(statusIcon, contentDescription = item.status, tint = statusColor, modifier = Modifier.size(20.dp))
-        }
-        Spacer(Modifier.width(4.dp))
-        Icon(
-          if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-          contentDescription = if (expanded) "Hide tool details" else "Show tool details",
-        )
-      }
-      if (expanded) {
-        item.args?.let {
-          ToolDetail("Arguments", it)
-        }
-        item.output?.let {
-          ToolDetail(if (item.status == "running") "Live output" else "Output", it)
-        }
-        if (item.args == null && item.output == null) {
-          Text("Waiting for tool details…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 10.dp))
-        }
-      }
-    }
-  }
-}
-
-@Composable
-private fun ToolDetail(label: String, value: String) {
-  val maxPreviewChars = 80_000
-  val preview = value.take(maxPreviewChars)
-  Column(Modifier.padding(top = 12.dp)) {
-    Text(label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    Text(preview, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
-    if (value.length > maxPreviewChars) Text("Output preview limited to 80 KB.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
-  }
-}
-
-@Composable
-private fun FileChangeRow(item: SessionTimelineItem.FileChange, modifier: Modifier = Modifier) {
-  Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-    Text(
-      item.operation,
-      style = MaterialTheme.typography.labelSmall,
-      fontWeight = FontWeight.SemiBold,
-      color = MaterialTheme.colorScheme.secondary,
-    )
-    Text(
-      item.path,
-      style = MaterialTheme.typography.bodySmall,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-  }
-}
-
-@Composable
-private fun SystemMessageRow(item: SessionTimelineItem.System, modifier: Modifier = Modifier) {
-  Text(
-    item.text,
-    modifier = modifier.fillMaxWidth(),
-    style = MaterialTheme.typography.bodySmall,
-    color = MaterialTheme.colorScheme.outline,
-  )
 }

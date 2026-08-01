@@ -4,41 +4,34 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
+/**
+ * Simplified session header. The overflow menu is removed — actions are now
+ * accessed via the unified actions sheet triggered by the settings icon.
+ */
 @Composable
 fun SessionHeader(
   sessionId: String,
@@ -56,7 +49,6 @@ fun SessionHeader(
   modifier: Modifier = Modifier,
 ) {
   val headerShape = RoundedCornerShape(18.dp)
-  var menuExpanded by remember { mutableStateOf(false) }
 
   with(sharedTransitionScope) {
     Surface(
@@ -73,12 +65,12 @@ fun SessionHeader(
       border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
       Column(
-        modifier = Modifier.padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 10.dp),
+        modifier = Modifier.padding(start = 4.dp, end = 8.dp, top = 8.dp, bottom = 10.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
       ) {
         Row(
           Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          horizontalArrangement = Arrangement.spacedBy(4.dp),
           verticalAlignment = Alignment.CenterVertically,
         ) {
           IconButton(onClick = onBack) {
@@ -98,14 +90,9 @@ fun SessionHeader(
             modifier = Modifier.weight(1f),
           )
 
-          // Connection state indicator
           ConnectionIndicator(connectionState)
 
-          IconButton(
-            onClick = onRefresh,
-            enabled = !refreshing,
-            modifier = Modifier.size(40.dp),
-          ) {
+          IconButton(onClick = onRefresh, enabled = !refreshing, modifier = Modifier.size(38.dp)) {
             if (refreshing) {
               CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
             } else {
@@ -114,29 +101,11 @@ fun SessionHeader(
           }
 
           if (connectionState is ConnectionState.Connected) {
-            IconButton(onClick = onFiles, modifier = Modifier.size(40.dp)) {
+            IconButton(onClick = onFiles, modifier = Modifier.size(38.dp)) {
               Icon(Icons.Default.Folder, contentDescription = "Browse files", modifier = Modifier.size(20.dp))
             }
-            Box {
-              IconButton(onClick = { menuExpanded = true }, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Default.MoreVert, contentDescription = "More session actions", modifier = Modifier.size(22.dp))
-              }
-              DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                DropdownMenuItem(
-                  text = { Text("Model & effort") },
-                  onClick = { menuExpanded = false; onModelControls() },
-                )
-                DropdownMenuItem(
-                  text = { Text("Compact session") },
-                  leadingIcon = { Icon(Icons.Default.Compress, contentDescription = null) },
-                  onClick = { menuExpanded = false; onCompact() },
-                )
-                DropdownMenuItem(
-                  text = { Text("Session controls") },
-                  leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                  onClick = { menuExpanded = false; onControls() },
-                )
-              }
+            IconButton(onClick = onControls, modifier = Modifier.size(38.dp)) {
+              Icon(Icons.Default.Settings, contentDescription = "Session actions", modifier = Modifier.size(20.dp))
             }
           }
         }
@@ -182,18 +151,10 @@ private fun ConnectionIndicator(state: ConnectionState) {
       CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
     }
     ConnectionState.Connected -> {
-      Surface(
-        modifier = Modifier.size(10.dp),
-        shape = RoundedCornerShape(5.dp),
-        color = MaterialTheme.colorScheme.primary,
-      ) {}
+      Surface(modifier = Modifier.size(10.dp), shape = RoundedCornerShape(5.dp), color = MaterialTheme.colorScheme.primary) {}
     }
     else -> {
-      Surface(
-        modifier = Modifier.size(10.dp),
-        shape = RoundedCornerShape(5.dp),
-        color = MaterialTheme.colorScheme.error,
-      ) {}
+      Surface(modifier = Modifier.size(10.dp), shape = RoundedCornerShape(5.dp), color = MaterialTheme.colorScheme.error) {}
     }
   }
 }

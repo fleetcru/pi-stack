@@ -449,6 +449,7 @@ class SessionDetailViewModel(
           name = name,
           status = "running",
           args = raw["args"]?.toString(),
+          startedAt = System.currentTimeMillis(),
         )
       }
       "tool_execution_update" -> {
@@ -466,6 +467,7 @@ class SessionDetailViewModel(
           callId = callId,
           output = raw["result"]?.findText() ?: raw.getString("error"),
           status = if (isError) "failed" else "completed",
+          endedAt = System.currentTimeMillis(),
         )
         return
       }
@@ -550,10 +552,10 @@ class SessionDetailViewModel(
     appendItem(item)
   }
 
-  private data class ToolUpdate(val callId: String?, val output: String?, val status: String)
+  private data class ToolUpdate(val callId: String?, val output: String?, val status: String, val endedAt: Long? = null)
 
-  private fun updateTool(callId: String?, output: String?, status: String) {
-    pendingToolUpdates.add(ToolUpdate(callId, output, status))
+  private fun updateTool(callId: String?, output: String?, status: String, endedAt: Long? = null) {
+    pendingToolUpdates.add(ToolUpdate(callId, output, status, endedAt))
     if (toolFlushJob?.isActive == true) return
     // Batch tool updates at 16ms cadence to avoid Compose recomposition
     // churn during rapid tool_execution_update events.
@@ -567,7 +569,7 @@ class SessionDetailViewModel(
           val index = items.indexOfLast { it is SessionTimelineItem.Tool && it.callId == update.callId }
           if (index < 0) continue
           val current = items[index] as SessionTimelineItem.Tool
-          items[index] = current.copy(status = update.status, output = update.output ?: current.output)
+          items[index] = current.copy(status = update.status, output = update.output ?: current.output, endedAt = update.endedAt ?: current.endedAt)
         }
         items
       }
@@ -988,6 +990,8 @@ sealed interface SessionTimelineItem {
     val status: String,
     val args: String? = null,
     val output: String? = null,
+    val startedAt: Long? = null,
+    val endedAt: Long? = null,
   ) : SessionTimelineItem
 
   data class FileChange(

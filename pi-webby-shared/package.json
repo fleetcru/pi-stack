@@ -8,7 +8,11 @@
     "./api/session-socket": "./src/api/session-socket.ts",
     "./api/hooks": "./src/api/hooks.ts",
     "./api/types": "./src/api/types.ts",
-    "./state/app-store": "./src/state/app-store.ts"
+    "./state/app-store": "./src/state/app-store.ts",
+    "./session-workspace": "./src/session-workspace/index.ts",
+    "./session-workspace/types": "./src/session-workspace/types.ts",
+    "./session-workspace/constants": "./src/session-workspace/constants.ts",
+    "./session-workspace/timeline": "./src/session-workspace/timeline.ts"
   },
   "peerDependencies": {
     "@tanstack/react-query": "^5.0.0",
