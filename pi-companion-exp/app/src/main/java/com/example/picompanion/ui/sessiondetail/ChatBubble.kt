@@ -100,9 +100,19 @@ private fun formatChatTime(raw: String): String? {
 private fun AttachmentThumbnail(uri: Uri) {
   val context = LocalContext.current
   // Decode bitmap off the main thread to avoid jank on large camera captures.
+  // Downsample to thumbnail size to prevent OOM on high-resolution photos.
+  val density = context.resources.displayMetrics.density
+  val maxPx = (96 * density).toInt().coerceAtLeast(64)
   val bitmap = produceState<android.graphics.Bitmap?>(null, uri) {
     value = withContext(Dispatchers.IO) {
-      runCatching { context.contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream) }.getOrNull()
+      runCatching {
+        // First pass: read dimensions only.
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        val scale = maxOf(1, maxOf(bounds.outWidth, bounds.outHeight) / maxPx)
+        val opts = BitmapFactory.Options().apply { inSampleSize = scale }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+      }.getOrNull()
     }
   }.value
   if (bitmap != null) {
