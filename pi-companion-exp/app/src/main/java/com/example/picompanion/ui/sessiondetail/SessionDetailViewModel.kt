@@ -89,10 +89,16 @@ class SessionDetailViewModel(
   private var nextHistoryOffset = 0
   private var historicalItems: List<SessionTimelineItem> = emptyList()
   private val historyMutex = kotlinx.coroutines.sync.Mutex()
+  // Generation counter for loadHistory: incremented on each connect() so a
+  // stale in-flight history request from a previous connection is discarded.
+  private var historyGeneration = 0
   // Monotonic counter to give every timeline item a stable insertion order.
   // Prevents items from appearing out of sequence when history and live WS
   // events merge after reconnect.
   private var timelineSeq: Long = 0
+  // Serializes all assistant-bubble state transitions (open/close/append)
+  // so rapid events from the socket collector and flush jobs don't interleave.
+  private val assistantMutex = kotlinx.coroutines.sync.Mutex()
 
   private fun appendItem(item: SessionTimelineItem) {
     // Deduplicate before appending — prevents duplicates from history/live overlap
@@ -111,16 +117,16 @@ class SessionDetailViewModel(
     is SessionTimelineItem.System -> if (item.order > 0) item else item.copy(order = ++timelineSeq)
   }
 
-  private var lastEventId: Long = 0
+  @Volatile private var lastEventId: Long = 0
   private var lastSentPrompt: String? = null
-  private val recentSentPrompts = LinkedHashSet<String>()
+  private val recentSentPrompts = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
   private var activeServer: com.example.picompanion.data.settings.ServerEntry? = null
   private var reconnectJob: Job? = null
   private var relayHealthJob: Job? = null
   private var reconnectAttempt = 0
-  private var closed = false
+  @Volatile private var closed = false
   private var pendingPromptId: String? = null
-  private val queuedPrompts = java.util.ArrayDeque<String>()
+  private val queuedPrompts = java.util.Collections.synchronizedList(java.util.ArrayList<String>())
   private val connectivityManager = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
   private var networkCallbackRegistered = false
   private val networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -148,11 +154,13 @@ class SessionDetailViewModel(
   // Tracks the order value of the current assistant bubble so post-tool
   // deltas don't merge back into a pre-tool bubble.
   private var currentAssistantOrder: Long = 0
+  // All access to pendingAssistantDeltas is serialized by assistantMutex.
   private val pendingAssistantDeltas = StringBuilder()
   private var assistantFlushJob: Job? = null
   // Property initializers run before the init block. Keep this buffer above
   // init because connect() clears it immediately when the screen opens.
-  private val pendingToolUpdates = mutableListOf<ToolUpdate>()
+  // All access is synchronized on the list itself.
+  private val pendingToolUpdates = java.util.Collections.synchronizedList(mutableListOf<ToolUpdate>())
   private var toolFlushJob: Job? = null
 
   init {
@@ -171,13 +179,14 @@ class SessionDetailViewModel(
     // the first assistant message received on the new socket.
     assistantFlushJob?.cancel()
     assistantFlushJob = null
-    pendingAssistantDeltas.clear()
+    synchronized(pendingAssistantDeltas) { pendingAssistantDeltas.clear() }
     toolFlushJob?.cancel()
     toolFlushJob = null
-    pendingToolUpdates.clear()
+    synchronized(pendingToolUpdates) { pendingToolUpdates.clear() }
     assistantTextOpen = false
     receivedAssistantTextInMessage = false
     currentAssistantOrder = 0
+    historyGeneration++
 
     viewModelScope.launch {
       _connectionState.value = ConnectionState.Connecting
@@ -279,7 +288,11 @@ class SessionDetailViewModel(
   private suspend fun loadHistory(offset: Int = 0, appendOld: Boolean = false) {
     // Queue concurrent refreshes instead of silently dropping one while a
     // previous history request is still in flight.
+    val generation = historyGeneration
     historyMutex.withLock {
+      // Skip if a newer connect() has started — this stale request would
+      // overwrite fresh history with data from a previous connection.
+      if (!appendOld && generation != historyGeneration) return
       if (appendOld) _loadingOlderHistory.value = true
       try {
         when (val result = repository.getSessionMessages(sessionId, offset = offset)) {
@@ -495,8 +508,11 @@ class SessionDetailViewModel(
         _agentWorking.value = false
         // Flush any remaining buffered deltas before closing the assistant row.
         // This prevents late deltas from creating orphan bubbles.
-        val remaining = pendingAssistantDeltas.toString()
-        pendingAssistantDeltas.clear()
+        val remaining = synchronized(pendingAssistantDeltas) {
+          val s = pendingAssistantDeltas.toString()
+          pendingAssistantDeltas.clear()
+          s
+        }
         assistantFlushJob?.cancel()
         assistantFlushJob = null
         if (remaining.isNotEmpty() && assistantTextOpen) {
@@ -648,14 +664,18 @@ class SessionDetailViewModel(
   private data class ToolUpdate(val callId: String?, val output: String?, val status: String, val endedAt: Long? = null)
 
   private fun updateTool(callId: String?, output: String?, status: String, endedAt: Long? = null) {
-    pendingToolUpdates.add(ToolUpdate(callId, output, status, endedAt))
+    synchronized(pendingToolUpdates) { pendingToolUpdates.add(ToolUpdate(callId, output, status, endedAt)) }
     if (toolFlushJob?.isActive == true) return
     // Batch tool updates at 16ms cadence to avoid Compose recomposition
     // churn during rapid tool_execution_update events.
     toolFlushJob = viewModelScope.launch {
       delay(16)
-      val batch = pendingToolUpdates.toList()
-      pendingToolUpdates.clear()
+      // Atomically drain the buffer so no update added during _items.update is lost.
+      val batch = synchronized(pendingToolUpdates) {
+        val copy = pendingToolUpdates.toList()
+        pendingToolUpdates.clear()
+        copy
+      }
       _items.update { currentItems ->
         val items = currentItems.toMutableList()
         for (update in batch) {
@@ -671,38 +691,45 @@ class SessionDetailViewModel(
 
   private fun appendAssistantDelta(delta: String) {
     if (delta.isEmpty()) return
+    synchronized(pendingAssistantDeltas) { pendingAssistantDeltas.append(delta) }
     receivedAssistantTextInMessage = true
-    pendingAssistantDeltas.append(delta)
     if (assistantFlushJob?.isActive == true) return
     assistantFlushJob = viewModelScope.launch {
       delay(16)
-      val buffered = pendingAssistantDeltas.toString()
-      pendingAssistantDeltas.clear()
+      // Atomically drain the buffer so no delta added during _items.update is lost.
+      val buffered = synchronized(pendingAssistantDeltas) {
+        val s = pendingAssistantDeltas.toString()
+        pendingAssistantDeltas.clear()
+        s
+      }
       if (buffered.isEmpty()) return@launch
-      if (!assistantTextOpen) {
-        // Open a new assistant bubble.
-        val newBubble = SessionTimelineItem.Chat("Pi Agent", buffered, "", false)
-        val stamped = withOrder(newBubble) as SessionTimelineItem.Chat
-        currentAssistantOrder = stamped.order
-        assistantTextOpen = true
-        appendItem(stamped)
-      } else {
-        // Append to the current assistant bubble, identified by its order.
-        _items.update { current ->
-          val index = current.indexOfLast {
-            it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
-          }
-          if (index >= 0) {
-            val existing = current[index] as SessionTimelineItem.Chat
-            current.toMutableList().also {
-              it[index] = existing.copy(text = existing.text + buffered)
+      // Serialize assistant bubble state transitions.
+      assistantMutex.withLock {
+        if (!assistantTextOpen) {
+          // Open a new assistant bubble.
+          val newBubble = SessionTimelineItem.Chat("Pi Agent", buffered, "", false)
+          val stamped = withOrder(newBubble) as SessionTimelineItem.Chat
+          currentAssistantOrder = stamped.order
+          assistantTextOpen = true
+          appendItem(stamped)
+        } else {
+          // Append to the current assistant bubble, identified by its order.
+          _items.update { current ->
+            val index = current.indexOfLast {
+              it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
             }
-          } else {
-            // Bubble was lost (shouldn't happen) — create a new one.
-            val newBubble = SessionTimelineItem.Chat("Pi Agent", buffered, "", false)
-            val stamped = withOrder(newBubble) as SessionTimelineItem.Chat
-            currentAssistantOrder = stamped.order
-            current + stamped
+            if (index >= 0) {
+              val existing = current[index] as SessionTimelineItem.Chat
+              current.toMutableList().also {
+                it[index] = existing.copy(text = existing.text + buffered)
+              }
+            } else {
+              // Bubble was lost (shouldn't happen) — create a new one.
+              val newBubble = SessionTimelineItem.Chat("Pi Agent", buffered, "", false)
+              val stamped = withOrder(newBubble) as SessionTimelineItem.Chat
+              currentAssistantOrder = stamped.order
+              current + stamped
+            }
           }
         }
       }
@@ -729,9 +756,12 @@ class SessionDetailViewModel(
    * pre-tool text and post-tool text from merging into one giant bubble.
    */
   private fun flushAndCloseAssistantBubble() {
-    // Flush pending deltas
-    val remaining = pendingAssistantDeltas.toString()
-    pendingAssistantDeltas.clear()
+    // Atomically drain any pending deltas.
+    val remaining = synchronized(pendingAssistantDeltas) {
+      val s = pendingAssistantDeltas.toString()
+      pendingAssistantDeltas.clear()
+      s
+    }
     assistantFlushJob?.cancel()
     assistantFlushJob = null
     if (remaining.isNotEmpty() && assistantTextOpen) {
@@ -793,7 +823,7 @@ class SessionDetailViewModel(
       lastSentPrompt = message
       recentSentPrompts.add(message)
       // Cap at 20 to prevent unbounded growth
-      if (recentSentPrompts.size > 20) recentSentPrompts.iterator().let { it.next(); it.remove() }
+      while (recentSentPrompts.size > 20) { recentSentPrompts.iterator().let { it.next(); it.remove() } }
       appendItem(SessionTimelineItem.Chat(
         author = "You", text = message, time = "now", isUser = true, imageUris = imageUris,
       ))
@@ -834,7 +864,7 @@ class SessionDetailViewModel(
     if (_connectionState.value is ConnectionState.Connecting) {
       // Previously the prompt was silently discarded here. Queue it and flush
       // once the stream connects so slow networks don't eat typed messages.
-      if (queuedPrompts.size < 20) queuedPrompts.add(message)
+      if (queuedPrompts.size < 20) synchronized(queuedPrompts) { queuedPrompts.add(message) }
       appendItem(SessionTimelineItem.System("Connecting — message will be sent when the session is reachable"))
       return
     }
@@ -870,7 +900,9 @@ class SessionDetailViewModel(
   private fun flushQueuedPrompts() {
     viewModelScope.launch {
       while (true) {
-        val message = queuedPrompts.pollFirst() ?: break
+        val message = synchronized(queuedPrompts) {
+          if (queuedPrompts.isEmpty()) null else queuedPrompts.removeAt(0)
+        } ?: break
         sendPrompt(message)
         // Small delay between queued sends to avoid overwhelming the server
         // and to show a more natural send cadence.
