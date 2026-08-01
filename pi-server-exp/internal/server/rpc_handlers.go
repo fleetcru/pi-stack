@@ -61,6 +61,14 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 		writeErrorText(w, http.StatusNotFound, "session not found")
 		return
 	}
+	// Idempotency: if the client sends X-Idempotency-Key, check whether we
+	// already processed this request. Reject duplicates within a 60s window.
+	if idemKey := r.Header.Get("X-Idempotency-Key"); idemKey != "" {
+		if s.checkIdempotency(id + ":" + idemKey) {
+			writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "idempotent": true})
+			return
+		}
+	}
 	if err := s.ensureSessionCapacity(p); err != nil {
 		writeError(w, http.StatusTooManyRequests, err)
 		return

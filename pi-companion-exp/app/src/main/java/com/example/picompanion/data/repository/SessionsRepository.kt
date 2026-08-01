@@ -55,10 +55,10 @@ class SessionsRepository(
     }
   }
 
-  suspend fun sendPrompt(sessionId: String, message: String, server: ServerEntry? = null): HttpResult<Unit> {
+  suspend fun sendPrompt(sessionId: String, message: String, server: ServerEntry? = null, idempotencyKey: String? = null): HttpResult<Unit> {
     val target = server ?: getActiveServer() ?: return HttpResult.Failure("No server configured")
     return withContext(Dispatchers.IO) {
-      client.sendPrompt(target, sessionId, message)
+      client.sendPrompt(target, sessionId, message, idempotencyKey = idempotencyKey)
     }
   }
 

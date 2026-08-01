@@ -49,8 +49,8 @@ class SessionDetailViewModel(
 ) : AndroidViewModel(application) {
 
   private val settingsDataStore = AppModule.settingsDataStore
-  private val socket = SessionEventSocket()
   private val client = AppModule.client
+  private val socket = SessionEventSocket(client.okHttpClient)
   private val repository = SessionsRepository(client, settingsDataStore)
 
   private val _items = MutableStateFlow<List<SessionTimelineItem>>(emptyList())
@@ -119,13 +119,20 @@ class SessionDetailViewModel(
 
   @Volatile private var lastEventId: Long = 0
   private var lastSentPrompt: String? = null
-  private val recentSentPrompts = java.util.Collections.synchronizedSet(LinkedHashSet<String>())
+  // Tracks recently sent prompts so the WS echo of a user message doesn't
+  // create a duplicate in the timeline. Uses requestId as key for robustness.
+  private val recentSentPrompts = java.util.Collections.synchronizedMap(object : LinkedHashMap<String, String>(128) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 100
+  })
   private var activeServer: com.example.picompanion.data.settings.ServerEntry? = null
   private var reconnectJob: Job? = null
   private var relayHealthJob: Job? = null
   private var reconnectAttempt = 0
   @Volatile private var closed = false
-  private var pendingPromptId: String? = null
+  // Set of in-flight request IDs from sendPrompt. The server echoes back a
+  // response with matching id; using a Set allows multiple rapid sends
+  // without overwriting each other.
+  private val pendingPromptIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
   private val queuedPrompts = java.util.Collections.synchronizedList(java.util.ArrayList<String>())
   private val connectivityManager = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
   private var networkCallbackRegistered = false
@@ -167,9 +174,14 @@ class SessionDetailViewModel(
     // ACCESS_NETWORK_STATE is a normal manifest permission, but keep the
     // session screen usable when an older APK is still installed or a device
     // policy strips it. Reconnection can still be requested manually.
+    // Some OEM ROMs throw SecurityException even with the permission granted.
     if (application.checkSelfPermission(Manifest.permission.ACCESS_NETWORK_STATE) == PackageManager.PERMISSION_GRANTED) {
-      connectivityManager.registerDefaultNetworkCallback(networkCallback)
-      networkCallbackRegistered = true
+      try {
+        connectivityManager.registerDefaultNetworkCallback(networkCallback)
+        networkCallbackRegistered = true
+      } catch (_: SecurityException) {
+        // OEM restriction — reconnection will rely on manual retry.
+      }
     }
     connect()
   }
@@ -187,6 +199,8 @@ class SessionDetailViewModel(
     receivedAssistantTextInMessage = false
     currentAssistantOrder = 0
     historyGeneration++
+    // Clear stale extension requests from the previous connection.
+    _extensionRequest.value = null
 
     viewModelScope.launch {
       _connectionState.value = ConnectionState.Connecting
@@ -228,10 +242,11 @@ class SessionDetailViewModel(
               // Full replay plus persisted JSONL history reconciles any gap
               // caused by a bounded server ring or slow subscriber.
               activeServer?.let { server ->
-                // Reconcile the persisted conversation before replacing the
-                // socket. This prevents the history snapshot and replayed
-                // events from racing to overwrite one another.
                 viewModelScope.launch {
+                  // Load fresh history first. The history merge in loadHistory
+                  // will reconcile with whatever is currently in _items.
+                  // Open the new stream after history is loaded so replay
+                  // events don't race with the history merge.
                   loadHistory()
                   openTicketedStream(server, null)
                 }
@@ -475,10 +490,11 @@ class SessionDetailViewModel(
           val text = message?.findText()?.takeIf { it.isNotBlank() } ?: return
           // Deduplicate against the optimistic insert from sendPrompt().
           // The WS echo arrives with a server timestamp while the optimistic
-          // Deduplicate against optimistic inserts from sendPrompt().
-          if (text == lastSentPrompt || recentSentPrompts.contains(text)) {
+          // insert uses "now". Match by text content against the map values.
+          val matchedKey = recentSentPrompts.entries.find { it.value == text }?.key
+          if (text == lastSentPrompt || matchedKey != null) {
             lastSentPrompt = null
-            recentSentPrompts.remove(text)
+            if (matchedKey != null) recentSentPrompts.remove(matchedKey)
             return
           }
           SessionTimelineItem.Chat(
@@ -506,34 +522,39 @@ class SessionDetailViewModel(
         if (message.getString("role") != "assistant") return
         _sendState.value = SendState.Idle
         _agentWorking.value = false
-        // Flush any remaining buffered deltas before closing the assistant row.
-        // This prevents late deltas from creating orphan bubbles.
-        val remaining = synchronized(pendingAssistantDeltas) {
-          val s = pendingAssistantDeltas.toString()
-          pendingAssistantDeltas.clear()
-          s
-        }
+        // Cancel the flush job and acquire the mutex so we serialize with any
+        // in-flight flush. This prevents duplicate text from a flush job that
+        // was mid-execution when we cancelled it.
         assistantFlushJob?.cancel()
         assistantFlushJob = null
-        if (remaining.isNotEmpty() && assistantTextOpen) {
-          _items.update { current ->
-            val index = current.indexOfLast {
-              it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
+        kotlinx.coroutines.runBlocking {
+          assistantMutex.withLock {
+            val remaining = synchronized(pendingAssistantDeltas) {
+              val s = pendingAssistantDeltas.toString()
+              pendingAssistantDeltas.clear()
+              s
             }
-            if (index >= 0) {
-              val existing = current[index] as SessionTimelineItem.Chat
-              current.toMutableList().also {
-                it[index] = existing.copy(text = existing.text + remaining)
+            if (remaining.isNotEmpty() && assistantTextOpen) {
+              _items.update { current ->
+                val index = current.indexOfLast {
+                  it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
+                }
+                if (index >= 0) {
+                  val existing = current[index] as SessionTimelineItem.Chat
+                  current.toMutableList().also {
+                    it[index] = existing.copy(text = existing.text + remaining)
+                  }
+                } else {
+                  current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
+                }
               }
-            } else {
-              current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
+            } else if (remaining.isNotEmpty() && !assistantTextOpen) {
+              appendAssistantMessage(remaining)
             }
+            assistantTextOpen = false
+            currentAssistantOrder = 0
           }
-        } else if (remaining.isNotEmpty() && !assistantTextOpen) {
-          appendAssistantMessage(remaining)
         }
-        assistantTextOpen = false
-        currentAssistantOrder = 0
         // Some providers do not emit text_delta. Show their final text once.
         if (!receivedAssistantTextInMessage) {
           message.findText()?.takeIf { it.isNotBlank() }?.let(::appendAssistantMessage)
@@ -599,12 +620,12 @@ class SessionDetailViewModel(
         return
       }
       "agent_start", "agent_end", "agent_settled", "turn_start", "turn_end" -> {
-        if (type == "agent_start" && pendingPromptId != null) {
+        if (type == "agent_start" && pendingPromptIds.isNotEmpty()) {
           _sendState.value = SendState.Running
           _agentWorking.value = true
         }
         if (type == "agent_settled" || type == "agent_end") {
-          pendingPromptId = null
+          pendingPromptIds.clear()
           _sendState.value = SendState.Idle
           _agentWorking.value = false
         }
@@ -643,10 +664,9 @@ class SessionDetailViewModel(
       // Response to commands
       "response" -> {
         val responseId = raw.getString("id")
-        if (responseId == null || responseId != pendingPromptId) return
+        if (responseId == null || !pendingPromptIds.remove(responseId)) return
         if (raw.getString("success") == "false") {
           val error = raw.getString("error") ?: "Prompt rejected"
-          pendingPromptId = null
           _sendState.value = SendState.Failed(error)
           appendItem(SessionTimelineItem.System("Prompt failed: $error"))
           return
@@ -756,31 +776,36 @@ class SessionDetailViewModel(
    * pre-tool text and post-tool text from merging into one giant bubble.
    */
   private fun flushAndCloseAssistantBubble() {
-    // Atomically drain any pending deltas.
-    val remaining = synchronized(pendingAssistantDeltas) {
-      val s = pendingAssistantDeltas.toString()
-      pendingAssistantDeltas.clear()
-      s
-    }
+    // Cancel the flush job and acquire the mutex to serialize with any
+    // in-flight flush, preventing duplicate text.
     assistantFlushJob?.cancel()
     assistantFlushJob = null
-    if (remaining.isNotEmpty() && assistantTextOpen) {
-      _items.update { current ->
-        val index = current.indexOfLast {
-          it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
+    kotlinx.coroutines.runBlocking {
+      assistantMutex.withLock {
+        val remaining = synchronized(pendingAssistantDeltas) {
+          val s = pendingAssistantDeltas.toString()
+          pendingAssistantDeltas.clear()
+          s
         }
-        if (index >= 0) {
-          val existing = current[index] as SessionTimelineItem.Chat
-          current.toMutableList().also {
-            it[index] = existing.copy(text = existing.text + remaining)
+        if (remaining.isNotEmpty() && assistantTextOpen) {
+          _items.update { current ->
+            val index = current.indexOfLast {
+              it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
+            }
+            if (index >= 0) {
+              val existing = current[index] as SessionTimelineItem.Chat
+              current.toMutableList().also {
+                it[index] = existing.copy(text = existing.text + remaining)
+              }
+            } else {
+              current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
+            }
           }
-        } else {
-          current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
         }
+        assistantTextOpen = false
+        currentAssistantOrder = 0
       }
     }
-    assistantTextOpen = false
-    currentAssistantOrder = 0
   }
 
   private fun timelineItemId(item: SessionTimelineItem): String = when (item) {
@@ -821,9 +846,7 @@ class SessionDetailViewModel(
       // Mark it so message_start is ignored and the image-bearing optimistic
       // row remains the only visible user message.
       lastSentPrompt = message
-      recentSentPrompts.add(message)
-      // Cap at 20 to prevent unbounded growth
-      while (recentSentPrompts.size > 20) { recentSentPrompts.iterator().let { it.next(); it.remove() } }
+      recentSentPrompts["img-${UUID.randomUUID()}"] = message
       appendItem(SessionTimelineItem.Chat(
         author = "You", text = message, time = "now", isUser = true, imageUris = imageUris,
       ))
@@ -870,9 +893,10 @@ class SessionDetailViewModel(
     }
 
     val requestId = "companion-${UUID.randomUUID()}"
-    pendingPromptId = requestId
+    pendingPromptIds.add(requestId)
     _sendState.value = SendState.Sending
     lastSentPrompt = message
+    recentSentPrompts[requestId] = message
 
     // Optimistic: add user message to timeline immediately
     appendItem(SessionTimelineItem.Chat(
@@ -886,10 +910,10 @@ class SessionDetailViewModel(
     // sessions. Raw session WebSocket commands bypassed the relay queue on
     // some reconnect paths, making Companion prompts appear to disappear.
     viewModelScope.launch {
-      when (val result = repository.sendPrompt(sessionId, message)) {
+      when (val result = repository.sendPrompt(sessionId, message, idempotencyKey = requestId)) {
         is com.example.picompanion.data.api.HttpResult.Success -> _sendState.value = SendState.Accepted
         is com.example.picompanion.data.api.HttpResult.Failure -> {
-          pendingPromptId = null
+          pendingPromptIds.remove(requestId)
           _sendState.value = SendState.Idle
           appendItem(SessionTimelineItem.System("Could not send prompt: ${result.message}"))
         }

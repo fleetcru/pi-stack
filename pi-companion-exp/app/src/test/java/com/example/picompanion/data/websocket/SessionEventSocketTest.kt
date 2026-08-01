@@ -104,13 +104,13 @@ class SessionEventSocketTest {
 
     @Test
     fun socketStartsDisconnected() {
-        val socket = SessionEventSocket()
+        val socket = SessionEventSocket(okhttp3.OkHttpClient())
         assertFalse(socket.isConnected())
     }
 
     @Test
     fun socketEventsFlowIsInitiallyEmpty() = runTest {
-        val socket = SessionEventSocket()
+        val socket = SessionEventSocket(okhttp3.OkHttpClient())
         // The channel has no sends yet, so first() would hang.
         // Verify the channel is empty by checking receiveOrNull behavior.
         val channel = socket.events
@@ -120,7 +120,7 @@ class SessionEventSocketTest {
 
     @Test
     fun disconnectSetsIsConnectedToFalse() {
-        val socket = SessionEventSocket()
+        val socket = SessionEventSocket(okhttp3.OkHttpClient())
         // connect requires a real server, but disconnect on fresh socket should be safe
         socket.disconnect()
         assertFalse(socket.isConnected())

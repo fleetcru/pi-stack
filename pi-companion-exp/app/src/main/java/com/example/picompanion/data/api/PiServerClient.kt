@@ -62,7 +62,7 @@ private data class SteerRequest(val message: String)
 private data class UpdateCapacityRequest(val maxSessions: Int)
 
 class PiServerClient(
-  private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
+  val okHttpClient: OkHttpClient = OkHttpClient.Builder()
     .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
     .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
     .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
@@ -123,9 +123,10 @@ class PiServerClient(
     sessionId: String,
     message: String,
     images: List<PromptImage> = emptyList(),
+    idempotencyKey: String? = null,
   ): HttpResult<Unit> {
     val body = json.encodeToString(SendPromptRequest(message, images))
-    return doPostUnit(server, "/v1/sessions/$sessionId/prompt", body)
+    return doPostUnit(server, "/v1/sessions/$sessionId/prompt", body, idempotencyKey = idempotencyKey)
   }
 
   /** Pi-server proxies Pi's get_messages RPC response for the active session. */
@@ -358,12 +359,13 @@ class PiServerClient(
     }
   }
 
-  private fun doPostUnit(server: ServerEntry, path: String, body: String): HttpResult<Unit> {
+  private fun doPostUnit(server: ServerEntry, path: String, body: String, idempotencyKey: String? = null): HttpResult<Unit> {
     return try {
       val url = "${server.url.trimEnd('/')}$path"
       val requestBody = body.toRequestBody("application/json".toMediaType())
       val requestBuilder = Request.Builder().url(url).post(requestBody)
       addAuth(server, requestBuilder)
+      if (idempotencyKey != null) requestBuilder.addHeader("X-Idempotency-Key", idempotencyKey)
 
       okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
         if (!response.isSuccessful) {

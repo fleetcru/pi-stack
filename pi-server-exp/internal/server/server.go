@@ -32,6 +32,10 @@ type Server struct {
 	stateCache     map[string]cachedSessionState
 	pendingTitleMu sync.Mutex
 	pendingTitle   map[string]bool
+	// Idempotency cache: maps "sessionId:key" to expiry time.
+	// Prevents duplicate prompt processing within a TTL window.
+	idempotencyMu sync.Mutex
+	idempotency   map[string]time.Time
 	resolvedRoots  []string // pre-resolved allowed roots (symlinks evaluated)
 	stopHeartbeat  chan struct{}
 	sessionBridge  *SessionBridge

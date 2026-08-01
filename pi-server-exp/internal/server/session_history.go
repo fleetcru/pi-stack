@@ -91,3 +91,27 @@ func (s *Server) invalidateHistoryCache(sessionID string) {
 	delete(s.historyCache, sessionID)
 	s.historyMu.Unlock()
 }
+
+const idempotencyTTL = 60 * time.Second
+
+// checkIdempotency returns true if this key was already seen within the TTL
+// window. If not, it records the key and returns false.
+func (s *Server) checkIdempotency(key string) bool {
+	s.idempotencyMu.Lock()
+	defer s.idempotencyMu.Unlock()
+	if s.idempotency == nil {
+		s.idempotency = make(map[string]time.Time)
+	}
+	now := time.Now()
+	// Evict expired entries opportunistically.
+	for k, exp := range s.idempotency {
+		if now.After(exp) {
+			delete(s.idempotency, k)
+		}
+	}
+	if exp, ok := s.idempotency[key]; ok && now.Before(exp) {
+		return true
+	}
+	s.idempotency[key] = now.Add(idempotencyTTL)
+	return false
+}

@@ -17,12 +17,7 @@ import okhttp3.WebSocketListener
 import java.util.concurrent.atomic.AtomicLong
 
 class SessionEventSocket(
-  private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
-    .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-    .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-    .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-    .pingInterval(25, java.util.concurrent.TimeUnit.SECONDS)
-    .build(),
+  private val okHttpClient: OkHttpClient,
   private val json: Json = apiJson,
 ) {
 
@@ -61,10 +56,10 @@ class SessionEventSocket(
     webSocket = null
     connected = false
     resynchronizing = false
-    // A reconnect may replay events that were observed on the previous
-    // socket. Deduplication is scoped to one connection; retaining this map
-    // can incorrectly discard valid replayed events after a reconnect.
-    synchronized(seenEventIds) { seenEventIds.clear() }
+    // Carry seenEventIds across reconnects so replayed events from the
+    // new socket are deduped against what the old socket already delivered.
+    // Server event IDs are monotonic and never reused, so this is safe.
+    // Only clear on explicit disconnect().
     // Long.MAX_VALUE deliberately suppresses replay on first open; history is
     // loaded separately, so it cannot serve as a gap-detection baseline.
     lastEventId = since?.takeUnless { it == Long.MAX_VALUE }
