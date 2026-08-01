@@ -490,6 +490,9 @@ class SessionDetailViewModel(
       // adding a misleading start and completion row for the same operation.
       "tool_execution_start" -> {
         _agentWorking.value = true
+        // Close the current assistant text bubble before showing the tool.
+        // This prevents tool calls from being visually merged into one giant bubble.
+        flushAndCloseAssistantBubble()
         val name = raw.getString("toolName") ?: raw.getString("name") ?: raw.getString("tool") ?: "tool"
         val callId = raw.getString("toolCallId") ?: raw.getString("id") ?: raw.getString("tool_use_id") ?: "tool-${System.nanoTime()}"
         if (BuildConfig.DEBUG) android.util.Log.d("SessionWS", "Tool START: name=$name, callId=$callId")
@@ -680,6 +683,36 @@ class SessionDetailViewModel(
       time = "",
       isUser = false,
     ))
+  }
+
+  /**
+   * Flushes any buffered assistant text deltas and closes the current
+   * assistant text bubble so the next text starts a new one.
+   * Called before tool execution starts to prevent the assistant's
+   * pre-tool text and post-tool text from merging into one giant bubble.
+   */
+  private fun flushAndCloseAssistantBubble() {
+    // Flush pending deltas
+    val remaining = pendingAssistantDeltas.toString()
+    pendingAssistantDeltas.clear()
+    assistantFlushJob?.cancel()
+    assistantFlushJob = null
+    if (remaining.isNotEmpty() && assistantTextOpen) {
+      _items.update { current ->
+        val index = current.indexOfLast {
+          it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent"
+        }
+        if (index >= 0) {
+          val existing = current[index] as SessionTimelineItem.Chat
+          current.toMutableList().also {
+            it[index] = existing.copy(text = existing.text + remaining)
+          }
+        } else {
+          current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
+        }
+      }
+    }
+    assistantTextOpen = false
   }
 
   private fun timelineItemId(item: SessionTimelineItem): String = when (item) {
