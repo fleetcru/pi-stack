@@ -463,8 +463,8 @@ class SessionDetailViewModel(
       "tool_execution_start" -> {
         _agentWorking.value = true
         val name = raw.getString("toolName") ?: raw.getString("name") ?: raw.getString("tool") ?: "tool"
-        // Try multiple key names for the tool call ID (different providers use different keys)
         val callId = raw.getString("toolCallId") ?: raw.getString("id") ?: raw.getString("tool_use_id") ?: "tool-${System.nanoTime()}"
+        if (BuildConfig.DEBUG) android.util.Log.d("SessionWS", "Tool START: name=$name, callId=$callId")
         SessionTimelineItem.Tool(
           callId = callId,
           name = name,
@@ -475,6 +475,7 @@ class SessionDetailViewModel(
       }
       "tool_execution_update" -> {
         val callId = raw.getString("toolCallId") ?: raw.getString("id") ?: raw.getString("tool_use_id")
+        if (BuildConfig.DEBUG) android.util.Log.d("SessionWS", "Tool UPDATE: callId=$callId")
         updateTool(
           callId = callId,
           output = raw["partialResult"]?.findText(),
@@ -485,6 +486,7 @@ class SessionDetailViewModel(
       "tool_execution_end" -> {
         val callId = raw.getString("toolCallId") ?: raw.getString("id") ?: raw.getString("tool_use_id")
         val isError = raw["isError"]?.toString() == "true" || raw.getString("success") == "false"
+        if (BuildConfig.DEBUG) android.util.Log.d("SessionWS", "Tool END: callId=$callId, isError=$isError")
         updateTool(
           callId = callId,
           output = raw["result"]?.findText() ?: raw.getString("error"),

@@ -27,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -74,9 +75,15 @@ fun UnifiedActionsSheet(
   var worktreePath by remember { mutableStateOf("") }
   var existingWorktreeBranch by remember { mutableStateOf(false) }
 
-  // Model state
+  // Model state — derived directly from controls so it updates when models load
   val providers = controls.models.map { it.provider }.distinct()
   var provider by remember(controls.selectedProvider, providers) { mutableStateOf(controls.selectedProvider ?: providers.firstOrNull()) }
+  // Reset provider when controls change (e.g., after loadModelControls completes)
+  LaunchedEffect(controls.models) {
+    if (provider == null && providers.isNotEmpty()) {
+      provider = controls.selectedProvider ?: providers.first()
+    }
+  }
   var providerMenuOpen by remember { mutableStateOf(false) }
   val visibleModels = controls.models.filter { it.provider == provider }
 
