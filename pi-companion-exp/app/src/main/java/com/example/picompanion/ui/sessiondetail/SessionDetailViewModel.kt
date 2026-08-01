@@ -169,6 +169,7 @@ class SessionDetailViewModel(
 
       activeServer = server
       loadMetadata()
+      loadModelControls()
       relayHealthJob = launch {
         // Poll once to check if this is an external (relay) session. If not,
         // skip the polling loop entirely — local RPC sessions get state from

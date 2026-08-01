@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -74,6 +75,7 @@ fun SessionDetailScreen(
   val agentWorking by viewModel.agentWorking.collectAsStateWithLifecycle()
   val listState = rememberLazyListState()
   var actionsOpen by rememberSaveable { mutableStateOf(false) }
+  var actionsTab by rememberSaveable { mutableIntStateOf(0) }
   var filesOpen by rememberSaveable { mutableStateOf(false) }
   var attachments by remember { mutableStateOf<List<android.net.Uri>>(emptyList()) }
   val context = androidx.compose.ui.platform.LocalContext.current
@@ -143,7 +145,8 @@ fun SessionDetailScreen(
       onCompact = { viewModel.compact() },
       onControls = { actionsOpen = true },
       onFiles = { filesOpen = true },
-      onModelControls = { actionsOpen = true; viewModel.loadModelControls() },
+      onModelControls = { actionsOpen = true; actionsTab = 0; viewModel.loadModelControls() },
+      modelControls = modelControls,
       sharedTransitionScope = sharedTransitionScope,
       animatedVisibilityScope = animatedVisibilityScope,
     )
@@ -210,6 +213,7 @@ fun SessionDetailScreen(
     // Unified actions sheet (replaces separate ModelControlsSheet + SessionControlsDialog)
     if (actionsOpen) {
       UnifiedActionsSheet(
+        initialTab = actionsTab,
         initialTitle = viewModel.sessionTitle.collectAsStateWithLifecycle().value,
         initialProject = viewModel.sessionProject.collectAsStateWithLifecycle().value,
         controls = modelControls,

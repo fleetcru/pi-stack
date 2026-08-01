@@ -3,18 +3,22 @@ package com.example.picompanion.ui.sessiondetail
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -29,8 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 /**
- * Simplified session header. The overflow menu is removed — actions are now
- * accessed via the unified actions sheet triggered by the settings icon.
+ * Session header with model chip for quick model/provider access.
  */
 @Composable
 fun SessionHeader(
@@ -44,6 +47,7 @@ fun SessionHeader(
   onControls: () -> Unit,
   onFiles: () -> Unit,
   onModelControls: () -> Unit,
+  modelControls: ModelControls = ModelControls(),
   sharedTransitionScope: SharedTransitionScope,
   animatedVisibilityScope: AnimatedVisibilityScope,
   modifier: Modifier = Modifier,
@@ -66,7 +70,7 @@ fun SessionHeader(
     ) {
       Column(
         modifier = Modifier.padding(start = 4.dp, end = 8.dp, top = 8.dp, bottom = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
       ) {
         Row(
           Modifier.fillMaxWidth(),
@@ -110,15 +114,73 @@ fun SessionHeader(
           }
         }
 
-        Text(
-          text = connectionStatusText(connectionState, relayHealth),
-          style = MaterialTheme.typography.labelSmall,
-          color = connectionStatusColor(connectionState, relayHealth),
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-          modifier = Modifier.padding(start = 54.dp, end = 4.dp),
-        )
+        // Status row: connection status + model chip
+        Row(
+          Modifier.fillMaxWidth().padding(start = 50.dp, end = 4.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Text(
+            text = connectionStatusText(connectionState, relayHealth),
+            style = MaterialTheme.typography.labelSmall,
+            color = connectionStatusColor(connectionState, relayHealth),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+          )
+
+          // Model chip — shows current model, tap to change
+          if (connectionState is ConnectionState.Connected && modelControls.models.isNotEmpty()) {
+            ModelChip(
+              provider = modelControls.selectedProvider,
+              modelId = modelControls.selectedModelId,
+              onClick = onModelControls,
+            )
+          }
+        }
       }
+    }
+  }
+}
+
+/**
+ * Compact model chip showing current provider:model. Tap opens model controls.
+ */
+@Composable
+private fun ModelChip(
+  provider: String?,
+  modelId: String?,
+  onClick: () -> Unit,
+) {
+  val label = when {
+    provider != null && modelId != null -> "$provider:$modelId"
+    provider != null -> provider
+    else -> "model"
+  }
+
+  Surface(
+    shape = RoundedCornerShape(8.dp),
+    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)),
+    modifier = Modifier.clickable(onClick = onClick),
+  ) {
+    Row(
+      Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Icon(
+        Icons.Default.SmartToy,
+        contentDescription = null,
+        modifier = Modifier.size(12.dp),
+        tint = MaterialTheme.colorScheme.primary,
+      )
+      Spacer(Modifier.width(4.dp))
+      Text(
+        label,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurface,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
     }
   }
 }

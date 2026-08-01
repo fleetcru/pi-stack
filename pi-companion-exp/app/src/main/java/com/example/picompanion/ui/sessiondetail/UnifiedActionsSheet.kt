@@ -53,6 +53,7 @@ private val SheetMuted = Color(0xFF999999)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UnifiedActionsSheet(
+  initialTab: Int = 0,
   initialTitle: String,
   initialProject: String,
   controls: ModelControls,
@@ -64,7 +65,7 @@ fun UnifiedActionsSheet(
   onGit: (resource: String) -> Unit,
   onGitWrite: (action: String, body: String) -> Unit,
 ) {
-  var selectedTab by remember { mutableStateOf(0) }
+  var selectedTab by remember { mutableStateOf(initialTab) }
   var title by remember(initialTitle) { mutableStateOf(initialTitle) }
   var project by remember(initialProject) { mutableStateOf(initialProject) }
   var commitMessage by remember { mutableStateOf("") }
