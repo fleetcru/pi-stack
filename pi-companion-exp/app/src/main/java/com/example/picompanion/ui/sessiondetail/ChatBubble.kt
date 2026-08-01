@@ -73,6 +73,7 @@ fun ChatBubble(
       }
     }
   } else {
+    if (text.isBlank() && imageUris.isEmpty()) return
     Column(modifier = modifier.fillMaxWidth()) {
       Surface(
         shape = RoundedCornerShape(20.dp),

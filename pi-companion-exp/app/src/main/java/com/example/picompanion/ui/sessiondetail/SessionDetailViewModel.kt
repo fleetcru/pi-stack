@@ -428,11 +428,32 @@ class SessionDetailViewModel(
       }
       "message_end" -> {
         val message = raw["message"]?.jsonObject ?: return
-        // Pi emits message_end for the user's accepted prompt before agent
-        // work begins. Resetting here hid the Abort button immediately.
         if (message.getString("role") != "assistant") return
         _sendState.value = SendState.Idle
         _agentWorking.value = false
+        // Flush any remaining buffered deltas before closing the assistant row.
+        // This prevents late deltas from creating orphan bubbles.
+        val remaining = pendingAssistantDeltas.toString()
+        pendingAssistantDeltas.clear()
+        assistantFlushJob?.cancel()
+        assistantFlushJob = null
+        if (remaining.isNotEmpty() && assistantTextOpen) {
+          _items.update { current ->
+            val index = current.indexOfLast {
+              it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent"
+            }
+            if (index >= 0) {
+              val existing = current[index] as SessionTimelineItem.Chat
+              current.toMutableList().also {
+                it[index] = existing.copy(text = existing.text + remaining)
+              }
+            } else {
+              current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
+            }
+          }
+        } else if (remaining.isNotEmpty() && !assistantTextOpen) {
+          appendAssistantMessage(remaining)
+        }
         assistantTextOpen = false
         // Some providers do not emit text_delta. Show their final text once.
         if (!receivedAssistantTextInMessage) {
@@ -445,8 +466,10 @@ class SessionDetailViewModel(
       "tool_execution_start" -> {
         _agentWorking.value = true
         val name = raw.getString("toolName") ?: raw.getString("name") ?: raw.getString("tool") ?: "tool"
+        // Try multiple key names for the tool call ID (different providers use different keys)
+        val callId = raw.getString("toolCallId") ?: raw.getString("id") ?: raw.getString("tool_use_id") ?: "tool-${System.nanoTime()}"
         SessionTimelineItem.Tool(
-          callId = raw.getString("toolCallId") ?: "tool-${System.nanoTime()}",
+          callId = callId,
           name = name,
           status = "running",
           args = raw["args"]?.toString(),
@@ -454,15 +477,16 @@ class SessionDetailViewModel(
         )
       }
       "tool_execution_update" -> {
+        val callId = raw.getString("toolCallId") ?: raw.getString("id") ?: raw.getString("tool_use_id")
         updateTool(
-          callId = raw.getString("toolCallId"),
+          callId = callId,
           output = raw["partialResult"]?.findText(),
           status = "running",
         )
         return
       }
       "tool_execution_end" -> {
-        val callId = raw.getString("toolCallId")
+        val callId = raw.getString("toolCallId") ?: raw.getString("id") ?: raw.getString("tool_use_id")
         val isError = raw["isError"]?.toString() == "true" || raw.getString("success") == "false"
         updateTool(
           callId = callId,
@@ -582,8 +606,6 @@ class SessionDetailViewModel(
     receivedAssistantTextInMessage = true
     pendingAssistantDeltas.append(delta)
     if (assistantFlushJob?.isActive == true) return
-    // Pi can emit one event per token. Render at frame-ish cadence instead of
-    // recomposing the entire Compose timeline for every individual token.
     assistantFlushJob = viewModelScope.launch {
       delay(16)
       val buffered = pendingAssistantDeltas.toString()
@@ -591,9 +613,6 @@ class SessionDetailViewModel(
       if (buffered.isEmpty()) return@launch
       if (assistantTextOpen) {
         _items.update { current ->
-          // Tool/system events can arrive between token batches. Find the
-          // assistant row instead of requiring it to be the final list item;
-          // otherwise the response can split or visibly jump.
           val index = current.indexOfLast {
             it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent"
           }
@@ -607,8 +626,22 @@ class SessionDetailViewModel(
           }
         }
       } else {
-        appendAssistantMessage(buffered)
-        assistantTextOpen = true
+        // assistantTextOpen is false — message_end already arrived.
+        // Append to the last assistant row if one exists, otherwise create new.
+        // This prevents orphan bubbles from late-arriving deltas.
+        _items.update { current ->
+          val index = current.indexOfLast {
+            it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent"
+          }
+          if (index >= 0) {
+            val existing = current[index] as SessionTimelineItem.Chat
+            current.toMutableList().also {
+              it[index] = existing.copy(text = existing.text + buffered)
+            }
+          } else {
+            current + SessionTimelineItem.Chat("Pi Agent", buffered, "", false)
+          }
+        }
       }
     }
   }
