@@ -107,10 +107,27 @@ func readRelayMessages(path string) ([]any, error) {
 				Type    string          `json:"type"`
 				Message json.RawMessage `json:"message"`
 			}
-			if json.Unmarshal(line, &entry) == nil && entry.Type == "message" && len(entry.Message) > 0 {
-				var message any
-				if json.Unmarshal(entry.Message, &message) == nil {
-					messages = append(messages, message)
+			if json.Unmarshal(line, &entry) == nil {
+				switch entry.Type {
+				case "message":
+					if len(entry.Message) > 0 {
+						var message any
+						if json.Unmarshal(entry.Message, &message) == nil {
+							messages = append(messages, message)
+						}
+					}
+				case "tool_use", "tool_result":
+					// Include tool events in history so clients can render
+					// tool calls alongside the conversation.
+					if len(entry.Message) > 0 {
+						var raw any
+						if json.Unmarshal(entry.Message, &raw) == nil {
+							if obj, ok := raw.(map[string]any); ok {
+								obj["_historyType"] = entry.Type
+								messages = append(messages, obj)
+							}
+						}
+					}
 				}
 			}
 		}

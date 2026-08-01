@@ -274,6 +274,22 @@ class SessionDetailViewModel(
               val history = messages.mapNotNull { element ->
                 val message = element as? JsonObject ?: return@mapNotNull null
                 val role = message.getString("role") ?: return@mapNotNull null
+                // Include tool_use and tool_result entries from history
+                val historyType = message.getString("_historyType")
+                if (historyType == "tool_use") {
+                  val name = message.getString("name") ?: "tool"
+                  val id = message.getString("id") ?: "tool-${System.nanoTime()}"
+                  return@mapNotNull SessionTimelineItem.Tool(
+                    callId = id,
+                    name = name,
+                    status = "completed",
+                    args = message["input"]?.toString(),
+                  )
+                }
+                if (historyType == "tool_result") {
+                  // Tool results are paired with tool_use — skip standalone results
+                  return@mapNotNull null
+                }
                 if (role != "user" && role != "assistant") return@mapNotNull null
                 val text = message.findText()?.trim()?.takeIf { it.isNotEmpty() }
                   ?: return@mapNotNull null
@@ -308,19 +324,20 @@ class SessionDetailViewModel(
                 }.forEach { merged[timelineItemId(it)] = it }
                 // Keep live items that aren't in history.
                 // After reconnect, WS replays all events including tools/files/system.
-                // These are redundant with the history (which has the final assistant text)
-                // and would show as a massive wall of tool cards. Filter them out,
-                // keeping only Chat items that aren't duplicated in history.
+                // Strategy: keep Chat items not in history, plus any Tool items that are
+                // still running (i.e., the agent is mid-tool-call). Completed/failed tools
+                // from replay are redundant with the history's final assistant text.
                 current.filter { item ->
                   val isOptimisticImage = item is SessionTimelineItem.Chat &&
                     item.time == "now" && item.imageUris.isNotEmpty()
                   if (isOptimisticImage) return@filter false
                   val id = timelineItemId(item)
                   if (id in merged) return@filter false
-                  // Drop replayed tool/file/system events after history load —
-                  // they're from the replay, not live activity.
-                  if (!appendOld && item !is SessionTimelineItem.Chat) return@filter false
-                  true
+                  when (item) {
+                    is SessionTimelineItem.Chat -> true // keep new chat not in history
+                    is SessionTimelineItem.Tool -> item.status == "running" // only keep in-progress tools
+                    else -> false // drop replayed file_change, system, etc.
+                  }
                 }.forEach { merged[timelineItemId(it)] = it }
                 merged.values.toList()
               }
