@@ -91,11 +91,17 @@ class SessionDetailViewModel(
   private val historyMutex = kotlinx.coroutines.sync.Mutex()
 
   private fun appendItem(item: SessionTimelineItem) {
-    _items.update { current -> current + item }
+    // Deduplicate before appending — prevents duplicates from history/live overlap
+    val id = timelineItemId(item)
+    _items.update { current ->
+      if (current.any { timelineItemId(it) == id }) current
+      else current + item
+    }
   }
 
   private var lastEventId: Long = 0
   private var lastSentPrompt: String? = null
+  private val recentSentPrompts = LinkedHashSet<String>()
   private var activeServer: com.example.picompanion.data.settings.ServerEntry? = null
   private var reconnectJob: Job? = null
   private var relayHealthJob: Job? = null
@@ -277,11 +283,7 @@ class SessionDetailViewModel(
                   time = message.getString("timestamp").orEmpty(),
                   isUser = role == "user",
                 )
-              }.distinctBy { item ->
-                // A refresh can contain the same persisted message twice
-                // around a compaction/replay boundary.
-                "${item.isUser}|${item.time}|${item.text}"
-              }
+              }.distinctBy { timelineItemId(it) }
               val historyMeta = data["history"]?.jsonObject
               _hasOlderHistory.value = historyMeta?.get("hasOlder")
                 ?.jsonPrimitive?.booleanOrNull == true
@@ -291,13 +293,7 @@ class SessionDetailViewModel(
               // Preserve already-loaded older pages while keeping live socket
               // items at the bottom of the timeline.
               historicalItems = (if (appendOld) history + historicalItems else history)
-                .distinctBy { item ->
-                  when (item) {
-                    is SessionTimelineItem.Chat ->
-                      "chat|${item.isUser}|${item.time}|${item.text}"
-                    else -> item.toString()
-                  }
-                }
+                .distinctBy { timelineItemId(it) }
               // Atomic update prevents live events arriving during the HTTP
               // request from being overwritten by the history snapshot. HTTP
               // history and WS replay use different timestamp formats, so data
@@ -401,9 +397,10 @@ class SessionDetailViewModel(
           val text = message?.findText()?.takeIf { it.isNotBlank() } ?: return
           // Deduplicate against the optimistic insert from sendPrompt().
           // The WS echo arrives with a server timestamp while the optimistic
-          // item uses "now"; text comparison avoids showing the same message twice.
-          if (text == lastSentPrompt) {
+          // Deduplicate against optimistic inserts from sendPrompt().
+          if (text == lastSentPrompt || recentSentPrompts.contains(text)) {
             lastSentPrompt = null
+            recentSentPrompts.remove(text)
             return
           }
           SessionTimelineItem.Chat(
@@ -692,6 +689,9 @@ class SessionDetailViewModel(
       // Mark it so message_start is ignored and the image-bearing optimistic
       // row remains the only visible user message.
       lastSentPrompt = message
+      recentSentPrompts.add(message)
+      // Cap at 20 to prevent unbounded growth
+      if (recentSentPrompts.size > 20) recentSentPrompts.iterator().let { it.next(); it.remove() }
       appendItem(SessionTimelineItem.Chat(
         author = "You", text = message, time = "now", isUser = true, imageUris = imageUris,
       ))
