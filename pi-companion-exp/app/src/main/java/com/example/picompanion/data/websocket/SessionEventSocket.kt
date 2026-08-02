@@ -7,8 +7,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -31,19 +29,7 @@ class SessionEventSocket(
   @Volatile
   private var connected = false
   private val generation = AtomicLong(0)
-  // Cursor baseline is set from the reconnect `since` value. It detects both
-  // server ring truncation during replay and slow-subscriber drops while live.
-  @Volatile private var lastEventId: Long? = null
-  // After events_lost, suppress gap detection until the first event from the
-  // fresh replay establishes a new consecutive baseline.
-  @Volatile private var resynchronizing = false
-  // LinkedHashMap for O(1) add/contains and O(1) eviction of oldest entries.
-  // All access is synchronized to prevent races between add and size check.
-  private val seenEventIds = object : LinkedHashMap<Long, Boolean>(1024) {
-    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Boolean>?): Boolean {
-      return size > 10_000
-    }
-  }
+  private val eventSequence = EventSequenceTracker()
 
   /**
    * Opens a server-ticketed session stream. `wsPath` is returned by
@@ -55,14 +41,9 @@ class SessionEventSocket(
     previous?.close(1000, "Replacing connection")
     webSocket = null
     connected = false
-    resynchronizing = false
-    // Carry seenEventIds across reconnects so replayed events from the
-    // new socket are deduped against what the old socket already delivered.
-    // Server event IDs are monotonic and never reused, so this is safe.
-    // Only clear on explicit disconnect().
-    // Long.MAX_VALUE deliberately suppresses replay on first open; history is
-    // loaded separately, so it cannot serve as a gap-detection baseline.
-    lastEventId = since?.takeUnless { it == Long.MAX_VALUE }
+    // Carry the duplicate window across reconnects so replayed events are not
+    // rendered twice. Only an explicit disconnect clears this state.
+    eventSequence.beginConnection(since)
 
     val baseUrl = server.url.trimEnd('/')
     val wsUrl = try {
@@ -96,35 +77,7 @@ class SessionEventSocket(
         if (generation.get() != connectionId) return
         try {
           val jsonObj = json.decodeFromString<JsonObject>(text)
-          val eventId = jsonObj["_daemonEventId"]?.jsonPrimitive?.longOrNull
-          if (eventId != null) {
-            val previous = lastEventId
-            if (resynchronizing) {
-              // After events_lost, accept the first replay event as the new
-              // baseline without gap-checking against the stale cursor.
-              lastEventId = eventId
-              resynchronizing = false
-            } else if (previous != null && eventId > previous + 1) {
-              resynchronizing = true
-              _events.trySend(SocketEvent.EventsLost(previous, eventId))
-            } else {
-              if (previous == null || eventId > previous) lastEventId = eventId
-            }
-            val isDuplicate: Boolean
-            synchronized(seenEventIds) {
-              isDuplicate = seenEventIds.put(eventId, true) != null
-            }
-            if (isDuplicate) return
-          }
-          val type = jsonObj["type"]?.jsonPrimitive?.content ?: "unknown"
-          if (type == "events_lost") {
-            val expectedAfter = jsonObj["expectedAfter"]?.jsonPrimitive?.longOrNull ?: lastEventId ?: 0
-            val received = jsonObj["received"]?.jsonPrimitive?.longOrNull ?: expectedAfter + 1
-            resynchronizing = true
-            _events.trySend(SocketEvent.EventsLost(expectedAfter, received))
-            return
-          }
-          _events.trySend(SocketEvent.Message(jsonObj, type, eventId))
+          eventSequence.process(jsonObj).forEach { _events.trySend(it) }
         } catch (e: Exception) {
           _events.trySend(SocketEvent.RawMessage(text))
         }
@@ -161,8 +114,7 @@ class SessionEventSocket(
     webSocket?.close(1000, "Client disconnect")
     webSocket = null
     connected = false
-    lastEventId = null
-    synchronized(seenEventIds) { seenEventIds.clear() }
+    eventSequence.clear()
   }
 
   fun isConnected(): Boolean = connected

@@ -43,6 +43,7 @@ type ExternalSession struct {
 	subs            map[chan RPCEvent]struct{}
 	commands        []ExternalCommand
 	relay           chan ExternalCommand
+	relayStop       chan struct{}
 	relayGeneration uint64
 	RelayConnected  bool
 	RelayLatencyMS  int64
@@ -80,14 +81,11 @@ func (r *ExternalRegistry) saveCommandsLocked() {
 	}
 }
 
-
-
 // register upserts the session and returns the command-queue lease. The same
 // bridge (identified by leaseID) re-registering keeps its lease; a different
 // bridge rotates it, invalidating the previous holder and its relay.
 func (r *ExternalRegistry) register(id, cwd, title, sessionPath, leaseID string) (*ExternalSession, string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	s := r.sessions[id]
 	if s == nil {
 		s = &ExternalSession{ID: id, CWD: cwd, Title: title, SessionPath: sessionPath, Status: "idle", subs: map[chan RPCEvent]struct{}{}}
@@ -96,12 +94,16 @@ func (r *ExternalRegistry) register(id, cwd, title, sessionPath, leaseID string)
 		}
 		r.sessions[id] = s
 	}
+	var staleRelayStop chan struct{}
 	if s.leaseToken == "" || (leaseID != "" && s.leaseID != leaseID) {
-		// New owner: rotate the lease and detach any relay held by the previous
-		// bridge so its read loop observes isCurrentRelay == false and exits.
+		// New owner: rotate the lease and actively close the previous relay.
+		// Merely dropping it from the registry leaves an idle WebSocket alive
+		// because its read loop has no reason to wake and check its generation.
+		staleRelayStop = s.relayStop
 		s.leaseID = leaseID
 		s.leaseToken = newRequestID()
 		s.relay = nil
+		s.relayStop = nil
 		s.RelayConnected = false
 	}
 	s.CWD = cwd
@@ -115,7 +117,12 @@ func (r *ExternalRegistry) register(id, cwd, title, sessionPath, leaseID string)
 		s.Status = "idle"
 	}
 	s.UpdatedAt = time.Now().UTC()
-	return s, s.leaseToken
+	leaseToken := s.leaseToken
+	r.mu.Unlock()
+	if staleRelayStop != nil {
+		close(staleRelayStop)
+	}
+	return s, leaseToken
 }
 
 // get returns a value copy of the session's read-only fields. Callers never
@@ -129,19 +136,19 @@ func (r *ExternalRegistry) get(id string) (ExternalSession, bool) {
 		return ExternalSession{}, false
 	}
 	return ExternalSession{
-		ID:              s.ID,
-		CWD:             s.CWD,
-		Title:           s.Title,
-		SessionPath:     s.SessionPath,
-		Model:           s.Model,
-		ThinkingLevel:   s.ThinkingLevel,
-		LastUsage:       s.LastUsage,
-		TotalCost:       s.TotalCost,
-		MessageCount:    s.MessageCount,
-		Status:          s.Status,
-		UpdatedAt:       s.UpdatedAt,
-		RelayConnected:  s.RelayConnected,
-		RelayLatencyMS:  s.RelayLatencyMS,
+		ID:             s.ID,
+		CWD:            s.CWD,
+		Title:          s.Title,
+		SessionPath:    s.SessionPath,
+		Model:          s.Model,
+		ThinkingLevel:  s.ThinkingLevel,
+		LastUsage:      s.LastUsage,
+		TotalCost:      s.TotalCost,
+		MessageCount:   s.MessageCount,
+		Status:         s.Status,
+		UpdatedAt:      s.UpdatedAt,
+		RelayConnected: s.RelayConnected,
+		RelayLatencyMS: s.RelayLatencyMS,
 	}, true
 }
 
@@ -169,14 +176,14 @@ func (r *ExternalRegistry) stateSnapshot(id string) map[string]any {
 	}
 	running := s.Status != "stale" && s.Status != "stopped"
 	return map[string]any{
-		"external":        true,
-		"running":         running,
-		"status":          s.Status,
-		"model":           s.Model,
-		"thinkingLevel":   s.ThinkingLevel,
-		"transport":       "relay",
-		"relayConnected":  s.RelayConnected,
-		"relayLatencyMs":  s.RelayLatencyMS,
+		"external":       true,
+		"running":        running,
+		"status":         s.Status,
+		"model":          s.Model,
+		"thinkingLevel":  s.ThinkingLevel,
+		"transport":      "relay",
+		"relayConnected": s.RelayConnected,
+		"relayLatencyMs": s.RelayLatencyMS,
 	}
 }
 
@@ -337,27 +344,36 @@ func (r *ExternalRegistry) commandsFor(id, lease string) (commands []ExternalCom
 // attachRelay attaches a WS relay only when it presents the current HTTP
 // command lease. This prevents a stale bridge from bypassing the polling lease
 // and reclaiming delivery through the WebSocket path.
-func (r *ExternalRegistry) attachRelay(id, lease string) (<-chan ExternalCommand, []ExternalCommand, uint64, func(), bool, bool) {
+func (r *ExternalRegistry) attachRelay(id, lease string) (<-chan ExternalCommand, []ExternalCommand, uint64, <-chan struct{}, func(), bool, bool) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	s := r.sessions[id]
 	if s == nil {
-		return nil, nil, 0, nil, false, false
+		r.mu.Unlock()
+		return nil, nil, 0, nil, nil, false, false
 	}
 	if s.leaseToken == "" || subtle.ConstantTimeCompare([]byte(s.leaseToken), []byte(lease)) != 1 {
-		return nil, nil, 0, nil, true, false
+		r.mu.Unlock()
+		return nil, nil, 0, nil, nil, true, false
 	}
+	staleRelayStop := s.relayStop
 	channel := make(chan ExternalCommand, 32)
+	relayStop := make(chan struct{})
 	s.relayGeneration++
 	generation := s.relayGeneration
 	s.relay = channel
+	s.relayStop = relayStop
 	s.RelayConnected = true
 	s.UpdatedAt = time.Now().UTC()
 	pending := append(make([]ExternalCommand, 0, len(s.commands)), s.commands...)
-	return channel, pending, generation, func() {
+	r.mu.Unlock()
+	if staleRelayStop != nil {
+		close(staleRelayStop)
+	}
+	return channel, pending, generation, relayStop, func() {
 		r.mu.Lock()
 		if s.relay == channel && s.relayGeneration == generation {
 			s.relay = nil
+			s.relayStop = nil
 			s.RelayConnected = false
 		}
 		r.mu.Unlock()
@@ -374,7 +390,7 @@ func (r *ExternalRegistry) isCurrentRelay(id string, generation uint64) bool {
 func (r *ExternalRegistry) setRelayLatency(id string, generation uint64, latency time.Duration) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if s := r.sessions[id]; s != nil && s.relayGeneration == generation {
+	if s := r.sessions[id]; s != nil && s.relay != nil && s.relayGeneration == generation {
 		s.RelayLatencyMS = latency.Milliseconds()
 		s.RelayConnected = true
 		s.UpdatedAt = time.Now().UTC()

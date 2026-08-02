@@ -32,7 +32,7 @@ func TestExternalCommandLeaseRejectsStalePollAndAck(t *testing.T) {
 	if _, exists, authorized := r.commandsFor("external-session", firstLease); !exists || authorized {
 		t.Fatalf("stale lease polled commands: exists=%v authorized=%v", exists, authorized)
 	}
-	if _, _, _, _, exists, authorized := r.attachRelay("external-session", firstLease); !exists || authorized {
+	if _, _, _, _, _, exists, authorized := r.attachRelay("external-session", firstLease); !exists || authorized {
 		t.Fatalf("stale lease attached relay: exists=%v authorized=%v", exists, authorized)
 	}
 	if exists, authorized := r.acknowledgeForLease("external-session", []string{"command-1"}, firstLease); !exists || authorized {
@@ -49,6 +49,60 @@ func TestExternalCommandLeaseRejectsStalePollAndAck(t *testing.T) {
 	commands, _, authorized = r.commandsFor("external-session", secondLease)
 	if !authorized || len(commands) != 0 {
 		t.Fatalf("acknowledged command remained queued: %#v", commands)
+	}
+}
+
+func TestRelayLeaseRotationDetachesStaleWebSocket(t *testing.T) {
+	r := newExternalRegistry(t.TempDir() + "/relay-commands.json")
+	_, firstLease := r.register("session", ".", "", "", "bridge-one")
+	firstChannel, _, firstGeneration, firstStop, firstDetach, exists, authorized := r.attachRelay("session", firstLease)
+	if !exists || !authorized || firstChannel == nil {
+		t.Fatalf("first relay did not attach: exists=%v authorized=%v", exists, authorized)
+	}
+
+	_, secondLease := r.register("session", ".", "", "", "bridge-two")
+	if secondLease == firstLease {
+		t.Fatal("new bridge did not rotate the lease")
+	}
+	if r.isCurrentRelay("session", firstGeneration) {
+		t.Fatal("stale relay remained current after lease rotation")
+	}
+	select {
+	case <-firstStop:
+		// Lease rotation must actively wake an idle relay handler so it can
+		// close its WebSocket rather than waiting for a future inbound frame.
+	case <-time.After(time.Second):
+		t.Fatal("lease rotation did not cancel the stale relay")
+	}
+	r.setRelayLatency("session", firstGeneration, 99*time.Millisecond)
+	if snapshot, ok := r.get("session"); !ok || snapshot.RelayLatencyMS != 0 {
+		t.Fatalf("stale relay updated state: %#v", snapshot)
+	}
+
+	secondChannel, _, secondGeneration, _, _, exists, authorized := r.attachRelay("session", secondLease)
+	if !exists || !authorized || secondChannel == nil || !r.isCurrentRelay("session", secondGeneration) {
+		t.Fatal("current lease did not attach a replacement relay")
+	}
+	// A stale detach must not clear the replacement relay.
+	firstDetach()
+	if !r.isCurrentRelay("session", secondGeneration) {
+		t.Fatal("stale detach cleared the replacement relay")
+	}
+	if !r.enqueue("session", ExternalCommand{ID: "cmd", Type: "prompt"}) {
+		t.Fatal("enqueue failed")
+	}
+	select {
+	case command := <-secondChannel:
+		if command.ID != "cmd" {
+			t.Fatalf("delivered command = %#v, want cmd", command)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("replacement relay did not receive command")
+	}
+	select {
+	case command := <-firstChannel:
+		t.Fatalf("stale relay received command: %#v", command)
+	default:
 	}
 }
 

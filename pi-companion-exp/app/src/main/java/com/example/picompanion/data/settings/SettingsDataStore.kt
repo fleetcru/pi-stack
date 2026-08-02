@@ -7,11 +7,13 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -66,18 +68,14 @@ class SettingsDataStore(private val context: Context) {
   }
 
   suspend fun updateServers(servers: List<ServerEntry>) {
+    // Commit credentials first. The subsequent DataStore emission can then be
+    // hydrated immediately, rather than briefly exposing a server with a
+    // missing token to repositories collecting settingsFlow.
+    withContext(Dispatchers.IO) { secureTokens.storeTokens(servers) }
     // Strip tokens before writing to plaintext DataStore.
     val stripped = servers.map { it.copy(authToken = "") }
     context.dataStore.edit {
       it[Keys.SERVERS_JSON] = json.encodeToString(stripped)
-    }
-    // Store tokens securely, keyed by server ID.
-    for (server in servers) {
-      if (server.authToken.isNotBlank()) {
-        secureTokens.putToken(server.id, server.authToken)
-      } else {
-        secureTokens.removeToken(server.id)
-      }
     }
   }
 

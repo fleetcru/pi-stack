@@ -28,15 +28,36 @@ class SecureTokenStore(context: Context) {
     return prefs.getString(serverId, "") ?: ""
   }
 
+  @Synchronized
   fun putToken(serverId: String, token: String) {
-    prefs.edit().putString(serverId, token).apply()
+    check(prefs.edit().putString(serverId, token).commit()) { "Failed to persist auth token" }
   }
 
+  @Synchronized
   fun removeToken(serverId: String) {
-    prefs.edit().remove(serverId).apply()
+    check(prefs.edit().remove(serverId).commit()) { "Failed to remove auth token" }
+  }
+
+  /**
+   * Persists all provided tokens in one synchronous edit. Settings callers use
+   * this before publishing the matching server list through DataStore, so a
+   * collector never observes a newly configured server without its token.
+   */
+  @Synchronized
+  fun storeTokens(servers: List<ServerEntry>) {
+    val editor = prefs.edit()
+    for (server in servers) {
+      if (server.authToken.isNotBlank()) {
+        editor.putString(server.id, server.authToken)
+      } else {
+        editor.remove(server.id)
+      }
+    }
+    check(editor.commit()) { "Failed to persist auth tokens" }
   }
 
   /** Strips tokens from server entries and stores them securely. */
+  @Synchronized
   fun migrateTokens(servers: List<ServerEntry>): List<ServerEntry> {
     val editor = prefs.edit()
     for (server in servers) {
@@ -44,7 +65,7 @@ class SecureTokenStore(context: Context) {
         editor.putString(server.id, server.authToken)
       }
     }
-    editor.apply()
+    check(editor.commit()) { "Failed to migrate auth tokens" }
     return servers.map { it.copy(authToken = "") }
   }
 

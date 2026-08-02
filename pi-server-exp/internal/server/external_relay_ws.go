@@ -18,7 +18,7 @@ func (s *Server) externalRelayWebSocket(w http.ResponseWriter, r *http.Request) 
 		writeErrorText(w, http.StatusBadRequest, "invalid external session id")
 		return
 	}
-	commands, pending, generation, detach, exists, authorized := s.external.attachRelay(id, r.URL.Query().Get("lease"))
+	commands, pending, generation, relayStop, detach, exists, authorized := s.external.attachRelay(id, r.URL.Query().Get("lease"))
 	if !exists {
 		writeErrorText(w, http.StatusNotFound, "external session not found")
 		return
@@ -45,6 +45,17 @@ func (s *Server) externalRelayWebSocket(w http.ResponseWriter, r *http.Request) 
 	}
 	defer detach()
 	defer conn.Close()
+	// Closing this signal means a newer bridge replaced this relay. Close the
+	// socket to interrupt both an otherwise-idle ReadJSON and the writer loop.
+	handlerDone := make(chan struct{})
+	defer close(handlerDone)
+	go func() {
+		select {
+		case <-relayStop:
+			_ = conn.Close()
+		case <-handlerDone:
+		}
+	}()
 	// Detect dead bridge connections instead of keeping a stale relay.
 	const pongWait = 60 * time.Second
 	const pingPeriod = 25 * time.Second

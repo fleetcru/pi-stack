@@ -133,7 +133,7 @@ class SessionDetailViewModel(
   // response with matching id; using a Set allows multiple rapid sends
   // without overwriting each other.
   private val pendingPromptIds = java.util.Collections.synchronizedSet(mutableSetOf<String>())
-  private val queuedPrompts = java.util.Collections.synchronizedList(java.util.ArrayList<String>())
+  private val queuedPrompts = PendingPromptQueue()
   private val connectivityManager = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
   private var networkCallbackRegistered = false
   private val networkCallback = object : ConnectivityManager.NetworkCallback() {
@@ -469,7 +469,7 @@ class SessionDetailViewModel(
     }
   }
 
-  private fun handleEvent(raw: JsonObject, type: String) {
+  private suspend fun handleEvent(raw: JsonObject, type: String) {
     // Log all event types for debugging
     if (BuildConfig.DEBUG) android.util.Log.d("SessionWS", "Event type: $type, keys: ${raw.keys}")
 
@@ -527,33 +527,31 @@ class SessionDetailViewModel(
         // was mid-execution when we cancelled it.
         assistantFlushJob?.cancel()
         assistantFlushJob = null
-        kotlinx.coroutines.runBlocking {
-          assistantMutex.withLock {
-            val remaining = synchronized(pendingAssistantDeltas) {
-              val s = pendingAssistantDeltas.toString()
-              pendingAssistantDeltas.clear()
-              s
-            }
-            if (remaining.isNotEmpty() && assistantTextOpen) {
-              _items.update { current ->
-                val index = current.indexOfLast {
-                  it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
-                }
-                if (index >= 0) {
-                  val existing = current[index] as SessionTimelineItem.Chat
-                  current.toMutableList().also {
-                    it[index] = existing.copy(text = existing.text + remaining)
-                  }
-                } else {
-                  current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
-                }
-              }
-            } else if (remaining.isNotEmpty() && !assistantTextOpen) {
-              appendAssistantMessage(remaining)
-            }
-            assistantTextOpen = false
-            currentAssistantOrder = 0
+        assistantMutex.withLock {
+          val remaining = synchronized(pendingAssistantDeltas) {
+            val s = pendingAssistantDeltas.toString()
+            pendingAssistantDeltas.clear()
+            s
           }
+          if (remaining.isNotEmpty() && assistantTextOpen) {
+            _items.update { current ->
+              val index = current.indexOfLast {
+                it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
+              }
+              if (index >= 0) {
+                val existing = current[index] as SessionTimelineItem.Chat
+                current.toMutableList().also {
+                  it[index] = existing.copy(text = existing.text + remaining)
+                }
+              } else {
+                current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
+              }
+            }
+          } else if (remaining.isNotEmpty() && !assistantTextOpen) {
+            appendAssistantMessage(remaining)
+          }
+          assistantTextOpen = false
+          currentAssistantOrder = 0
         }
         // Some providers do not emit text_delta. Show their final text once.
         if (!receivedAssistantTextInMessage) {
@@ -775,36 +773,34 @@ class SessionDetailViewModel(
    * Called before tool execution starts to prevent the assistant's
    * pre-tool text and post-tool text from merging into one giant bubble.
    */
-  private fun flushAndCloseAssistantBubble() {
-    // Cancel the flush job and acquire the mutex to serialize with any
-    // in-flight flush, preventing duplicate text.
+  private suspend fun flushAndCloseAssistantBubble() {
+    // Suspend until any in-flight flush releases the mutex. Do not block the
+    // main/UI dispatcher while processing streamed events.
     assistantFlushJob?.cancel()
     assistantFlushJob = null
-    kotlinx.coroutines.runBlocking {
-      assistantMutex.withLock {
-        val remaining = synchronized(pendingAssistantDeltas) {
-          val s = pendingAssistantDeltas.toString()
-          pendingAssistantDeltas.clear()
-          s
-        }
-        if (remaining.isNotEmpty() && assistantTextOpen) {
-          _items.update { current ->
-            val index = current.indexOfLast {
-              it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
+    assistantMutex.withLock {
+      val remaining = synchronized(pendingAssistantDeltas) {
+        val s = pendingAssistantDeltas.toString()
+        pendingAssistantDeltas.clear()
+        s
+      }
+      if (remaining.isNotEmpty() && assistantTextOpen) {
+        _items.update { current ->
+          val index = current.indexOfLast {
+            it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
+          }
+          if (index >= 0) {
+            val existing = current[index] as SessionTimelineItem.Chat
+            current.toMutableList().also {
+              it[index] = existing.copy(text = existing.text + remaining)
             }
-            if (index >= 0) {
-              val existing = current[index] as SessionTimelineItem.Chat
-              current.toMutableList().also {
-                it[index] = existing.copy(text = existing.text + remaining)
-              }
-            } else {
-              current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
-            }
+          } else {
+            current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
           }
         }
-        assistantTextOpen = false
-        currentAssistantOrder = 0
       }
+      assistantTextOpen = false
+      currentAssistantOrder = 0
     }
   }
 
@@ -884,11 +880,15 @@ class SessionDetailViewModel(
       }
       return
     }
-    if (_connectionState.value is ConnectionState.Connecting) {
-      // Previously the prompt was silently discarded here. Queue it and flush
-      // once the stream connects so slow networks don't eat typed messages.
-      if (queuedPrompts.size < 20) synchronized(queuedPrompts) { queuedPrompts.add(message) }
-      appendItem(SessionTimelineItem.System("Connecting — message will be sent when the session is reachable"))
+    if (_connectionState.value !is ConnectionState.Connected) {
+      // Queue text prompts while reconnecting or offline. The next successful
+      // socket connection drains this FIFO through the authoritative REST
+      // route, so a temporary network loss does not discard user input.
+      if (queuedPrompts.enqueue(message)) {
+        appendItem(SessionTimelineItem.System("Offline — message will be sent when the session reconnects"))
+      } else {
+        appendItem(SessionTimelineItem.System("Offline message queue is full; prompt was not sent"))
+      }
       return
     }
 
@@ -924,9 +924,7 @@ class SessionDetailViewModel(
   private fun flushQueuedPrompts() {
     viewModelScope.launch {
       while (true) {
-        val message = synchronized(queuedPrompts) {
-          if (queuedPrompts.isEmpty()) null else queuedPrompts.removeAt(0)
-        } ?: break
+        val message = queuedPrompts.dequeue() ?: break
         sendPrompt(message)
         // Small delay between queued sends to avoid overwhelming the server
         // and to show a more natural send cadence.
