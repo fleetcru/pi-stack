@@ -112,7 +112,7 @@ export function buildTimeline(
         name: String(event.toolName ?? "tool"),
         done: false,
         startedAt: typeof event.timestamp === "string" ? event.timestamp : typeof event.timestamp === "number" ? event.timestamp : undefined,
-        args: typeof event.toolArgs === "object" && event.toolArgs !== null ? event.toolArgs as Record<string, unknown> : undefined,
+        args: typeof event.args === "object" && event.args !== null ? event.args as Record<string, unknown> : undefined,
       })
     }
 
@@ -161,9 +161,11 @@ export function buildHistory(
   const data = response?.data as
     | { messages?: Array<Record<string, unknown>> }
     | undefined
+  const toolCalls = new Map<string, { name?: string; args?: Record<string, unknown> }>()
   return (data?.messages ?? []).flatMap(
     (message, index): TimelineItem[] => {
       const role = String(message.role ?? "")
+      if (role === "assistant") rememberToolCalls(message.content, toolCalls)
       const timestamp = message.timestamp ?? index
       if (role === "user" || role === "assistant") {
         const text = contentText(message.content)
@@ -172,11 +174,14 @@ export function buildHistory(
           : []
       }
       if (role === "toolResult") {
+        const toolCallId = String(message.toolCallId ?? "")
+        const toolCall = toolCalls.get(toolCallId)
         return [
           {
             id: `tool-${String(message.toolCallId ?? timestamp)}`,
             kind: "tool" as const,
-            name: String(message.toolName ?? "tool"),
+            name: String(message.toolName ?? toolCall?.name ?? "tool"),
+            args: toolCall?.args,
             output: contentText(message.content),
             done: true,
           },
@@ -196,6 +201,24 @@ export function buildHistory(
       return []
     }
   )
+}
+
+function rememberToolCalls(
+  content: unknown,
+  toolCalls: Map<string, { name?: string; args?: Record<string, unknown> }>
+) {
+  if (!Array.isArray(content)) return
+  for (const part of content) {
+    if (typeof part !== "object" || part === null) continue
+    const toolCall = part as { type?: unknown; id?: unknown; name?: unknown; arguments?: unknown }
+    if (toolCall.type !== "toolCall" || typeof toolCall.id !== "string") continue
+    toolCalls.set(toolCall.id, {
+      name: typeof toolCall.name === "string" ? toolCall.name : undefined,
+      args: typeof toolCall.arguments === "object" && toolCall.arguments !== null
+        ? toolCall.arguments as Record<string, unknown>
+        : undefined,
+    })
+  }
 }
 
 /**
@@ -275,15 +298,17 @@ export function findExtensionRequest(
 export function toolDisplayName(name: string): { label: string; icon: string; category: string } {
   const lower = name.toLowerCase()
   if (lower === "bash" || lower === "terminal")
-    return { label: "Terminal", icon: "terminal", category: "shell" }
+    return { label: "bash", icon: "terminal", category: "shell" }
   if (lower === "read" || lower === "read_file")
-    return { label: "Read file", icon: "code", category: "file" }
-  if (lower === "write" || lower === "edit" || lower === "apply_patch")
-    return { label: "Edit file", icon: "code", category: "file" }
+    return { label: "readFile", icon: "code", category: "file" }
+  if (lower === "write")
+    return { label: "writeFile", icon: "code", category: "file" }
+  if (lower === "edit" || lower === "apply_patch")
+    return { label: "editFile", icon: "code", category: "file" }
   if (lower === "find" || lower === "grep" || lower === "search")
-    return { label: "Search", icon: "search", category: "search" }
+    return { label: "searchCode", icon: "search", category: "search" }
   if (lower === "ls" || lower === "list" || lower === "list_directory")
-    return { label: "Browse files", icon: "folder", category: "file" }
+    return { label: "listFiles", icon: "folder", category: "file" }
   return { label: name, icon: "code", category: "other" }
 }
 

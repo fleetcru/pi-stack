@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ArrowUp, Bot, Brain, ChevronRight, Code, Copy, CopyCheck, Folder, ImagePlus, Search, Sparkles, Square, Terminal, X } from "lucide-react"
+import { ArrowUp, Bot, Brain, ChevronRight, CircleCheck, CircleX, Clock3, Copy, CopyCheck, ImagePlus, LoaderCircle, Sparkles, Square, Terminal, X } from "lucide-react"
 import { useImageAttachments } from "@/hooks/use-image-attachments"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -50,6 +50,8 @@ import {
 } from "@/components/ui/input-group"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { Separator } from "@/components/ui/separator"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message"
 import {
@@ -85,6 +87,8 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
     })
   }, [])
   const [extensionDialogOpen, setExtensionDialogOpen] = useState(false)
+  const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const [selectedProvider, setSelectedProvider] = useState<string | undefined>()
   const extension = useMemo(() => findExtensionRequest(socket.events), [socket.events])
   const visibleExtension = extension && !ignoredExtensionIds.includes(extension.id) ? extension : undefined
   const timeline = useMemo(() => {
@@ -106,6 +110,15 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const models = responseModels(modelsQuery.data)
   const state = stateQuery.data?.data as { model?: { provider?: string; id?: string }; thinkingLevel?: string; isStreaming?: boolean; external?: boolean; relayConnected?: boolean; relayLatencyMs?: number } | undefined
+  const modelGroups = useMemo(() => groupModelsByProvider(models), [models])
+  const visibleProvider = selectedProvider && modelGroups.some(([provider]) => provider === selectedProvider)
+    ? selectedProvider
+    : state?.model?.provider && modelGroups.some(([provider]) => provider === state.model?.provider)
+      ? state.model.provider
+      : modelGroups[0]?.[0]
+  const visibleModels = modelGroups.find(([provider]) => provider === visibleProvider)?.[1] ?? []
+  const selectedModel = models.find((model) => model.provider === state?.model?.provider && model.id === state?.model?.id)
+  const modelLabel = selectedModel?.name || state?.model?.id || "Choose model"
   // Derive live runtime state from WS events. The runtime_state event is
   // emitted by the server whenever the process state transitions. This is
   // more responsive than HTTP polling which freezes when WS is open.
@@ -141,6 +154,16 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
       setDeliveryNotice("Stopping Pi…")
     } catch (error) {
       setDeliveryNotice(error instanceof Error ? error.message : "Could not stop Pi")
+    }
+  }
+
+  async function selectModel(provider: string, modelId: string) {
+    try {
+      await client.sessionPost(sessionId, "model", { provider, modelId })
+      setModelPickerOpen(false)
+      void stateQuery.refetch()
+    } catch (error) {
+      setDeliveryNotice(error instanceof Error ? error.message : "Could not change model")
     }
   }
 
@@ -190,6 +213,70 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
           </DialogContent>
         </Dialog>
       )}
+      <Dialog
+        open={modelPickerOpen}
+        onOpenChange={(open) => {
+          setModelPickerOpen(open)
+          if (open) setSelectedProvider(state?.model?.provider)
+        }}
+      >
+        <DialogContent className="max-w-2xl gap-0 overflow-hidden p-0">
+          <DialogHeader className="px-6 pt-6 pb-4">
+            <DialogTitle>Choose a model</DialogTitle>
+            <DialogDescription>Select a provider, then choose one of its available models.</DialogDescription>
+          </DialogHeader>
+          <Separator />
+          <div className="flex h-80 min-h-0">
+            <aside className="flex w-44 shrink-0 flex-col border-r">
+              <p className="px-4 pt-4 pb-2 text-xs font-medium text-muted-foreground">Providers</p>
+              <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
+                <div className="flex flex-col gap-1">
+                  {modelGroups.map(([provider, providerModels]) => (
+                    <Button
+                      key={provider}
+                      type="button"
+                      variant={provider === visibleProvider ? "secondary" : "ghost"}
+                      size="sm"
+                      className="w-full justify-between"
+                      onClick={() => setSelectedProvider(provider)}
+                    >
+                      <span className="truncate">{provider}</span>
+                      <span>{providerModels.length}</span>
+                    </Button>
+                  ))}
+                </div>
+              </ScrollArea>
+            </aside>
+            <section className="flex min-w-0 flex-1 flex-col">
+              <div className="px-5 pt-4 pb-2">
+                <p className="text-xs font-medium text-muted-foreground">{visibleProvider || "Models"}</p>
+              </div>
+              <ScrollArea className="min-h-0 flex-1 px-3 pb-4">
+                <div className="flex flex-col gap-1">
+                  {visibleModels.map((model) => {
+                    const active = model.provider === state?.model?.provider && model.id === state?.model?.id
+                    return (
+                      <Button
+                        key={`${model.provider}:${model.id}`}
+                        type="button"
+                        variant={active ? "secondary" : "ghost"}
+                        className="w-full justify-between"
+                        onClick={() => void selectModel(model.provider, model.id)}
+                      >
+                        <span className="min-w-0 truncate text-left">{model.name || model.id}</span>
+                        {active && <CircleCheck data-icon="inline-end" />}
+                      </Button>
+                    )
+                  })}
+                  {visibleProvider && visibleModels.length === 0 && (
+                    <p className="px-2 py-4 text-sm text-muted-foreground">No models are available for this provider.</p>
+                  )}
+                </div>
+              </ScrollArea>
+            </section>
+          </div>
+        </DialogContent>
+      </Dialog>
       <div className="flex min-h-0 flex-1 flex-col">
         <MessageScroller>
           <MessageScrollerViewport>
@@ -224,16 +311,20 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                       </Button>
                     </div>
                   )}
-                  {timeline.map((item) => (
-                    <MessageScrollerItem
-                      className="w-full"
-                      key={item.id}
-                      messageId={item.id}
-                      scrollAnchor={item.kind === "assistant"}
-                    >
-                      <TimelineRow item={item} />
-                    </MessageScrollerItem>
-                  ))}
+                  {timeline.map((item, index) => {
+                    const nextItem = timeline[index + 1]
+                    const isFollowedByTool = item.kind === "tool" && nextItem?.kind === "tool"
+                    return (
+                      <MessageScrollerItem
+                        className={isFollowedByTool ? "w-full -mb-6" : "w-full"}
+                        key={item.id}
+                        messageId={item.id}
+                        scrollAnchor={item.kind === "assistant"}
+                      >
+                        <TimelineRow item={item} />
+                      </MessageScrollerItem>
+                    )
+                  })}
                 </MessageGroup>
               )}
             </MessageScrollerContent>
@@ -297,26 +388,19 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
               <InputGroupAddon align="block-end" className="w-full px-3 pt-0 pb-2.5">
                 <div className="flex w-full items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2 overflow-x-auto">
-                <Select
-                  value={state?.model?.provider && state?.model?.id ? `${state.model.provider}:${state.model.id}` : null}
-                  onValueChange={(value) => {
-                    const [provider, modelId] = String(value).split(":")
-                    if (provider && modelId) void client.sessionPost(sessionId, "model", { provider, modelId }).then(() => void stateQuery.refetch()).catch((error: unknown) => setDeliveryNotice(error instanceof Error ? error.message : "Could not change model"))
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-w-40 max-w-56 rounded-xl border-border/70 bg-muted/70 text-foreground shadow-none hover:bg-muted"
+                  onClick={() => {
+                    setSelectedProvider(state?.model?.provider)
+                    setModelPickerOpen(true)
                   }}
                 >
-                  <SelectTrigger size="sm" className="min-w-40 max-w-56 rounded-xl border-border/70 bg-muted/70 text-foreground shadow-none hover:bg-muted">
-                    <Sparkles className="size-3.5 text-primary" />
-                    <SelectValue placeholder="Choose model" />
-                  </SelectTrigger>
-                  <SelectContent align="start">
-                    {groupModelsByProvider(models).map(([provider, providerModels]) => (
-                      <SelectGroup key={provider}>
-                        <SelectLabel className="font-semibold tracking-wide uppercase">{provider}</SelectLabel>
-                        {providerModels.map((model) => <SelectItem key={`${model.provider}:${model.id}`} value={`${model.provider}:${model.id}`}>{model.name || model.id}</SelectItem>)}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <Sparkles data-icon="inline-start" />
+                  <span className="truncate">{modelLabel}</span>
+                </Button>
                 <Select
                   value={state?.thinkingLevel ?? null}
                   onValueChange={(value) => void client.sessionPost(sessionId, "thinking-level", { level: String(value) }).then(() => void stateQuery.refetch()).catch((error: unknown) => setDeliveryNotice(error instanceof Error ? error.message : "Could not change thinking level"))}
@@ -328,7 +412,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   <SelectContent align="start">
                     <SelectGroup>
                       <SelectLabel>Thinking / effort</SelectLabel>
-                      {['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((level) => <SelectItem key={level} value={level}>{level}</SelectItem>)}
+                      {['off', 'low', 'medium', 'high'].map((level) => <SelectItem key={level} value={level}>{level}</SelectItem>)}
                     </SelectGroup>
                   </SelectContent>
                 </Select>
@@ -426,13 +510,6 @@ function ChatTurn({ item }: { item: TextItem }) {
   )
 }
 
-const toolIcons: Record<string, React.ComponentType<{ className?: string }>> = {
-  terminal: Terminal,
-  code: Code,
-  search: Search,
-  folder: Folder,
-}
-
 function DeferredMarkdown({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(text.length <= LARGE_RENDER_THRESHOLD)
   if (text.length > MARKDOWN_HARD_CAP) {
@@ -492,25 +569,16 @@ function MarkdownResponse({ children }: { children: string }) {
 }
 
 function ToolTurn({ item }: { item: ToolItem }) {
-  const { label, icon } = toolDisplayName(item.name)
-  const IconComponent = toolIcons[icon] ?? Terminal
+  const { label } = toolDisplayName(item.name)
+  const command = toolCommand(item.args)
+  const argumentPreview = formatToolArguments(item.args)
+  const argumentDetails = formatToolArgumentDetails(item.args, command ? ["command", "cmd"] : [])
   const summary = extractToolSummary(item.name, item.args, item.output)
+  const collapsedDetail = command ? formatInlineCommand(command) : argumentPreview || summary
   const duration = toolDuration(item.startedAt, item.endedAt)
   const isRunning = !item.done
   const isFailed = item.failed === true
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle")
-
-  const statusColor = isFailed
-    ? "border-l-red-500"
-    : isRunning
-      ? "border-l-blue-500"
-      : "border-l-emerald-500"
-
-  const statusBg = isFailed
-    ? "bg-red-500/5"
-    : isRunning
-      ? "bg-blue-500/5"
-      : ""
 
   const copyOutput = () => {
     if (!item.output) return
@@ -523,66 +591,109 @@ function ToolTurn({ item }: { item: ToolItem }) {
   return (
     <Collapsible className="w-full">
       <CollapsibleTrigger className="group/tool w-full text-left">
-        <div className={`flex items-center gap-2 rounded-lg border-l-[3px] px-3 py-2 text-xs transition-colors hover:bg-muted/40 ${statusColor} ${statusBg}`}>
-          {isRunning ? (
-            <span className="relative flex size-4 shrink-0 items-center justify-center">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-blue-400 opacity-40" />
-              <IconComponent className="relative size-3.5 text-blue-500" />
-            </span>
-          ) : (
-            <IconComponent className={`size-3.5 shrink-0 ${isFailed ? "text-red-500" : "text-emerald-500"}`} />
+        <div className="flex h-9 items-center gap-3 border-b border-border/50 px-2 font-mono text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+          <Terminal className="size-4 shrink-0" aria-hidden="true" />
+          <span className="shrink-0 text-sm font-semibold text-foreground">{label}</span>
+          {collapsedDetail && (
+            <span className="min-w-0 flex-1 truncate">{collapsedDetail}</span>
           )}
-          <span className="min-w-0 flex-1 truncate">
-            <span className="font-medium text-foreground/90">{label}</span>
-            {summary && (
-              <span className="ml-1.5 text-muted-foreground">{summary}</span>
+          <span className="flex shrink-0 items-center gap-3">
+            {(duration != null || (isRunning && item.startedAt)) && (
+              <span className="flex items-center gap-1 tabular-nums">
+                <Clock3 className="size-3" aria-hidden="true" />
+                {isRunning && item.startedAt ? <RunningTimer startedAt={item.startedAt} /> : formatDuration(duration!)}
+              </span>
             )}
+            {isRunning ? (
+              <LoaderCircle className="size-4 animate-spin" aria-label="Running" />
+            ) : isFailed ? (
+              <CircleX className="size-4 text-destructive" aria-label="Failed" />
+            ) : (
+              <CircleCheck className="size-4" aria-label="Completed" />
+            )}
+            <ChevronRight className="size-3.5 transition-transform group-data-[state=open]/tool:rotate-90" aria-hidden="true" />
           </span>
-          {duration != null && !isRunning && (
-            <span className="shrink-0 tabular-nums text-muted-foreground">
-              {formatDuration(duration)}
-            </span>
-          )}
-          {isRunning && item.startedAt && (
-            <RunningTimer startedAt={item.startedAt} />
-          )}
-          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/60 transition-transform group-data-[state=open]/tool:rotate-90" />
         </div>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="mx-3 mt-1 rounded-lg border border-border/60 bg-muted/20">
+        <div className="mt-2 rounded-xl border border-border/60 px-4 py-3 font-mono text-xs">
+          {command && (
+            <section>
+              <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Command</p>
+              <pre className="max-h-40 overflow-auto leading-5 whitespace-pre-wrap text-foreground/80">{command}</pre>
+            </section>
+          )}
+          {command && (argumentDetails || item.output) && <Separator className="my-3" />}
+          {argumentDetails && (
+            <section>
+              <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Arguments</p>
+              <pre className="max-h-40 overflow-auto leading-5 whitespace-pre-wrap text-foreground/80">{argumentDetails}</pre>
+            </section>
+          )}
+          {argumentDetails && item.output && <Separator className="my-3" />}
           {item.output ? (
-            <>
-              <div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
-                <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                  {isFailed ? "Error output" : "Output"}
-                </span>
-                <button
-                  type="button"
-                  onClick={copyOutput}
-                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                >
-                  {copyState === "copied" ? <><CopyCheck className="size-3" /> Copied</> : <><Copy className="size-3" /> Copy</>}
-                </button>
+            <section>
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{isFailed ? "Error output" : "Output"}</p>
+                <Button type="button" variant="ghost" size="xs" onClick={copyOutput}>
+                  {copyState === "copied" ? <><CopyCheck data-icon="inline-start" />Copied</> : <><Copy data-icon="inline-start" />Copy</>}
+                </Button>
               </div>
-              <pre className="max-h-64 overflow-auto p-3 font-mono text-xs leading-5 whitespace-pre-wrap text-foreground/80">
+              <pre className="max-h-64 overflow-auto leading-5 whitespace-pre-wrap text-foreground/80">
                 {item.output.slice(0, LARGE_TOOL_OUTPUT_THRESHOLD)}
               </pre>
               {item.output.length > LARGE_TOOL_OUTPUT_THRESHOLD && (
-                <p className="border-t border-border/40 px-3 py-1.5 text-[10px] text-muted-foreground">
-                  Output truncated — {Math.ceil(item.output.length / 1024)} KB total
-                </p>
+                <p className="mt-2 text-[10px] text-muted-foreground">Output truncated — {Math.ceil(item.output.length / 1024)} KB total</p>
               )}
-            </>
-          ) : (
-            <p className="px-3 py-3 text-xs text-muted-foreground">
-              {isRunning ? "Waiting for output…" : "No output"}
-            </p>
+            </section>
+          ) : !argumentDetails && (
+            <p className="text-muted-foreground">{isRunning ? "Waiting for output…" : "No output"}</p>
           )}
         </div>
       </CollapsibleContent>
     </Collapsible>
   )
+}
+
+function formatToolArguments(args?: Record<string, unknown>): string {
+  if (!args) return ""
+  return Object.entries(args)
+    .filter(([, value]) => value !== undefined)
+    .slice(0, 3)
+    .map(([key, value]) => `${key}=${formatToolArgumentValue(value)}`)
+    .join("  ")
+}
+
+function formatToolArgumentDetails(args?: Record<string, unknown>, omitKeys: string[] = []): string {
+  if (!args) return ""
+  return Object.entries(args)
+    .filter(([key, value]) => value !== undefined && !omitKeys.includes(key))
+    .map(([key, value]) => `${key}=${formatToolArgumentDetailValue(value)}`)
+    .join("\n")
+}
+
+function toolCommand(args?: Record<string, unknown>): string | undefined {
+  const command = args?.command ?? args?.cmd
+  return typeof command === "string" && command.trim() ? command : undefined
+}
+
+function formatInlineCommand(command: string): string {
+  const singleLine = command.replace(/\s+/g, " ").trim()
+  return singleLine.length > 96 ? `${singleLine.slice(0, 93)}…` : singleLine
+}
+
+function formatToolArgumentDetailValue(value: unknown): string {
+  if (typeof value === "string") return JSON.stringify(value)
+  return JSON.stringify(value) ?? String(value)
+}
+
+function formatToolArgumentValue(value: unknown): string {
+  if (typeof value === "string") {
+    const abbreviated = value.replace(/\s+/g, " ").trim()
+    return JSON.stringify(abbreviated.length > 64 ? `${abbreviated.slice(0, 61)}…` : abbreviated)
+  }
+  const serialized = JSON.stringify(value)
+  return serialized && serialized.length > 64 ? `${serialized.slice(0, 61)}…` : serialized ?? String(value)
 }
 
 /** Live elapsed timer for running tools. Updates every second. */
@@ -598,7 +709,7 @@ function RunningTimer({ startedAt }: { startedAt: string | number }) {
   }, [startMs])
 
   return (
-    <span className="shrink-0 tabular-nums text-blue-500">
+    <span className="tabular-nums">
       {formatDuration(elapsed)}
     </span>
   )

@@ -330,7 +330,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   <SelectContent align="start">
                     <SelectGroup>
                       <SelectLabel>Thinking / effort</SelectLabel>
-                      {['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((level) => <SelectItem key={level} value={level}>{level}</SelectItem>)}
+                      {['off', 'low', 'medium', 'high'].map((level) => <SelectItem key={level} value={level}>{level}</SelectItem>)}
                     </SelectGroup>
                   </SelectContent>
                 </Select>

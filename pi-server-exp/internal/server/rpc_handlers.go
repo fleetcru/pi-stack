@@ -49,6 +49,20 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "commandId": command.ID, "delivery": "queued"})
 			return
 		}
+		if action == "model" || action == "thinking-level" {
+			command, _, err := commandFromBody(action, r)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			transport := relayTransport{id: id, external: s.external}
+			if err := transport.Send(command); err != nil {
+				writeError(w, http.StatusBadGateway, err)
+				return
+			}
+			writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "delivery": "queued"})
+			return
+		}
 		writeErrorText(w, http.StatusBadRequest, "external session control not supported")
 		return
 	}

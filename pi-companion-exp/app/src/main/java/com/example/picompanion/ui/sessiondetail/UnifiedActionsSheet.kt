@@ -223,12 +223,7 @@ private fun ModelTab(
   HorizontalDivider(color = SheetLine)
   SectionLabel("THINKING / EFFORT")
   Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-    listOf("off", "low", "medium").forEach { level ->
-      FilterChip(selected = controls.thinkingLevel == level, onClick = { onSelectThinking(level) }, label = { Text(level) })
-    }
-  }
-  Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-    listOf("high", "xhigh", "max").forEach { level ->
+    listOf("off", "low", "medium", "high").forEach { level ->
       FilterChip(selected = controls.thinkingLevel == level, onClick = { onSelectThinking(level) }, label = { Text(level) })
     }
   }
