@@ -102,7 +102,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		go func() {
 			for _, spec := range s.sessions.ListSpecs() {
 				if spec.ManagedSessionDir != "" && spec.Transport == "rpc" {
-					if err := bridge.LinkManagedSession(spec.ID, spec.ManagedSessionDir); err != nil {
+					if err := bridge.LinkManagedSession(spec.ID, spec.ManagedSessionDir, spec.CWD); err != nil {
 						logger.Debug("failed to re-link managed session", "id", spec.ID, "error", err)
 					}
 				}

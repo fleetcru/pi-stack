@@ -41,7 +41,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := NewPiProcess(spec, s.cfg, s.logger)
-	p.onMessageEnd = func() { s.invalidateHistoryCache(spec.ID) }
+	p.onMessageEnd = func() {
+		s.invalidateHistoryCache(spec.ID)
+		s.linkManagedSession(spec)
+	}
 	// AddIfCapacity atomically checks the session limit and adds under one
 	// lock, eliminating the TOCTOU race between ActiveCount() and Add().
 	maxSessions := 0
@@ -61,14 +64,9 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Bridge managed session to Pi's native session store so pi -r can discover it.
-	if s.sessionBridge != nil && spec.ManagedSessionDir != "" {
-		go func() {
-			if err := s.sessionBridge.LinkManagedSession(spec.ID, spec.ManagedSessionDir); err != nil {
-				s.logger.Warn("failed to bridge session to pi -r", "session", spec.ID, "error", err)
-			}
-		}()
-	}
+	// Link immediately, then the message-end callback refreshes the link once
+	// Pi creates its first JSONL file.
+	go s.linkManagedSession(spec)
 	writeJSON(w, http.StatusCreated, map[string]any{"id": spec.ID, "cwd": spec.CWD, "args": spec.Args, "managed": true, "status": "running", "ws": "/v1/sessions/" + spec.ID + "/ws"})
 }
 
@@ -110,7 +108,7 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// Remove session bridge symlink from Pi's native session store.
 	if s.sessionBridge != nil {
-		s.sessionBridge.UnlinkManagedSession(id)
+		s.sessionBridge.UnlinkManagedSession(id, spec.CWD)
 	}
 	if err := s.removeManagedSessionDir(spec.ManagedSessionDir); err != nil {
 		// The daemon record is already gone. Keep deletion successful while
@@ -118,6 +116,15 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("failed to remove managed Pi session directory", "session", id, "error", err)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
+}
+
+func (s *Server) linkManagedSession(spec SessionSpec) {
+	if s.sessionBridge == nil || spec.ManagedSessionDir == "" {
+		return
+	}
+	if err := s.sessionBridge.LinkManagedSession(spec.ID, spec.ManagedSessionDir, spec.CWD); err != nil {
+		s.logger.Warn("failed to bridge session to pi -r", "session", spec.ID, "error", err)
+	}
 }
 
 func (s *Server) removeManagedSessionDir(dir string) error {
@@ -181,7 +188,10 @@ func (s *Server) getSession(id string) (*PiProcess, bool) {
 		return nil, false
 	}
 	p := NewPiProcess(spec, s.cfg, s.logger)
-	p.onMessageEnd = func() { s.invalidateHistoryCache(id) }
+	p.onMessageEnd = func() {
+		s.invalidateHistoryCache(id)
+		s.linkManagedSession(spec)
+	}
 	registered, isNew := s.sessions.AttachIfAbsent(p)
 	if !isNew {
 		// Another goroutine registered a process between our Get miss and
