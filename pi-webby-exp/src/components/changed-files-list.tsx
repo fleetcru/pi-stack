@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { useSessionGitFileDiff } from "@/api/hooks"
 import { ChevronDown, FilePlus2, FileText, FileX2 } from "lucide-react"
 import type { GitFileChange } from "@pi-stack/webby-shared/api/client"
 
@@ -7,7 +8,7 @@ const statusMeta: Record<string, { label: string; className: string; icon: typeo
   D: { label: "Deleted", className: "border-red-500/30 bg-red-500/10 text-red-400", icon: FileX2 },
 }
 
-export function ChangedFilesList({ changes }: { changes: GitFileChange[] }) {
+export function ChangedFilesList({ changes, sessionId }: { changes: GitFileChange[]; sessionId: string }) {
   const [expanded, setExpanded] = useState<string | undefined>()
   if (changes.length === 0) return null
   return (
@@ -30,11 +31,40 @@ export function ChangedFilesList({ changes }: { changes: GitFileChange[] }) {
                 {change.deletions > 0 && <span className="font-mono text-red-400">-{change.deletions}</span>}
                 <ChevronDown className={`size-3.5 text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`} />
               </button>
-              {isExpanded && <div className="border-t border-border/40 bg-muted/20 px-10 py-2 text-[11px] text-muted-foreground">{meta.label} · {change.additions} additions · {change.deletions} deletions</div>}
+              {isExpanded && <FileDiffRow sessionId={sessionId} path={change.path} additions={change.additions} deletions={change.deletions} />}
             </div>
           )
         })}
       </div>
     </section>
   )
+}
+
+function FileDiffRow({ sessionId, path, additions, deletions }: { sessionId: string; path: string; additions: number; deletions: number }) {
+  const diffQuery = useSessionGitFileDiff(sessionId, path)
+  if (diffQuery.isLoading) return <div className="border-t border-border/40 bg-muted/20 px-10 py-3 text-[11px] text-muted-foreground">Loading diff…</div>
+  if (diffQuery.isError) return <div className="border-t border-border/40 bg-muted/20 px-10 py-3 text-[11px] text-destructive">Could not load diff.</div>
+  const lines = parseDiff(diffQuery.data?.diff ?? "")
+  return (
+    <div className="border-t border-border/40 bg-[#0d1117] px-2 py-2">
+      <div className="mb-2 flex items-center justify-between px-2 text-[10px] text-muted-foreground">
+        <span>{additions} additions · {deletions} deletions</span>
+        <span className="font-mono">{path}</span>
+      </div>
+      <div className="max-h-72 overflow-auto rounded border border-white/10 font-mono text-[11px] leading-5">
+        {lines.length === 0 ? <div className="px-3 py-2 text-muted-foreground">No textual diff available.</div> : lines.map((line, index) => (
+          <div key={`${index}-${line.text}`} className={`whitespace-pre px-3 ${line.kind === "add" ? "bg-emerald-500/15 text-emerald-200" : line.kind === "remove" ? "bg-red-500/15 text-red-200" : line.kind === "meta" ? "text-sky-300" : "text-slate-300"}`}>
+            {line.text || " "}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function parseDiff(diff: string): Array<{ text: string; kind: "add" | "remove" | "meta" | "context" }> {
+  return diff.split("\n").filter((line) => line.length > 0).map((text) => ({
+    text,
+    kind: text.startsWith("+++") || text.startsWith("---") || text.startsWith("@@") || text.startsWith("diff ") || text.startsWith("new file") ? "meta" : text.startsWith("+") ? "add" : text.startsWith("-") ? "remove" : "context",
+  }))
 }

@@ -165,13 +165,24 @@ export function buildHistory(
   return (data?.messages ?? []).flatMap(
     (message, index): TimelineItem[] => {
       const role = String(message.role ?? "")
+      const assistantToolCalls = role === "assistant" ? extractToolCalls(message.content) : []
       if (role === "assistant") rememberToolCalls(message.content, toolCalls)
       const timestamp = message.timestamp ?? index
       if (role === "user" || role === "assistant") {
         const text = contentText(message.content)
-        return text
+        const items: TimelineItem[] = text
           ? [{ id: `${role}-${String(timestamp)}`, kind: role, text }]
           : []
+        if (role === "assistant") {
+          items.push(...assistantToolCalls.map((call) => ({
+            id: `tool-${call.id}`,
+            kind: "tool" as const,
+            name: call.name,
+            args: call.args,
+            done: false,
+          })))
+        }
+        return items
       }
       if (role === "toolResult") {
         const toolCallId = String(message.toolCallId ?? "")
@@ -203,21 +214,30 @@ export function buildHistory(
   )
 }
 
+type HistoryToolCall = { id: string; name: string; args?: Record<string, unknown> }
+
+function extractToolCalls(content: unknown): HistoryToolCall[] {
+  if (!Array.isArray(content)) return []
+  return content.flatMap((part): HistoryToolCall[] => {
+    if (typeof part !== "object" || part === null) return []
+    const toolCall = part as { type?: unknown; id?: unknown; name?: unknown; arguments?: unknown }
+    if (toolCall.type !== "toolCall" || typeof toolCall.id !== "string") return []
+    return [{
+      id: toolCall.id,
+      name: typeof toolCall.name === "string" ? toolCall.name : "tool",
+      args: typeof toolCall.arguments === "object" && toolCall.arguments !== null
+        ? toolCall.arguments as Record<string, unknown>
+        : undefined,
+    }]
+  })
+}
+
 function rememberToolCalls(
   content: unknown,
   toolCalls: Map<string, { name?: string; args?: Record<string, unknown> }>
 ) {
-  if (!Array.isArray(content)) return
-  for (const part of content) {
-    if (typeof part !== "object" || part === null) continue
-    const toolCall = part as { type?: unknown; id?: unknown; name?: unknown; arguments?: unknown }
-    if (toolCall.type !== "toolCall" || typeof toolCall.id !== "string") continue
-    toolCalls.set(toolCall.id, {
-      name: typeof toolCall.name === "string" ? toolCall.name : undefined,
-      args: typeof toolCall.arguments === "object" && toolCall.arguments !== null
-        ? toolCall.arguments as Record<string, unknown>
-        : undefined,
-    })
+  for (const toolCall of extractToolCalls(content)) {
+    toolCalls.set(toolCall.id, { name: toolCall.name, args: toolCall.args })
   }
 }
 

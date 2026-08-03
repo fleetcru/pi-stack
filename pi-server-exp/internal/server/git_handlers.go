@@ -103,6 +103,8 @@ func (s *Server) gitHandler(w http.ResponseWriter, r *http.Request) {
 		s.writeGitText(w, r, spec.CWD, "status", "--short", "--branch")
 	case "diff":
 		s.writeGitText(w, r, spec.CWD, "diff", "--no-ext-diff")
+	case "file-diff":
+		s.gitFileDiff(w, r, spec.CWD)
 	case "log":
 		s.writeGitText(w, r, spec.CWD, "log", "--oneline", "-n", "20")
 	case "head":
@@ -145,6 +147,66 @@ func writeGitError(w http.ResponseWriter, err error) {
 
 func errorsIsNotRepo(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "not a git repository")
+}
+
+func (s *Server) gitFileDiff(w http.ResponseWriter, r *http.Request, cwd string) {
+	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	if path == "" || filepath.IsAbs(path) || path == "." || strings.HasPrefix(path, "../") || strings.Contains(path, "\\..\\") {
+		writeErrorText(w, http.StatusBadRequest, "path must be a relative file path")
+		return
+	}
+	candidate := filepath.Join(cwd, filepath.FromSlash(path))
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		resolved = candidate
+	}
+	rootOutput, err := s.runGit(r.Context(), cwd, "rev-parse", "--show-toplevel")
+	if err != nil {
+		writeGitError(w, err)
+		return
+	}
+	root, err := filepath.Abs(strings.TrimSpace(rootOutput))
+	if err != nil {
+		writeGitError(w, err)
+		return
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		writeErrorText(w, http.StatusBadRequest, "path must be inside the session repository")
+		return
+	}
+	// Git commands run with cwd as their working directory, so the path
+	// argument must be relative to cwd rather than the repository root.
+	gitPath, err := filepath.Rel(cwd, resolved)
+	if err != nil || gitPath == ".." || strings.HasPrefix(gitPath, ".."+string(filepath.Separator)) || filepath.IsAbs(gitPath) {
+		writeErrorText(w, http.StatusBadRequest, "path must be inside the session directory")
+		return
+	}
+	gitPath = filepath.ToSlash(gitPath)
+	diff, diffErr := s.runGit(r.Context(), cwd, "diff", "HEAD", "--no-ext-diff", "--", gitPath)
+	isUntracked := false
+	if diffErr == nil && diff == "" {
+		statusOutput, statusErr := s.runGit(r.Context(), cwd, "status", "--porcelain=v1", "--", gitPath)
+		isUntracked = statusErr == nil && strings.HasPrefix(strings.TrimSpace(statusOutput), "??")
+	}
+	if diffErr != nil || isUntracked {
+		// Untracked files are not included in git diff. Render them as an
+		// addition-only patch so the client can use one diff renderer.
+		data, readErr := os.ReadFile(candidate)
+		if readErr != nil {
+			writeGitError(w, diffErr)
+			return
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "diff --git a/%s b/%s\nnew file\n--- /dev/null\n+++ b/%s\n", filepath.ToSlash(rel), filepath.ToSlash(rel), filepath.ToSlash(rel))
+		for _, line := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
+			b.WriteByte('+')
+			b.WriteString(line)
+			b.WriteByte('\n')
+		}
+		diff = b.String()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"path": filepath.ToSlash(rel), "diff": diff})
 }
 
 func (s *Server) gitStatus(ctx context.Context, cwd string) (GitStatus, error) {

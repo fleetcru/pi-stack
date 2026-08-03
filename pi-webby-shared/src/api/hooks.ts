@@ -14,6 +14,7 @@ import {
   type CreateSessionRequest,
   type GitBranchesResponse,
   type GitStatusResponse,
+  type GitFileDiffResponse,
   type GitWorktreesResponse,
   type PromptRequest,
   type RpcCommand,
@@ -195,6 +196,16 @@ export function useSessionGitStatus(sessionId: string | undefined) {
     queryFn: () => client.getSessionGitStatus(sessionId!),
     enabled: Boolean(sessionId),
     refetchInterval: 5_000,
+  })
+}
+
+export function useSessionGitFileDiff(sessionId: string | undefined, path: string, enabled = true) {
+  const client = usePiServerClient()
+  return useQuery<GitFileDiffResponse>({
+    queryKey: [...piQueryKeys.git(client.baseUrl, sessionId ?? "none", "file-diff"), path],
+    queryFn: () => client.getSessionGitFileDiff(sessionId!, path),
+    enabled: Boolean(sessionId) && Boolean(path) && enabled,
+    staleTime: 5_000,
   })
 }
 

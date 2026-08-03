@@ -78,6 +78,11 @@ export interface GitResponse {
   output: string
 }
 
+export interface GitFileDiffResponse {
+  path: string
+  diff: string
+}
+
 export interface GitFileChange {
   path: string
   status: string
@@ -322,6 +327,11 @@ export class PiServerClient {
 
   getSessionGitStatus(id: string): Promise<GitStatusResponse> {
     return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/status?format=json`)
+  }
+
+  getSessionGitFileDiff(id: string, path: string): Promise<GitFileDiffResponse> {
+    const query = new URLSearchParams({ path })
+    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/file-diff?${query}`)
   }
 
   getSessionGitBranches(id: string): Promise<GitBranchesResponse> {

@@ -72,7 +72,9 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const imageInputRef = useRef<HTMLInputElement>(null)
   const { images: pendingImages, error: imageError, ...imageActions } = useImageAttachments(imageInputRef)
   const client = usePiServerClient()
-  const socket = useActiveSessionSocket(sessionId)
+  // Subscribe to filesystem watcher events so file changes are rendered in
+  // the chat timeline as well as in the changed-files summary.
+  const socket = useActiveSessionSocket(sessionId, true)
   const historyQuery = useSessionHistory(sessionId)
   const gitStatusQuery = useSessionGitStatus(sessionId)
   const modelsQuery = useSessionData(sessionId, "models")
@@ -328,7 +330,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                       </MessageScrollerItem>
                     )
                   })}
-                  {gitStatusQuery.data?.status.changes?.length ? <ChangedFilesList changes={gitStatusQuery.data.status.changes} /> : null}
+                  {gitStatusQuery.data?.status.changes?.length ? <ChangedFilesList sessionId={sessionId} changes={gitStatusQuery.data.status.changes} /> : null}
                 </MessageGroup>
               )}
             </MessageScrollerContent>

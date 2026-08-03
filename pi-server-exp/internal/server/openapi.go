@@ -81,6 +81,7 @@ func schemas() map[string]any {
 		"ExtensionUIResponse":   obj(map[string]any{"id": str(), "value": map[string]any{}, "confirmed": schemaBool(), "cancelled": schemaBool()}, "id"),
 		"SessionMetadataUpdate": obj(map[string]any{"project": str(), "title": str(), "taskType": str(), "owner": str(), "labels": arr(str()), "metadata": map[string]any{"type": "object", "additionalProperties": str()}}),
 		"GitFileChange":         obj(map[string]any{"path": str(), "status": str(), "additions": map[string]string{"type": "integer"}, "deletions": map[string]string{"type": "integer"}}, "path", "status"),
+		"GitFileDiff":           obj(map[string]any{"path": str(), "diff": str()}, "path", "diff"),
 		"GitStatus":             obj(map[string]any{"branch": str(), "ahead": map[string]string{"type": "integer"}, "behind": map[string]string{"type": "integer"}, "staged": arr(str()), "modified": arr(str()), "untracked": arr(str()), "conflicts": arr(str()), "changes": arr(ref("GitFileChange"))}),
 		"GitBranch":             obj(map[string]any{"name": str(), "current": schemaBool(), "remote": str()}, "name", "current"),
 		"GitWorktree":           obj(map[string]any{"path": str(), "head": str(), "branch": str(), "detached": schemaBool()}, "path", "head", "detached"),
