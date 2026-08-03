@@ -37,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -52,10 +53,44 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+
+@Composable
+fun ChangedFilesCard(changes: List<GitFileChange>, modifier: Modifier = Modifier) {
+  if (changes.isEmpty()) return
+  Surface(
+    modifier = modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(10.dp),
+    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+    tonalElevation = 1.dp,
+  ) {
+    Column {
+      Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text("Changed files", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+        Text("${changes.size} ${if (changes.size == 1) "file" else "files"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+      HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+      changes.forEach { change ->
+        val status = change.status.firstOrNull() ?: 'M'
+        val statusColor = when (status) {
+          'A' -> Color(0xFF4ADE80)
+          'D' -> MaterialTheme.colorScheme.error
+          else -> Color(0xFFFBBF24)
+        }
+        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          Text(status.toString(), color = statusColor, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(16.dp))
+          Text(change.path, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall)
+          if (change.additions > 0) Text("+${change.additions}", color = Color(0xFF4ADE80), style = MaterialTheme.typography.labelSmall)
+          if (change.deletions > 0) Text("-${change.deletions}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+        }
+      }
+    }
+  }
+}
 
 /**
  * Redesigned tool event row with:

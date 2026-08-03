@@ -78,6 +78,13 @@ export interface GitResponse {
   output: string
 }
 
+export interface GitFileChange {
+  path: string
+  status: string
+  additions: number
+  deletions: number
+}
+
 export interface GitStatusResponse {
   cwd: string
   status: {
@@ -88,6 +95,7 @@ export interface GitStatusResponse {
     modified: string[]
     untracked: string[]
     conflicts: string[]
+    changes: GitFileChange[]
   }
 }
 

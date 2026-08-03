@@ -93,6 +93,7 @@ fun SessionDetailScreen(
   val relayHealth by viewModel.relayHealth.collectAsStateWithLifecycle()
   val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
   val gitOutput by viewModel.gitOutput.collectAsStateWithLifecycle()
+  val gitChanges by viewModel.gitChanges.collectAsStateWithLifecycle()
   val hasOlderHistory by viewModel.hasOlderHistory.collectAsStateWithLifecycle()
   val loadingOlderHistory by viewModel.loadingOlderHistory.collectAsStateWithLifecycle()
   var extensionValue by remember { mutableStateOf("") }
@@ -289,6 +290,11 @@ fun SessionDetailScreen(
             is SessionTimelineItem.Tool -> ToolEventRow(item)
             is SessionTimelineItem.FileChange -> FileChangeRow(item)
             is SessionTimelineItem.System -> SystemMessageRow(item)
+          }
+        }
+        if (gitChanges.isNotEmpty()) {
+          item(key = "changed-files") {
+            ChangedFilesCard(gitChanges)
           }
         }
         } // end else (items not empty)

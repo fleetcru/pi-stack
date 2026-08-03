@@ -79,6 +79,8 @@ class SessionDetailViewModel(
   val extensionRequest: StateFlow<ExtensionUiRequest?> = _extensionRequest.asStateFlow()
   private val _gitOutput = MutableStateFlow<Pair<String, String>?>(null)
   val gitOutput: StateFlow<Pair<String, String>?> = _gitOutput.asStateFlow()
+  private val _gitChanges = MutableStateFlow<List<GitFileChange>>(emptyList())
+  val gitChanges: StateFlow<List<GitFileChange>> = _gitChanges.asStateFlow()
 
   private val _sessionCwd = MutableStateFlow("")
   val sessionCwd: StateFlow<String> = _sessionCwd.asStateFlow()
@@ -214,6 +216,7 @@ class SessionDetailViewModel(
 
       activeServer = server
       loadMetadata()
+      loadGitChanges()
       loadModelControls()
       relayHealthJob = launch {
         // Poll once to check if this is an external (relay) session. If not,
@@ -1063,6 +1066,27 @@ class SessionDetailViewModel(
     }
   }
 
+  private suspend fun loadGitChanges() {
+    val server = activeServer ?: return
+    when (val result = withContext(Dispatchers.IO) { client.getSessionGit(server, sessionId, "status?format=json") }) {
+      is com.example.picompanion.data.api.HttpResult.Success -> {
+        val status = result.value["status"]?.jsonObject
+        _gitChanges.value = status?.get("changes")?.let { element ->
+          (element as? kotlinx.serialization.json.JsonArray)?.mapNotNull { item ->
+            val obj = item as? JsonObject ?: return@mapNotNull null
+            GitFileChange(
+              path = obj["path"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null,
+              status = obj["status"]?.jsonPrimitive?.contentOrNull ?: "M",
+              additions = obj["additions"]?.jsonPrimitive?.intOrNull ?: 0,
+              deletions = obj["deletions"]?.jsonPrimitive?.intOrNull ?: 0,
+            )
+          } ?: emptyList()
+        } ?: emptyList()
+      }
+      is com.example.picompanion.data.api.HttpResult.Failure -> Unit
+    }
+  }
+
   fun showGit(resource: String) {
     val server = activeServer ?: return
     viewModelScope.launch {
@@ -1176,6 +1200,13 @@ sealed interface SendState {
   data object Running : SendState
   data class Failed(val message: String) : SendState
 }
+
+data class GitFileChange(
+  val path: String,
+  val status: String,
+  val additions: Int,
+  val deletions: Int,
+)
 
 sealed interface SessionTimelineItem {
   val order: Long

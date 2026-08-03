@@ -10,6 +10,7 @@ import {
   usePiServerClient,
   useSessionData,
   useSessionHistory,
+  useSessionGitStatus,
 } from "@/api/hooks"
 import {
   type TimelineItem,
@@ -52,6 +53,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message"
+import { ChangedFilesList } from "@/components/changed-files-list"
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -72,6 +74,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const client = usePiServerClient()
   const socket = useActiveSessionSocket(sessionId)
   const historyQuery = useSessionHistory(sessionId)
+  const gitStatusQuery = useSessionGitStatus(sessionId)
   const modelsQuery = useSessionData(sessionId, "models")
   const stateQuery = useSessionData(sessionId, "state", {
     // Poll only when the WebSocket is not open — the stream provides live state.
@@ -236,6 +239,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                       <TimelineRow item={item} />
                     </MessageScrollerItem>
                   ))}
+                  {gitStatusQuery.data?.status.changes?.length ? <ChangedFilesList changes={gitStatusQuery.data.status.changes} /> : null}
                 </MessageGroup>
               )}
             </MessageScrollerContent>

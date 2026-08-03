@@ -13,14 +13,22 @@ import (
 	"strings"
 )
 
+type GitFileChange struct {
+	Path      string `json:"path"`
+	Status    string `json:"status"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+}
+
 type GitStatus struct {
-	Branch    string   `json:"branch"`
-	Ahead     int      `json:"ahead"`
-	Behind    int      `json:"behind"`
-	Staged    []string `json:"staged"`
-	Modified  []string `json:"modified"`
-	Untracked []string `json:"untracked"`
-	Conflicts []string `json:"conflicts"`
+	Branch    string          `json:"branch"`
+	Ahead     int             `json:"ahead"`
+	Behind    int             `json:"behind"`
+	Staged    []string        `json:"staged"`
+	Modified  []string        `json:"modified"`
+	Untracked []string        `json:"untracked"`
+	Conflicts []string        `json:"conflicts"`
+	Changes   []GitFileChange `json:"changes"`
 }
 
 type GitBranch struct {
@@ -144,7 +152,8 @@ func (s *Server) gitStatus(ctx context.Context, cwd string) (GitStatus, error) {
 	if err != nil {
 		return GitStatus{}, err
 	}
-	status := GitStatus{Staged: []string{}, Modified: []string{}, Untracked: []string{}, Conflicts: []string{}}
+	status := GitStatus{Staged: []string{}, Modified: []string{}, Untracked: []string{}, Conflicts: []string{}, Changes: []GitFileChange{}}
+	changeIndex := make(map[string]int)
 	for _, line := range strings.Split(output, "\n") {
 		if line == "" {
 			continue
@@ -180,17 +189,60 @@ func (s *Server) gitStatus(ctx context.Context, cwd string) (GitStatus, error) {
 		x, y := line[0], line[1]
 		if x == '?' && y == '?' {
 			status.Untracked = append(status.Untracked, path)
+			changeIndex[path] = len(status.Changes)
+			change := GitFileChange{Path: path, Status: "A"}
+			if data, readErr := os.ReadFile(filepath.Join(cwd, filepath.FromSlash(path))); readErr == nil && len(data) > 0 {
+				text := string(data)
+				change.Additions = strings.Count(text, "\n")
+				if !strings.HasSuffix(text, "\n") {
+					change.Additions++
+				}
+			}
+			status.Changes = append(status.Changes, change)
 			continue
 		}
 		if x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D') {
 			status.Conflicts = append(status.Conflicts, path)
-			continue
 		}
+		changeIndex[path] = len(status.Changes)
+		changeStatus := string(y)
+		if changeStatus == " " {
+			changeStatus = string(x)
+		}
+		if changeStatus == "" || changeStatus == " " {
+			changeStatus = "M"
+		}
+		status.Changes = append(status.Changes, GitFileChange{Path: path, Status: changeStatus})
 		if x != ' ' {
 			status.Staged = append(status.Staged, path)
 		}
 		if y != ' ' {
 			status.Modified = append(status.Modified, path)
+		}
+	}
+	for _, args := range [][]string{{"diff", "--numstat"}, {"diff", "--cached", "--numstat"}} {
+		numstat, err := s.runGit(ctx, cwd, args...)
+		if err != nil {
+			return GitStatus{}, err
+		}
+		for _, line := range strings.Split(numstat, "\n") {
+			parts := strings.SplitN(line, "\t", 3)
+			if len(parts) != 3 {
+				continue
+			}
+			path := parts[2]
+			idx, ok := changeIndex[path]
+			if !ok {
+				continue
+			}
+			if parts[0] != "-" {
+				additions, _ := strconv.Atoi(parts[0])
+				status.Changes[idx].Additions += additions
+			}
+			if parts[1] != "-" {
+				deletions, _ := strconv.Atoi(parts[1])
+				status.Changes[idx].Deletions += deletions
+			}
 		}
 	}
 	return status, nil
