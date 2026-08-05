@@ -370,12 +370,13 @@ class SessionDetailViewModel(
               // First pass: parse all entries. tool_result entries carry the
               // output of a tool_use, so we collect them separately and merge
               // into the matching tool_use in a second pass.
-              data class RawToolUse(val callId: String, val name: String, val args: String?)
               val toolResults = mutableMapOf<String, String>() // callId → output text
               val parsed = messages.mapNotNull { element ->
                 val message = element as? JsonObject ?: return@mapNotNull null
                 val role = message.getString("role") ?: return@mapNotNull null
                 val historyType = message.getString("_historyType")
+
+                // Handle tool_use entries (standalone format)
                 if (historyType == "tool_use") {
                   val name = message.getString("name") ?: "tool"
                   val id = message.getString("id") ?: "tool-${System.nanoTime()}"
@@ -387,8 +388,6 @@ class SessionDetailViewModel(
                   )
                 }
                 if (historyType == "tool_result") {
-                  // Collect tool_result output keyed by tool_use_id so we can
-                  // attach it to the matching Tool item below.
                   val toolUseId = message.getString("tool_use_id") ?: message.getString("id")
                   if (toolUseId != null) {
                     val output = message.findText() ?: message["content"]?.findText()
@@ -396,7 +395,45 @@ class SessionDetailViewModel(
                   }
                   return@mapNotNull null
                 }
+
+                // Handle tool role entries (some servers emit role="tool")
+                if (role == "tool") {
+                  val toolUseId = message.getString("tool_use_id") ?: message.getString("id")
+                  if (toolUseId != null) {
+                    val output = message.findText() ?: message["content"]?.findText()
+                    if (output != null) toolResults[toolUseId] = output
+                  }
+                  return@mapNotNull null
+                }
+
                 if (role != "user" && role != "assistant") return@mapNotNull null
+
+                // Check if the message content contains tool_use blocks
+                // (Anthropic/OpenAI format: content is an array with type:"tool_use")
+                val content = message["content"]
+                if (content is JsonArray) {
+                  val toolItems = content.mapNotNull { block ->
+                    val obj = block as? JsonObject ?: return@mapNotNull null
+                    val blockType = obj.getString("type")
+                    if (blockType == "tool_use") {
+                      val name = obj.getString("name") ?: "tool"
+                      val id = obj.getString("id") ?: "tool-${System.nanoTime()}"
+                      val args = obj["input"]?.toString()
+                      toolResults[id] = "" // placeholder for output
+                      SessionTimelineItem.Tool(
+                        callId = id,
+                        name = name,
+                        status = "completed",
+                        args = args,
+                      )
+                    } else null
+                  }
+                  if (toolItems.isNotEmpty()) {
+                    // Return tool items — they'll be added to the timeline
+                    return@mapNotNull toolItems.firstOrNull()
+                  }
+                }
+
                 val text = message.findText()?.trim()?.takeIf { it.isNotEmpty() }
                   ?: return@mapNotNull null
                 SessionTimelineItem.Chat(

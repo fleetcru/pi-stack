@@ -287,7 +287,7 @@ fun SessionDetailScreen(
         if (items.isEmpty() && !hasOlderHistory && historyLoadError == null) {
           item {
             ChatEmptyState(
-              isLoading = loadingOlderHistory,
+              isLoading = loadingOlderHistory || connectionState == ConnectionState.Connecting,
               modifier = Modifier.padding(top = 80.dp),
             )
           }
