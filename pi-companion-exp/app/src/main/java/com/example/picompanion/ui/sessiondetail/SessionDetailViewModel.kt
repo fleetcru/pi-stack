@@ -223,20 +223,29 @@ class SessionDetailViewModel(
     assistantFlushJob?.cancel()
     assistantFlushJob = null
     // Flush any remaining assistant deltas from a previous interrupted
-    // response (e.g. connection dropped mid-stream) so the partial text
-    // is preserved in the timeline instead of being silently discarded.
+    // response so the partial text is preserved in the timeline.
     synchronized(pendingAssistantDeltas) {
-      if (pendingAssistantDeltas.isNotEmpty() && assistantTextOpen) {
-        val remaining = pendingAssistantDeltas.toString()
-        pendingAssistantDeltas.clear()
-        // Append directly — bypass appendItem dedup since this is a
-        // continuation of an existing bubble that may not be findable
-        // by order anymore.
-        val bubble = SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
-        val stamped = withOrder(bubble) as SessionTimelineItem.Chat
-        _items.update { it + stamped }
-      } else {
-        pendingAssistantDeltas.clear()
+      val remaining = pendingAssistantDeltas.toString()
+      pendingAssistantDeltas.clear()
+      if (remaining.isNotEmpty() && assistantTextOpen) {
+        // Append to the existing assistant bubble instead of creating a new one.
+        _items.update { current ->
+          val index = current.indexOfLast {
+            it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
+          }
+          if (index >= 0) {
+            val existing = current.getOrNull(index) as? SessionTimelineItem.Chat
+            if (existing != null) {
+              current.toMutableList().also {
+                it[index] = existing.copy(text = existing.text + remaining)
+              }
+            } else {
+              current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
+            }
+          } else {
+            current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
+          }
+        }
       }
     }
     toolFlushJob?.cancel()

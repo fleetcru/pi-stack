@@ -80,9 +80,11 @@ fun ChatBubble(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
         modifier = Modifier.fillMaxWidth(),
       ) {
-        ProvideTextStyle(MaterialTheme.typography.bodyMedium) {
-          MarkdownRichText(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) { Markdown(text) }
-        }
+        Text(
+          text = text,
+          style = MaterialTheme.typography.bodyMedium,
+          modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+        )
       }
       if (displayTime != null) Text(displayTime, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
     }
