@@ -504,44 +504,35 @@ class SessionDetailViewModel(
               // request from being overwritten by the history snapshot. HTTP
               // history and WS replay use different timestamp formats, so data
               // class equality is not sufficient for cross-source deduplication.
-              _items.update { current ->
-                val merged = LinkedHashMap<String, SessionTimelineItem>()
-                historicalItems.forEach { merged[timelineItemId(it)] = it }
-                // Keep local image URIs when the server history only returns the
-                // text portion of a multimodal user message.
-                current.filter {
-                  it is SessionTimelineItem.Chat && it.time == "now" && it.imageUris.isNotEmpty()
-                }.forEach { merged[timelineItemId(it)] = it }
-                // Keep live items that aren't in history, OR replace history
-                // items with richer live versions (e.g. a Tool item from the
-                // live stream has running status + partial output that the
-                // history version lacks).
-                current.filter { item ->
-                  val isOptimisticImage = item is SessionTimelineItem.Chat &&
-                    item.time == "now" && item.imageUris.isNotEmpty()
-                  if (isOptimisticImage) return@filter false
-                  when (item) {
-                    is SessionTimelineItem.Chat -> true
-                    is SessionTimelineItem.Tool -> true
-                    is SessionTimelineItem.System -> true
-                    is SessionTimelineItem.FileChange -> true
-                  }
-                }.forEach { item ->
-                  val id = timelineItemId(item)
-                  val existing = merged[id]
-                  // Always keep live Tool items — they have richer data
-                  // (running status, partial output) than history versions.
-                  if (item is SessionTimelineItem.Tool || existing == null) {
-                    merged[id] = item
-                  }
+              // Build merged list OUTSIDE _items.update to avoid withOrder()
+              // being called on CAS retries (which would create different
+              // order values and cause LazyColumn key instability).
+              val currentItems = _items.value
+              val merged = LinkedHashMap<String, SessionTimelineItem>()
+              historicalItems.forEach { merged[timelineItemId(it)] = it }
+              currentItems.filter {
+                it is SessionTimelineItem.Chat && it.time == "now" && it.imageUris.isNotEmpty()
+              }.forEach { merged[timelineItemId(it)] = it }
+              currentItems.filter { item ->
+                val isOptimisticImage = item is SessionTimelineItem.Chat &&
+                  item.time == "now" && item.imageUris.isNotEmpty()
+                if (isOptimisticImage) return@filter false
+                when (item) {
+                  is SessionTimelineItem.Chat -> true
+                  is SessionTimelineItem.Tool -> true
+                  is SessionTimelineItem.System -> true
+                  is SessionTimelineItem.FileChange -> true
                 }
-                // LinkedHashMap preserves insertion order (chronological from parser).
-                // Stamp items with order=0 (from history) so Compose keys are unique,
-                // but do NOT re-sort — the insertion order IS the correct order.
-                merged.values.map { item ->
-                  if (item.order == 0L) withOrder(item) else item
+              }.forEach { item ->
+                val id = timelineItemId(item)
+                val existing = merged[id]
+                if (item is SessionTimelineItem.Tool || existing == null) {
+                  merged[id] = item
                 }
               }
+              // LinkedHashMap preserves chronological insertion order.
+              // Assign fresh sequential order values for stable Compose keys.
+              _items.value = merged.values.map { withOrder(it) }
               // Log AFTER the update to confirm items were set
             }
           }
