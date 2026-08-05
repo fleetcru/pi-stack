@@ -46,6 +46,7 @@ HTTP/WebSocket daemon — the hub of the stack.
 | Security / CORS | `internal/server/security.go`, `http_util.go` |
 | Config | `internal/server/config.go` |
 | OpenAPI | `internal/server/openapi.go` |
+| Session history | `internal/server/session_history.go` |
 | Extensions | `extensions/external-session-bridge.ts`, `extensions/session-title.ts` |
 
 ```bash
@@ -92,7 +93,8 @@ Android client for pi-server.
 | Area | Files |
 |---|---|
 | HTTP client | `app/src/main/java/.../data/api/PiServerClient.kt` |
-| WebSocket | `app/src/main/java/.../data/websocket/SessionEventSocket.kt` |
+| WebSocket / SSE | `app/src/main/java/.../data/websocket/SessionEventSocket.kt` |
+| Event dedup | `app/src/main/java/.../data/websocket/EventSequenceTracker.kt` |
 | Models | `app/src/main/java/.../data/model/` |
 | Repositories | `app/src/main/java/.../data/repository/` |
 | Settings | `app/src/main/java/.../data/settings/` |
@@ -106,6 +108,7 @@ Android client for pi-server.
 cd pi-companion-exp
 ./gradlew :app:compileDebugKotlin
 ./gradlew :app:testDebugUnitTest
+./gradlew :app:assembleDebug
 ```
 
 ### pi-desktop (Tauri)
@@ -120,6 +123,128 @@ pnpm install
 pnpm dev
 pnpm build
 ```
+
+## Pi Event Formats (Critical Knowledge)
+
+**Read this before modifying any event handling code.**
+
+### JSONL History Format (from `~/.pi/agent/sessions/*.jsonl`)
+
+Pi stores conversation history in JSONL files. Each line is a JSON object with a `type` field:
+
+| `type` | Description |
+|---|---|
+| `session` | Session metadata (version, id, cwd) |
+| `model_change` | Model switch (provider, modelId) |
+| `thinking_level_change` | Thinking level change |
+| `message` | User/assistant/toolResult message |
+
+#### Message format
+
+```json
+{
+  "type": "message",
+  "id": "abc123",
+  "parentId": "parent_id",
+  "timestamp": "ISO8601",
+  "message": {
+    "role": "user" | "assistant" | "toolResult",
+    "content": [...]
+  }
+}
+```
+
+#### Tool calls (inside assistant `content` array)
+
+**Pi uses OpenAI format, NOT Anthropic format:**
+
+```json
+{
+  "role": "assistant",
+  "content": [
+    {"type": "text", "text": "Let me check that."},
+    {"type": "toolCall", "id": "call_abc123", "name": "bash", "arguments": {"command": "ls"}}
+  ]
+}
+```
+
+| Field | Pi format | Anthropic format | Note |
+|---|---|---|---|
+| Content block type | `toolCall` | `tool_use` | Different string! |
+| Arguments field | `arguments` | `input` | Different field name! |
+| Content block id | `id` | `id` | Same |
+
+#### Tool results (separate message entry)
+
+```json
+{
+  "role": "toolResult",
+  "toolCallId": "call_abc123",
+  "toolName": "bash",
+  "content": [{"type": "text", "text": "file1.txt\nfile2.txt"}]
+}
+```
+
+| Field | Pi format | Anthropic format |
+|---|---|---|
+| Role | `toolResult` | `tool` |
+| ID field | `toolCallId` | `tool_use_id` |
+
+#### Parser requirements (companion app)
+
+The `loadHistory` parser in `SessionDetailViewModel.kt` must handle **all** of these:
+- `role: "toolResult"` entries → collect output keyed by `toolCallId`
+- `role: "tool"` entries → collect output keyed by `tool_use_id`
+- `content` arrays with `type: "toolCall"` blocks → extract tool items
+- `content` arrays with `type: "tool_use"` blocks → extract tool items (fallback)
+- `_historyType: "tool_use"` entries → standalone tool format
+- `_historyType: "tool_result"` entries → standalone result format
+
+### Live Streaming Events (WebSocket/SSE)
+
+These events flow over WebSocket or SSE during active sessions:
+
+| Event type | Direction | Description |
+|---|---|---|
+| `message_start` | Server→Client | Assistant or user message begins |
+| `message_update` | Server→Client | `text_delta`, `text_start`, `text_end` |
+| `message_end` | Server→Client | Message complete |
+| `tool_execution_start` | Server→Client | Tool begins (has `toolName`, `toolCallId`) |
+| `tool_execution_update` | Server→Client | Tool progress (`partialResult`) |
+| `tool_execution_end` | Server→Client | Tool complete (`result`, `isError`) |
+| `agent_start` | Server→Client | Agent turn begins |
+| `agent_end` / `agent_settled` | Server→Client | Agent turn complete |
+| `runtime_state` | Server→Client | State: `working`, `idle`, `starting`, etc. |
+| `bridge_receipt` | Server→Client | Command acknowledged |
+| `response` | Server→Client | Prompt accepted/rejected |
+| `file_change` | Server→Client | File modified |
+| `events_lost` | Server→Client | Gap in event sequence |
+
+### Event Flow: Server → Client
+
+```
+Pi process (stdout JSONL)
+  → rpc.go dispatch() (monotonic event ID, ring buffer)
+  → ws_handler.go (WebSocket) OR sse_handler.go (SSE)
+  → Client: EventSequenceTracker (dedup by 10K window)
+  → Client: SessionDetailViewModel.handleEvent()
+  → Client: _items StateFlow → Compose LazyColumn
+```
+
+### Event Flow: Client → Server
+
+```
+Companion/Webby
+  → POST /v1/sessions/{id}/prompt (REST)
+  → Server: PiProcess.Request() or Send()
+  → Pi process (stdin JSONL)
+```
+
+### WebSocket vs SSE
+
+- **WebSocket** (`/v1/sessions/{id}/ws?ticket=...`): Bidirectional, ticket auth, used by Webby and as fallback
+- **SSE** (`/v1/sessions/{id}/events/stream?since=N`): Read-only, auto-reconnect via Last-Event-ID, used by Companion
+- **Both coexist** — clients choose their transport. Server supports both.
 
 ## Key Design Decisions
 
@@ -152,6 +277,26 @@ External Pi TUI sessions bridge into pi-server via the `external-session-bridge.
 - **Webby:** `seenEventIds` Map with 10K eldest-eviction. Generation guard after reconnect.
 - **Companion:** `LinkedHashMap` with 2K eldest-eviction + generation counter for stale callback prevention.
 
+### Companion Event Pipeline
+
+```
+OkHttp callback / SSE EventSource
+  → Channel<SocketEvent>(2000) — bounded buffer
+  → EventSequenceTracker.process() — dedup + gap detection
+  → ViewModel socket.events.collect
+  → handleEvent() — type-specific processing
+  → appendItem() / appendAssistantDelta() / updateTool()
+  → _items StateFlow → Compose LazyColumn
+```
+
+Key invariants:
+- `_items.update` must be atomic (CAS via MutableStateFlow)
+- `assistantMutex` serializes assistant bubble state transitions
+- `historyGeneration` (volatile) prevents stale HTTP history overwrites items
+- `toolExecutionActive` flag prevents runtime_state(idle) from resetting spinner during tool use
+- `turnCompleteGeneration` prevents stale runtime_state from re-enabling spinner after turn completes
+- LazyColumn keys must be unique — `itemKeys` uses seen-set with index fallback
+
 ## Scripts
 
 | Script | Purpose |
@@ -174,7 +319,7 @@ External Pi TUI sessions bridge into pi-server via the `external-session-bridge.
 | `PI_SERVER_ALLOWED_ROOTS` | `.` | Restrict session CWDs |
 | `PI_SERVER_ALLOWED_ORIGINS` | _(none)_ | CORS origins (comma-separated) |
 | `PI_SERVER_MAX_SESSIONS` | `8` | Max concurrent sessions (0 = unlimited) |
-| `PI_SERVER_ALLOW_INSECURE` | _(empty)_ | `1` to allow non-loopback without auth (install scripts use `--insecure` / `-AllowInsecure` flag) |
+| `PI_SERVER_ALLOW_INSECURE` | _(empty)_ | `1` to allow non-loopback without auth |
 | `PI_SERVER_PI_BINARY` | `pi` | Path to Pi CLI |
 | `PI_SERVER_PI_EXTENSIONS` | _(none)_ | Extensions to load |
 
@@ -198,3 +343,8 @@ cd pi-companion-exp && ./gradlew :app:testDebugUnitTest
 3. **Don't use `!!` on nullable DataStore preferences** — crashes on first launch. Use `!= true` instead.
 4. **Don't create PiProcess without checking for existing** — use `AttachIfAbsent` to prevent orphaned processes.
 5. **Don't forget `response.use {}` in OkHttp** — unclosed responses leak connections.
+6. **Don't use `tool_use` / `input` in history parsers** — Pi uses `toolCall` / `arguments` (OpenAI format).
+7. **Don't skip `toolResult` role in history parsing** — Pi stores tool results as `role: "toolResult"`, not `role: "tool"`.
+8. **Don't use `!!` in Compose functions** — causes ClassCastException during recomposition race. Use `?: ""` or `?.let`.
+9. **Don't create new list instances in `_items.update` CAS lambdas** — causes recomposition storms. Reuse existing item references.
+10. **Windows: Child processes need `CREATE_NO_WINDOW`** — set `SysProcAttr{HideWindow: true}` before `cmd.Start()` to prevent CMD popups.
