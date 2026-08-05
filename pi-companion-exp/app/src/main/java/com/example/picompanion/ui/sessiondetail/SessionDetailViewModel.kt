@@ -56,14 +56,6 @@ class SessionDetailViewModel(
   private val _items = MutableStateFlow<List<SessionTimelineItem>>(emptyList())
   val items: StateFlow<List<SessionTimelineItem>> = _items.asStateFlow()
 
-  // Debug log visible in the UI — shows history parsing info
-  private val _debugLog = MutableStateFlow<List<String>>(emptyList())
-  val debugLog: StateFlow<List<String>> = _debugLog.asStateFlow()
-  private fun debugLog(msg: String) {
-    android.util.Log.d("SessionWS", msg)
-    _debugLog.value = (_debugLog.value + msg).takeLast(30)
-  }
-
   private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Connecting)
   val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
@@ -379,7 +371,6 @@ class SessionDetailViewModel(
               // output of a tool_use, so we collect them separately and merge
               // into the matching tool_use in a second pass.
               val toolResults = mutableMapOf<String, String>() // callId → output text
-              debugLog("History: ${messages.size} messages received")
               // Show first 3 messages with their roles and content types
               messages.take(3).forEachIndexed { i, el ->
                 val obj = el as? JsonObject
@@ -391,23 +382,24 @@ class SessionDetailViewModel(
                   is kotlinx.serialization.json.JsonPrimitive -> "string(${content.content.take(50)})"
                   else -> content?.javaClass?.simpleName ?: "null"
                 }
-                debugLog("  msg[$i] role=$role content=$contentType")
               }
-              val parsed = messages.mapNotNull { element ->
-                val message = element as? JsonObject ?: return@mapNotNull null
-                val role = message.getString("role") ?: return@mapNotNull null
+              val parsed = mutableListOf<SessionTimelineItem>()
+              for (element in messages) {
+                val message = element as? JsonObject ?: continue
+                val role = message.getString("role") ?: continue
                 val historyType = message.getString("_historyType")
 
                 // Handle tool_use entries (standalone format)
                 if (historyType == "tool_use") {
                   val name = message.getString("name") ?: "tool"
                   val id = message.getString("id") ?: "tool-${System.nanoTime()}"
-                  return@mapNotNull SessionTimelineItem.Tool(
+                  parsed.add(SessionTimelineItem.Tool(
                     callId = id,
                     name = name,
                     status = "completed",
                     args = message["input"]?.toString(),
-                  )
+                  ))
+                  continue
                 }
                 if (historyType == "tool_result") {
                   val toolUseId = message.getString("tool_use_id") ?: message.getString("id")
@@ -415,7 +407,7 @@ class SessionDetailViewModel(
                     val output = message.findText() ?: message["content"]?.findText()
                     if (output != null) toolResults[toolUseId] = output
                   }
-                  return@mapNotNull null
+                  continue
                 }
 
                 // Handle tool role entries (some servers emit role="tool")
@@ -425,7 +417,7 @@ class SessionDetailViewModel(
                     val output = message.findText() ?: message["content"]?.findText()
                     if (output != null) toolResults[toolUseId] = output
                   }
-                  return@mapNotNull null
+                  continue
                 }
                 // Handle toolResult role (Pi/OpenAI format)
                 if (role == "toolResult") {
@@ -434,10 +426,10 @@ class SessionDetailViewModel(
                     val output = message.findText() ?: message["content"]?.findText()
                     if (output != null) toolResults[toolUseId] = output
                   }
-                  return@mapNotNull null
+                  continue
                 }
 
-                if (role != "user" && role != "assistant") return@mapNotNull null
+                if (role != "user" && role != "assistant") continue
 
                 // Check if the message content contains tool call blocks.
                 // Pi/OpenAI uses type:"toolCall", Anthropic uses type:"tool_use".
@@ -448,36 +440,34 @@ class SessionDetailViewModel(
                     t == "toolCall" || t == "tool_use"
                   }
                   if (toolBlocks.isNotEmpty()) {
-                    val toolItems = toolBlocks.map { block ->
+                    toolBlocks.forEach { block ->
                       val name = block.getString("name") ?: "tool"
                       val id = block.getString("id") ?: "tool-${System.nanoTime()}"
                       // Pi/OpenAI uses "arguments", Anthropic uses "input"
                       val args = block["arguments"]?.toString() ?: block["input"]?.toString()
                       toolResults[id] = toolResults[id] ?: ""
-                      SessionTimelineItem.Tool(
+                      parsed.add(SessionTimelineItem.Tool(
                         callId = id,
                         name = name,
                         status = "completed",
                         args = args,
-                      )
+                      ))
                     }
-                    return@mapNotNull toolItems.first()
                   }
                 }
 
                 val text = message.findText()?.trim()?.takeIf { it.isNotEmpty() }
-                  ?: return@mapNotNull null
-                SessionTimelineItem.Chat(
-                  author = if (role == "user") "You" else "Pi Agent",
-                  text = text,
-                  time = message.getString("timestamp").orEmpty(),
-                  isUser = role == "user",
-                )
-              }
+                if (text != null) {
+                  parsed.add(SessionTimelineItem.Chat(
+                    author = if (role == "user") "You" else "Pi Agent",
+                    text = text,
+                    time = message.getString("timestamp").orEmpty(),
+                    isUser = role == "user",
+                  ))
+                }
+              } // end for loop
               // Second pass: merge tool_result output into matching tool_use items.
-              val chatCount = parsed.count { it is SessionTimelineItem.Chat }
               val toolCount = parsed.count { it is SessionTimelineItem.Tool }
-              debugLog("Parsed: $chatCount chats, $toolCount tools, ${toolResults.size} tool results")
               val history = parsed.map { item ->
                 if (item is SessionTimelineItem.Tool && item.callId in toolResults) {
                   item.copy(output = toolResults[item.callId])
@@ -485,8 +475,6 @@ class SessionDetailViewModel(
                   item
                 }
               }.distinctBy { timelineItemId(it) }
-              val histToolCount = history.count { it is SessionTimelineItem.Tool }
-              debugLog("After dedup: ${history.size} items, $histToolCount tools")
               val historyMeta = data["history"]?.jsonObject
               _hasOlderHistory.value = historyMeta?.get("hasOlder")
                 ?.jsonPrimitive?.booleanOrNull == true
@@ -505,8 +493,6 @@ class SessionDetailViewModel(
               _items.update { current ->
                 val merged = LinkedHashMap<String, SessionTimelineItem>()
                 historicalItems.forEach { merged[timelineItemId(it)] = it }
-                val mergedToolCount = merged.values.count { it is SessionTimelineItem.Tool }
-                debugLog("Merged: ${merged.size} items, $mergedToolCount tools, items.size=${current.size}")
                 // Keep local image URIs when the server history only returns the
                 // text portion of a multimodal user message.
                 current.filter {
@@ -542,9 +528,6 @@ class SessionDetailViewModel(
                 }.sortedBy { it.order }
               }
               // Log AFTER the update to confirm items were set
-              val finalItems = _items.value
-              val finalToolCount = finalItems.count { it is SessionTimelineItem.Tool }
-              debugLog("Final _items: ${finalItems.size} items, $finalToolCount tools")
             }
           }
           is com.example.picompanion.data.api.HttpResult.Failure -> {
