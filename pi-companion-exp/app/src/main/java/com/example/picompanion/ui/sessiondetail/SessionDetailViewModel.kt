@@ -371,6 +371,12 @@ class SessionDetailViewModel(
               // output of a tool_use, so we collect them separately and merge
               // into the matching tool_use in a second pass.
               val toolResults = mutableMapOf<String, String>() // callId → output text
+              if (BuildConfig.DEBUG) {
+                android.util.Log.d("SessionWS", "History: ${messages.size} messages received")
+                messages.take(5).forEachIndexed { i, el ->
+                  android.util.Log.d("SessionWS", "  msg[$i]: ${el.toString().take(200)}")
+                }
+              }
               val parsed = messages.mapNotNull { element ->
                 val message = element as? JsonObject ?: return@mapNotNull null
                 val role = message.getString("role") ?: return@mapNotNull null
