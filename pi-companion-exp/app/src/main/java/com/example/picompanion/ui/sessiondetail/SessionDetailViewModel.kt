@@ -398,7 +398,16 @@ class SessionDetailViewModel(
 
                 // Handle tool role entries (some servers emit role="tool")
                 if (role == "tool") {
-                  val toolUseId = message.getString("tool_use_id") ?: message.getString("id")
+                  val toolUseId = message.getString("tool_use_id") ?: message.getString("toolCallId") ?: message.getString("id")
+                  if (toolUseId != null) {
+                    val output = message.findText() ?: message["content"]?.findText()
+                    if (output != null) toolResults[toolUseId] = output
+                  }
+                  return@mapNotNull null
+                }
+                // Handle toolResult role (Pi/OpenAI format)
+                if (role == "toolResult") {
+                  val toolUseId = message.getString("toolCallId") ?: message.getString("tool_use_id") ?: message.getString("id")
                   if (toolUseId != null) {
                     val output = message.findText() ?: message["content"]?.findText()
                     if (output != null) toolResults[toolUseId] = output
@@ -408,33 +417,21 @@ class SessionDetailViewModel(
 
                 if (role != "user" && role != "assistant") return@mapNotNull null
 
-                // Check if the message content contains tool_use blocks
-                // (Anthropic/OpenAI format: content is an array with type:"tool_use")
+                // Check if the message content contains tool call blocks.
+                // Pi/OpenAI uses type:"toolCall", Anthropic uses type:"tool_use".
                 val content = message["content"]
                 if (content is JsonArray) {
-                  // Extract tool_use blocks AND collect their outputs
                   val toolBlocks = content.filterIsInstance<JsonObject>().filter {
-                    it.getString("type") == "tool_use"
-                  }
-                  // Also collect tool_result blocks in the same content array
-                  content.filterIsInstance<JsonObject>().filter {
-                    it.getString("type") == "tool_result"
-                  }.forEach { block ->
-                    val toolUseId = block.getString("tool_use_id") ?: block.getString("id")
-                    if (toolUseId != null) {
-                      val output = block.findText() ?: block["content"]?.findText()
-                      if (output != null) toolResults[toolUseId] = output
-                    }
+                    val t = it.getString("type")
+                    t == "toolCall" || t == "tool_use"
                   }
                   if (toolBlocks.isNotEmpty()) {
-                    // Return first tool item — the rest are handled by the
-                    // second pass which merges toolResults into tool items.
-                    // Also return the assistant text alongside.
                     val toolItems = toolBlocks.map { block ->
                       val name = block.getString("name") ?: "tool"
                       val id = block.getString("id") ?: "tool-${System.nanoTime()}"
-                      val args = block["input"]?.toString()
-                      toolResults[id] = toolResults[id] ?: "" // placeholder
+                      // Pi/OpenAI uses "arguments", Anthropic uses "input"
+                      val args = block["arguments"]?.toString() ?: block["input"]?.toString()
+                      toolResults[id] = toolResults[id] ?: ""
                       SessionTimelineItem.Tool(
                         callId = id,
                         name = name,
@@ -442,8 +439,6 @@ class SessionDetailViewModel(
                         args = args,
                       )
                     }
-                    // Return the first tool item; the second pass will
-                    // add output from tool_result blocks.
                     return@mapNotNull toolItems.first()
                   }
                 }
