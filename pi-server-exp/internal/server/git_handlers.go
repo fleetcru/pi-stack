@@ -638,6 +638,7 @@ func (s *Server) runGit(parent context.Context, cwd string, args ...string) (str
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = cwd
+	applyProcessAttrs(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		message := strings.TrimSpace(string(out))

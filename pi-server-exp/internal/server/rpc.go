@@ -107,6 +107,7 @@ func (p *PiProcess) Start(_ context.Context) error {
 	if err != nil {
 		return err
 	}
+	applyProcessAttrs(cmd)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
