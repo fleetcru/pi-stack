@@ -106,6 +106,16 @@ fun SessionDetailScreen(
     is SessionTimelineItem.Tool -> (lastItem.output?.length ?: 0) + lastItem.status.hashCode()
     else -> items.size
   }
+  // Scroll to bottom when history first loads (items go from empty to populated).
+  var hasScrolledToBottom by remember { mutableStateOf(false) }
+  LaunchedEffect(items.size) {
+    if (items.isNotEmpty() && !hasScrolledToBottom) {
+      hasScrolledToBottom = true
+      delay(100) // let LazyColumn measure
+      listState.scrollToItem(items.lastIndex)
+    }
+  }
+  // Follow streaming replies when already near the bottom.
   LaunchedEffect(items.size, streamVersion) {
     delay(80)
     if (items.isNotEmpty()) {

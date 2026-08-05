@@ -412,25 +412,39 @@ class SessionDetailViewModel(
                 // (Anthropic/OpenAI format: content is an array with type:"tool_use")
                 val content = message["content"]
                 if (content is JsonArray) {
-                  val toolItems = content.mapNotNull { block ->
-                    val obj = block as? JsonObject ?: return@mapNotNull null
-                    val blockType = obj.getString("type")
-                    if (blockType == "tool_use") {
-                      val name = obj.getString("name") ?: "tool"
-                      val id = obj.getString("id") ?: "tool-${System.nanoTime()}"
-                      val args = obj["input"]?.toString()
-                      toolResults[id] = "" // placeholder for output
+                  // Extract tool_use blocks AND collect their outputs
+                  val toolBlocks = content.filterIsInstance<JsonObject>().filter {
+                    it.getString("type") == "tool_use"
+                  }
+                  // Also collect tool_result blocks in the same content array
+                  content.filterIsInstance<JsonObject>().filter {
+                    it.getString("type") == "tool_result"
+                  }.forEach { block ->
+                    val toolUseId = block.getString("tool_use_id") ?: block.getString("id")
+                    if (toolUseId != null) {
+                      val output = block.findText() ?: block["content"]?.findText()
+                      if (output != null) toolResults[toolUseId] = output
+                    }
+                  }
+                  if (toolBlocks.isNotEmpty()) {
+                    // Return first tool item — the rest are handled by the
+                    // second pass which merges toolResults into tool items.
+                    // Also return the assistant text alongside.
+                    val toolItems = toolBlocks.map { block ->
+                      val name = block.getString("name") ?: "tool"
+                      val id = block.getString("id") ?: "tool-${System.nanoTime()}"
+                      val args = block["input"]?.toString()
+                      toolResults[id] = toolResults[id] ?: "" // placeholder
                       SessionTimelineItem.Tool(
                         callId = id,
                         name = name,
                         status = "completed",
                         args = args,
                       )
-                    } else null
-                  }
-                  if (toolItems.isNotEmpty()) {
-                    // Return tool items — they'll be added to the timeline
-                    return@mapNotNull toolItems.firstOrNull()
+                    }
+                    // Return the first tool item; the second pass will
+                    // add output from tool_result blocks.
+                    return@mapNotNull toolItems.first()
                   }
                 }
 
