@@ -75,6 +75,15 @@ fun SessionDetailScreen(
   val sendState by viewModel.sendState.collectAsStateWithLifecycle()
   val agentWorking by viewModel.agentWorking.collectAsStateWithLifecycle()
   val listState = rememberLazyListState()
+  // Defer LazyColumn rendering until history settles to prevent
+  // the "flood of history" flash on initial load.
+  var itemsReady by remember { mutableStateOf(false) }
+  LaunchedEffect(items.size) {
+    if (items.isNotEmpty() && !itemsReady) {
+      delay(300) // let all batch updates settle
+      itemsReady = true
+    }
+  }
   var actionsOpen by rememberSaveable { mutableStateOf(false) }
   var actionsTab by rememberSaveable { mutableIntStateOf(0) }
   var filesOpen by rememberSaveable { mutableStateOf(false) }
@@ -291,10 +300,19 @@ fun SessionDetailScreen(
           }
         }
 
-        if (items.isEmpty() && !hasOlderHistory && historyLoadError == null) {
+        if (!itemsReady) {
+          item {
+            androidx.compose.foundation.layout.Box(
+              Modifier.fillMaxWidth().padding(top = 80.dp),
+              contentAlignment = Alignment.Center,
+            ) {
+              CircularProgressIndicator(modifier = Modifier.size(32.dp))
+            }
+          }
+        } else if (items.isEmpty() && !hasOlderHistory && historyLoadError == null) {
           item {
             ChatEmptyState(
-              isLoading = loadingOlderHistory || connectionState == ConnectionState.Connecting,
+              isLoading = loadingOlderHistory,
               modifier = Modifier.padding(top = 80.dp),
             )
           }
