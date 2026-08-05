@@ -541,6 +541,10 @@ class SessionDetailViewModel(
                   if (item.order == 0L) withOrder(item) else item
                 }.sortedBy { it.order }
               }
+              // Log AFTER the update to confirm items were set
+              val finalItems = _items.value
+              val finalToolCount = finalItems.count { it is SessionTimelineItem.Tool }
+              debugLog("Final _items: ${finalItems.size} items, $finalToolCount tools")
             }
           }
           is com.example.picompanion.data.api.HttpResult.Failure -> {
