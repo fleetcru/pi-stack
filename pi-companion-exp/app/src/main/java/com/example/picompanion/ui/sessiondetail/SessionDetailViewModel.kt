@@ -457,10 +457,11 @@ class SessionDetailViewModel(
                     is SessionTimelineItem.FileChange -> true
                   }
                 }.forEach { merged[timelineItemId(it)] = it }
-                // Sort by insertion order so history and live items interleave
-                // correctly after reconnect. Items with order=0 (stamped before
-                // the order field existed) sort first.
-                merged.values.sortedBy { it.order }
+                // History items arrive with order=0 which causes duplicate Compose
+                // keys. Stamp them with monotonic order values.
+                merged.values.map { item ->
+                  if (item.order == 0L) withOrder(item) else item
+                }.sortedBy { it.order }
               }
             }
           }

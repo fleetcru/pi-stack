@@ -116,17 +116,21 @@ fun SessionDetailScreen(
     }
   }
 
-  // Stable keys derived from each item's monotonic order. order is unique
-  // and assigned at insertion time, so no HashMap or occurrence tracking is needed.
+  // Stable keys derived from each item's monotonic order.
   val itemKeys = remember(items) {
-    items.map { item ->
+    val seen = mutableSetOf<String>()
+    items.mapIndexed { index, item ->
       val prefix = when (item) {
         is SessionTimelineItem.Chat -> "chat"
         is SessionTimelineItem.Tool -> "tool"
         is SessionTimelineItem.FileChange -> "file"
         is SessionTimelineItem.System -> "system"
       }
-      "$prefix-${item.order}"
+      var key = "$prefix-${item.order}"
+      if (!seen.add(key)) {
+        key = "$prefix-${item.order}-$index"
+      }
+      key
     }
   }
 
