@@ -74,6 +74,7 @@ fun SessionDetailScreen(
   val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
   val sendState by viewModel.sendState.collectAsStateWithLifecycle()
   val agentWorking by viewModel.agentWorking.collectAsStateWithLifecycle()
+  val streamingOrder by viewModel.streamingAssistantOrder.collectAsStateWithLifecycle()
   val listState = rememberLazyListState()
   var actionsOpen by rememberSaveable { mutableStateOf(false) }
   var actionsTab by rememberSaveable { mutableIntStateOf(0) }
@@ -328,6 +329,7 @@ fun SessionDetailScreen(
               time = item.time,
               isUser = item.isUser,
               imageUris = item.imageUris,
+              streaming = !item.isUser && item.order == streamingOrder,
             )
             is SessionTimelineItem.Tool -> ToolEventRow(item)
             is SessionTimelineItem.FileChange -> FileChangeRow(item)

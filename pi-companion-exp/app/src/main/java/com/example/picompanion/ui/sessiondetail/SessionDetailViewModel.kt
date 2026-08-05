@@ -170,6 +170,10 @@ class SessionDetailViewModel(
   // Tracks the order value of the current assistant bubble so post-tool
   // deltas don't merge back into a pre-tool bubble.
   private var currentAssistantOrder: Long = 0
+  // Exposes the order of the currently-streaming assistant bubble to the UI
+  // so ChatBubble can use plain Text during streaming and Markdown after.
+  private val _streamingAssistantOrder = MutableStateFlow(0L)
+  val streamingAssistantOrder: StateFlow<Long> = _streamingAssistantOrder.asStateFlow()
   // All access to pendingAssistantDeltas is serialized by assistantMutex.
   private val pendingAssistantDeltas = StringBuilder()
   private var assistantFlushJob: Job? = null
@@ -254,6 +258,7 @@ class SessionDetailViewModel(
     assistantTextOpen = false
     receivedAssistantTextInMessage = false
     currentAssistantOrder = 0
+    _streamingAssistantOrder.value = 0
     // Reset agent state so the UI doesn't show a stuck spinner after reconnect.
     _agentWorking.value = false
     _sendState.value = SendState.Idle
@@ -627,6 +632,7 @@ class SessionDetailViewModel(
           _sendState.value = SendState.Running
           receivedAssistantTextInMessage = false
           assistantTextOpen = false
+          _streamingAssistantOrder.value = 0
           return
         }
         if (role == "user") {
@@ -707,6 +713,7 @@ class SessionDetailViewModel(
           }
           assistantTextOpen = false
           currentAssistantOrder = 0
+          _streamingAssistantOrder.value = 0
         }
         // Some providers do not emit text_delta. Show their final text once.
         // Guard: only fire if we genuinely received no text at all — not if
@@ -898,6 +905,7 @@ class SessionDetailViewModel(
           val newBubble = SessionTimelineItem.Chat("Pi Agent", buffered, "", false)
           val stamped = withOrder(newBubble) as SessionTimelineItem.Chat
           currentAssistantOrder = stamped.order
+          _streamingAssistantOrder.value = stamped.order
           assistantTextOpen = true
           appendItem(stamped)
         } else {
@@ -933,6 +941,7 @@ class SessionDetailViewModel(
     )
     val stamped = withOrder(bubble) as SessionTimelineItem.Chat
     currentAssistantOrder = stamped.order
+    _streamingAssistantOrder.value = 0
     assistantTextOpen = false
     appendItem(stamped)
   }
