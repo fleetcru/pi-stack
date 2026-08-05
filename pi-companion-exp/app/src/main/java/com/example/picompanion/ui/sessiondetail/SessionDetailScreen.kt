@@ -3,6 +3,7 @@ package com.example.picompanion.ui.sessiondetail
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -73,6 +74,7 @@ fun SessionDetailScreen(
   val connectionState by viewModel.connectionState.collectAsStateWithLifecycle()
   val sendState by viewModel.sendState.collectAsStateWithLifecycle()
   val agentWorking by viewModel.agentWorking.collectAsStateWithLifecycle()
+  val debugLog by viewModel.debugLog.collectAsStateWithLifecycle()
   val listState = rememberLazyListState()
   var actionsOpen by rememberSaveable { mutableStateOf(false) }
   var actionsTab by rememberSaveable { mutableIntStateOf(0) }
@@ -144,11 +146,32 @@ fun SessionDetailScreen(
     }
   }
 
+  var showDebug by remember { mutableStateOf(false) }
+
   Column(
     modifier
       .fillMaxSize()
       .imePadding(),
   ) {
+    // Debug log banner (tap header to toggle)
+    if (showDebug && debugLog.isNotEmpty()) {
+      androidx.compose.foundation.lazy.LazyColumn(
+        modifier = Modifier
+          .fillMaxWidth()
+          .heightIn(max = 120.dp)
+          .background(color = androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant)
+          .padding(8.dp),
+      ) {
+        items(debugLog.size) { i ->
+          Text(
+            text = debugLog[i],
+            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+      }
+    }
     // Header — simplified with fewer actions
     SessionHeader(
       sessionId = sessionId,
@@ -164,6 +187,7 @@ fun SessionDetailScreen(
       modelControls = modelControls,
       sharedTransitionScope = sharedTransitionScope,
       animatedVisibilityScope = animatedVisibilityScope,
+      onDebugToggle = { showDebug = !showDebug },
     )
 
     // Git output dialog

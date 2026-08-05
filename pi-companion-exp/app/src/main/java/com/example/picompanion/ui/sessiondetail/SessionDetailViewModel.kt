@@ -56,6 +56,14 @@ class SessionDetailViewModel(
   private val _items = MutableStateFlow<List<SessionTimelineItem>>(emptyList())
   val items: StateFlow<List<SessionTimelineItem>> = _items.asStateFlow()
 
+  // Debug log visible in the UI — shows history parsing info
+  private val _debugLog = MutableStateFlow<List<String>>(emptyList())
+  val debugLog: StateFlow<List<String>> = _debugLog.asStateFlow()
+  private fun debugLog(msg: String) {
+    android.util.Log.d("SessionWS", msg)
+    _debugLog.value = (_debugLog.value + msg).takeLast(30)
+  }
+
   private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Connecting)
   val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
 
@@ -371,11 +379,19 @@ class SessionDetailViewModel(
               // output of a tool_use, so we collect them separately and merge
               // into the matching tool_use in a second pass.
               val toolResults = mutableMapOf<String, String>() // callId → output text
-              if (BuildConfig.DEBUG) {
-                android.util.Log.d("SessionWS", "History: ${messages.size} messages received")
-                messages.take(5).forEachIndexed { i, el ->
-                  android.util.Log.d("SessionWS", "  msg[$i]: ${el.toString().take(200)}")
+              debugLog("History: ${messages.size} messages received")
+              // Show first 3 messages with their roles and content types
+              messages.take(3).forEachIndexed { i, el ->
+                val obj = el as? JsonObject
+                val msgObj = obj?.get("message") as? JsonObject
+                val role = msgObj?.get("role")?.toString()?.trim('"')
+                val content = msgObj?.get("content")
+                val contentType = when (content) {
+                  is kotlinx.serialization.json.JsonArray -> "array[${content.size}] types=${content.mapNotNull { (it as? JsonObject)?.get("type")?.toString()?.trim('"') }}"
+                  is kotlinx.serialization.json.JsonPrimitive -> "string(${content.content.take(50)})"
+                  else -> content?.javaClass?.simpleName ?: "null"
                 }
+                debugLog("  msg[$i] role=$role content=$contentType")
               }
               val parsed = messages.mapNotNull { element ->
                 val message = element as? JsonObject ?: return@mapNotNull null
@@ -459,6 +475,9 @@ class SessionDetailViewModel(
                 )
               }
               // Second pass: merge tool_result output into matching tool_use items.
+              val toolCount = parsed.count { it is SessionTimelineItem.Tool }
+              val chatCount = parsed.count { it is SessionTimelineItem.Chat }
+              debugLog("Parsed: $chatCount chats, $toolCount tools, ${toolResults.size} tool results")
               val history = parsed.map { item ->
                 if (item is SessionTimelineItem.Tool && item.callId in toolResults) {
                   item.copy(output = toolResults[item.callId])

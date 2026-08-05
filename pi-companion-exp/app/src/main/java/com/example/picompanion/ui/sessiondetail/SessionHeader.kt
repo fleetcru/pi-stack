@@ -3,6 +3,7 @@ package com.example.picompanion.ui.sessiondetail
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -51,6 +52,7 @@ fun SessionHeader(
   sharedTransitionScope: SharedTransitionScope,
   animatedVisibilityScope: AnimatedVisibilityScope,
   modifier: Modifier = Modifier,
+  onDebugToggle: (() -> Unit)? = null,
 ) {
   val headerShape = RoundedCornerShape(18.dp)
 
@@ -89,9 +91,14 @@ fun SessionHeader(
             text = "Session $sessionId",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
+            modifier = Modifier.weight(1f).then(
+              if (onDebugToggle != null) Modifier.combinedClickable(
+                onClick = {},
+                onLongClick = onDebugToggle,
+              ) else Modifier
+            ),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
           )
 
           ConnectionIndicator(connectionState)
