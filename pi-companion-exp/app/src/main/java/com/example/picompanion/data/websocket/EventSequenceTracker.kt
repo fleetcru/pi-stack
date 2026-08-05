@@ -45,6 +45,12 @@ internal class EventSequenceTracker {
       } else if (previous != null && eventId > previous + 1) {
         resynchronizing = true
         output += SocketEvent.EventsLost(previous, eventId)
+      } else if (previous != null && eventId < previous) {
+        // Server event ID went backward — likely a server restart with a
+        // fresh ID sequence. Reset the baseline so the new sequence is
+        // accepted and we don't permanently think events are lost.
+        lastEventId = eventId
+        seenEventIds.clear()
       } else if (previous == null || eventId > previous) {
         lastEventId = eventId
       }

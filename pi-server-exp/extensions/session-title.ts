@@ -41,6 +41,7 @@ export default function sessionTitle(pi: ExtensionAPI) {
     parameters: Type.Object({ title: Type.String({ minLength: 1, maxLength: MAX_TITLE_LENGTH }) }),
     async execute(_toolCallId, params) {
       const title = params.title.trim().replace(/\s+/g, " ").slice(0, MAX_TITLE_LENGTH);
+      if (!title) return { content: [{ type: "text", text: "Title cannot be empty or whitespace-only." }] };
       pi.setSessionName(title);
       return { content: [{ type: "text", text: `Session title set to: ${title}` }] };
     },

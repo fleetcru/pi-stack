@@ -19,6 +19,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import java.util.concurrent.atomic.AtomicBoolean
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
@@ -32,6 +35,13 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
   private var pollingJob: Job? = null
   private val refreshIntervalMs = 10_000L
   private val pollingActive = AtomicBoolean(false)
+  private val connectivityManager = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+  private fun isNetworkAvailable(): Boolean {
+    val network = connectivityManager.activeNetwork ?: return false
+    val caps = connectivityManager.getNetworkCapabilities(network) ?: return false
+    return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+  }
 
   init {
     refresh(showLoading = true)
@@ -43,7 +53,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     pollingJob = viewModelScope.launch {
       while (isActive) {
         delay(refreshIntervalMs)
-        refresh(showLoading = false)
+        if (isNetworkAvailable()) {
+          refresh(showLoading = false)
+        }
       }
     }
   }

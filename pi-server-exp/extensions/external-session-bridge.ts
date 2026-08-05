@@ -98,7 +98,11 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       headers: method === "GET" ? (token ? { authorization: `Bearer ${token}` } : {}) : headers(),
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (!response.ok) throw new Error(`relay HTTP ${response.status}`);
+    if (!response.ok) {
+      let detail = "";
+      try { detail = await response.text(); } catch { /* ignore */ }
+      throw new Error(`relay HTTP ${response.status}: ${detail.slice(0, 200)}`);
+    }
     return response;
   };
 
@@ -160,7 +164,14 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     // Single ordered sender: only use the socket when no backlog exists and no
     // HTTP flush is in flight, otherwise newer events could overtake older ones.
     if (relaySocket?.readyState === WebSocket.OPEN && pendingEvents.length === 0 && !flushRunning) {
-      relaySocket.send(JSON.stringify({ type: "event", event }));
+      try {
+        relaySocket.send(JSON.stringify({ type: "event", event }));
+      } catch {
+        // Socket send failed (half-dead connection) — fall back to queue.
+        pendingEvents.push(event);
+        if (pendingEvents.length > eventQueueLimit) pendingEvents.shift();
+        void flushEvents();
+      }
       return;
     }
     pendingEvents.push(event);
@@ -174,7 +185,8 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       if (!registered && !(await register())) return false;
       await request(`/v1/external-sessions/${id}/events`, "POST", event);
       return true;
-    } catch {
+    } catch (err) {
+      ui?.setStatus("external-session-bridge", `Bridge: event send failed (${err instanceof Error ? err.message : "unknown"})`);
       registered = false;
       return false;
     }

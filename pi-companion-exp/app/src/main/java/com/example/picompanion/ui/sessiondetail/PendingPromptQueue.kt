@@ -11,6 +11,14 @@ internal class PendingPromptQueue(private val maxSize: Int = 20) {
     return true
   }
 
+  /** Re-insert a failed prompt at the front for immediate retry. */
+  @Synchronized
+  fun enqueueFront(prompt: String): Boolean {
+    if (prompts.size >= maxSize) return false
+    prompts.addFirst(prompt)
+    return true
+  }
+
   @Synchronized
   fun dequeue(): String? = if (prompts.isEmpty()) null else prompts.removeFirst()
 

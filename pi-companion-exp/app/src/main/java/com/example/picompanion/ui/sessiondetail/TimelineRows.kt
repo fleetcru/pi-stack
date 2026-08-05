@@ -139,7 +139,7 @@ fun ToolEventRow(item: SessionTimelineItem.Tool, modifier: Modifier = Modifier) 
 
   // Duration
   val durationMs = if (isDone && item.startedAt != null && item.endedAt != null) {
-    (item.endedAt!! - item.startedAt!!)
+    (item.endedAt ?: 0L) - (item.startedAt ?: 0L)
   } else null
 
   // Live elapsed timer for running tools
@@ -147,8 +147,8 @@ fun ToolEventRow(item: SessionTimelineItem.Tool, modifier: Modifier = Modifier) 
   LaunchedEffect(isRunning, item.startedAt) {
     if (isRunning && item.startedAt != null) {
       while (true) {
-        liveElapsed = System.currentTimeMillis() - item.startedAt!!
-        delay(1000)
+        liveElapsed = System.currentTimeMillis() - (item.startedAt ?: break)
+        kotlinx.coroutines.delay(1000)
       }
     }
   }

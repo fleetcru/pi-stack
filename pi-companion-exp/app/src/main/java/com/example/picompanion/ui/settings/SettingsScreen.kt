@@ -28,6 +28,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -53,6 +57,12 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
+import java.net.URI
+import android.widget.Toast
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -300,6 +310,11 @@ private fun ServerCard(
             imeAction = ImeAction.Next,
           )
 
+          // URL validation
+          val urlError = remember(editUrl) {
+            validateServerUrl(editUrl)
+          }
+
           ServerTextField(
             label = "URL",
             value = editUrl,
@@ -307,9 +322,35 @@ private fun ServerCard(
             placeholder = "http://127.0.0.1:3141",
             imeAction = ImeAction.Next,
             keyboardType = KeyboardType.Uri,
+            error = urlError,
           )
 
-          ServerTextField(
+          // HTTP warning for non-localhost
+          val showHttpWarning = remember(editUrl) {
+            val trimmed = editUrl.trimEnd('/')
+            trimmed.startsWith("http://") && !trimmed.contains("127.0.0.1") && !trimmed.contains("localhost") && !trimmed.contains("0.0.0.0")
+          }
+          if (showHttpWarning) {
+            Row(
+              Modifier.fillMaxWidth(),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+              Icon(
+                Icons.Default.Warning,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.error,
+              )
+              Text(
+                "Auth token will be sent over plaintext HTTP. Use https:// for remote servers.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+              )
+            }
+          }
+
+          ServerTextFieldWithActions(
             label = "Auth token",
             value = editToken,
             onValueChange = { editToken = it },
@@ -334,7 +375,7 @@ private fun ServerCard(
               }
             }
 
-            // Save + test
+            // Save
             Button(
               onClick = {
                 onUpdate(
@@ -348,6 +389,7 @@ private fun ServerCard(
               },
               modifier = Modifier.weight(1f),
               shape = RoundedCornerShape(10.dp),
+              enabled = urlError == null,
               colors = ButtonDefaults.buttonColors(
                 containerColor = if (isActive) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.secondaryContainer,
@@ -355,7 +397,18 @@ private fun ServerCard(
                 else MaterialTheme.colorScheme.onSecondaryContainer,
               ),
             ) {
-              Text("Save & Test")
+              Text("Save")
+            }
+
+            // Test (standalone)
+            OutlinedButton(
+              onClick = {
+                onTest()
+              },
+              modifier = Modifier.weight(1f),
+              shape = RoundedCornerShape(10.dp),
+            ) {
+              Text("Test", style = MaterialTheme.typography.labelMedium)
             }
           }
 
@@ -425,6 +478,7 @@ private fun ServerTextField(
   masked: Boolean = false,
   imeAction: ImeAction = ImeAction.Done,
   keyboardType: KeyboardType = KeyboardType.Text,
+  error: String? = null,
 ) {
   Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
     Text(
@@ -439,10 +493,96 @@ private fun ServerTextField(
       shape = RoundedCornerShape(10.dp),
       singleLine = true,
       textStyle = MaterialTheme.typography.bodyMedium,
+      isError = error != null,
       placeholder = {
         Text(placeholder, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
       },
       visualTransformation = if (masked) PasswordVisualTransformation() else VisualTransformation.None,
+      keyboardOptions = KeyboardOptions(imeAction = imeAction, keyboardType = keyboardType),
+      colors = OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+        unfocusedBorderColor = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline,
+        cursorColor = MaterialTheme.colorScheme.primary,
+      ),
+    )
+    if (error != null) {
+      Text(
+        text = error,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.error,
+      )
+    }
+  }
+}
+
+/** Server URL text field with visibility toggle and copy button for auth tokens. */
+@Composable
+private fun ServerTextFieldWithActions(
+  label: String,
+  value: String,
+  onValueChange: (String) -> Unit,
+  modifier: Modifier = Modifier,
+  placeholder: String = "",
+  masked: Boolean = false,
+  imeAction: ImeAction = ImeAction.Done,
+  keyboardType: KeyboardType = KeyboardType.Text,
+) {
+  var showValue by remember { mutableStateOf(false) }
+  val clipboardManager = LocalClipboardManager.current
+  val context = LocalContext.current
+
+  Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+    Row(
+      Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      Text(
+        text = label,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      if (masked) {
+        Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+          IconButton(
+            onClick = { showValue = !showValue },
+            modifier = Modifier.size(28.dp),
+          ) {
+            Icon(
+              imageVector = if (showValue) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+              contentDescription = if (showValue) "Hide" else "Show",
+              modifier = Modifier.size(16.dp),
+              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          }
+          IconButton(
+            onClick = {
+              clipboardManager.setText(AnnotatedString(value))
+              Toast.makeText(context, "Token copied", Toast.LENGTH_SHORT).show()
+            },
+            modifier = Modifier.size(28.dp),
+          ) {
+            Icon(
+              imageVector = Icons.Default.ContentCopy,
+              contentDescription = "Copy token",
+              modifier = Modifier.size(16.dp),
+              tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+          }
+        }
+      }
+    }
+    OutlinedTextField(
+      value = value,
+      onValueChange = onValueChange,
+      modifier = Modifier.fillMaxWidth(),
+      shape = RoundedCornerShape(10.dp),
+      singleLine = true,
+      textStyle = MaterialTheme.typography.bodyMedium,
+      placeholder = {
+        Text(placeholder, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+      },
+      visualTransformation = if (masked && !showValue) PasswordVisualTransformation() else VisualTransformation.None,
       keyboardOptions = KeyboardOptions(imeAction = imeAction, keyboardType = keyboardType),
       colors = OutlinedTextFieldDefaults.colors(
         focusedBorderColor = MaterialTheme.colorScheme.primary,
@@ -450,5 +590,24 @@ private fun ServerTextField(
         cursorColor = MaterialTheme.colorScheme.primary,
       ),
     )
+  }
+}
+
+/** Validate a server URL and return an error message, or null if valid. */
+private fun validateServerUrl(url: String): String? {
+  val trimmed = url.trim()
+  if (trimmed.isBlank()) return null // empty is ok — handled by isConfigured check
+
+  val withScheme = if (!trimmed.contains("://")) "http://$trimmed" else trimmed
+
+  return try {
+    val uri = URI(withScheme)
+    when {
+      uri.scheme !in listOf("http", "https") -> "URL must start with http:// or https://"
+      uri.host.isNullOrBlank() -> "Missing host — e.g. 127.0.0.1 or my-server.com"
+      else -> null
+    }
+  } catch (_: Exception) {
+    "Invalid URL — use format http://host:port"
   }
 }

@@ -65,7 +65,7 @@ fun FileBrowserSheet(server: ServerEntry?, initialPath: String, onDismiss: () ->
       HorizontalDivider()
       if (preview != null) {
         TextButton(onClick = { preview = null }) { Text("Back to files") }
-        Text(preview!!, modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+        Text(preview ?: "", modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
       } else if (status.isNotBlank()) Text(status, modifier = Modifier.padding(20.dp), color = MaterialTheme.colorScheme.error)
       else LazyColumn {
         items(files, key = { it.path }) { file ->

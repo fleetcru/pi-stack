@@ -12,6 +12,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import android.util.Log
 import java.util.concurrent.atomic.AtomicLong
 
 class SessionEventSocket(
@@ -70,14 +71,26 @@ class SessionEventSocket(
       override fun onOpen(webSocket: WebSocket, response: Response) {
         if (generation.get() != connectionId) return
         connected = true
-        _events.trySend(SocketEvent.Connected)
+        // Connected is a critical lifecycle event — if dropped, the UI stays
+        // stuck as "connecting" forever. Ensure delivery by draining stale
+        // data events if the channel is full.
+        if (!_events.trySend(SocketEvent.Connected).isSuccess) {
+          // Channel is full — drain oldest items to make room for Connected.
+          repeat(100) { _events.tryReceive() }
+          _events.trySend(SocketEvent.Connected)
+        }
       }
 
       override fun onMessage(webSocket: WebSocket, text: String) {
         if (generation.get() != connectionId) return
         try {
           val jsonObj = json.decodeFromString<JsonObject>(text)
-          eventSequence.process(jsonObj).forEach { _events.trySend(it) }
+          eventSequence.process(jsonObj).forEach { event ->
+            val result = _events.trySend(event)
+            if (result.isClosed) {
+              Log.w("SessionEventSocket", "Channel closed — event dropped: ${event::class.simpleName}")
+            }
+          }
         } catch (e: Exception) {
           _events.trySend(SocketEvent.RawMessage(text))
         }
@@ -97,6 +110,7 @@ class SessionEventSocket(
       }
 
       override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+        response?.close()
         if (generation.get() != connectionId) return
         connected = false
         _events.trySend(SocketEvent.Error(t.message ?: "WebSocket error", t))

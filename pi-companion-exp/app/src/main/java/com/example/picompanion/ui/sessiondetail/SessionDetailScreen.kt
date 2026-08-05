@@ -96,6 +96,7 @@ fun SessionDetailScreen(
   val gitChanges by viewModel.gitChanges.collectAsStateWithLifecycle()
   val hasOlderHistory by viewModel.hasOlderHistory.collectAsStateWithLifecycle()
   val loadingOlderHistory by viewModel.loadingOlderHistory.collectAsStateWithLifecycle()
+  val historyLoadError by viewModel.historyLoadError.collectAsStateWithLifecycle()
   var extensionValue by remember { mutableStateOf("") }
 
   // Follow a streaming reply only while the reader is already at the end.
@@ -249,7 +250,37 @@ fun SessionDetailScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(top = 10.dp, bottom = 118.dp),
       ) {
-        if (items.isEmpty() && !hasOlderHistory) {
+        // History load error banner
+        if (historyLoadError != null) {
+          item {
+            androidx.compose.material3.Surface(
+              modifier = Modifier.fillMaxWidth(),
+              shape = RoundedCornerShape(10.dp),
+              color = MaterialTheme.colorScheme.errorContainer,
+            ) {
+              Row(
+                Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                Text(
+                  text = "Could not load history: $historyLoadError",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onErrorContainer,
+                  modifier = Modifier.weight(1f),
+                )
+                androidx.compose.material3.TextButton(
+                  onClick = { viewModel.loadOlderHistory() },
+                  contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                ) {
+                  Text("Retry", style = MaterialTheme.typography.labelSmall)
+                }
+              }
+            }
+          }
+        }
+
+        if (items.isEmpty() && !hasOlderHistory && historyLoadError == null) {
           item {
             ChatEmptyState(
               isLoading = loadingOlderHistory,

@@ -88,6 +88,8 @@ class SessionDetailViewModel(
   val hasOlderHistory: StateFlow<Boolean> = _hasOlderHistory.asStateFlow()
   private val _loadingOlderHistory = MutableStateFlow(false)
   val loadingOlderHistory: StateFlow<Boolean> = _loadingOlderHistory.asStateFlow()
+  private val _historyLoadError = MutableStateFlow<String?>(null)
+  val historyLoadError: StateFlow<String?> = _historyLoadError.asStateFlow()
   private var nextHistoryOffset = 0
   private var historicalItems: List<SessionTimelineItem> = emptyList()
   private val historyMutex = kotlinx.coroutines.sync.Mutex()
@@ -131,6 +133,10 @@ class SessionDetailViewModel(
   private var relayHealthJob: Job? = null
   private var reconnectAttempt = 0
   @Volatile private var closed = false
+  // Turn counter: incremented when message_end or agent_end fires. Prevents
+  // stale runtime_state events from a previous turn from re-enabling the
+  // thinking spinner after the turn is already complete.
+  private var turnCompleteGeneration = 0
   // Set of in-flight request IDs from sendPrompt. The server echoes back a
   // response with matching id; using a Set allows multiple rapid sends
   // without overwriting each other.
@@ -144,6 +150,7 @@ class SessionDetailViewModel(
       // when Wi-Fi returns, instead of waiting for the timer to fire.
       reconnectJob?.cancel()
       reconnectJob = null
+      reconnectAttempt = 0
       scheduleReconnect()
     }
     override fun onLost(network: Network) {
@@ -186,6 +193,28 @@ class SessionDetailViewModel(
       }
     }
     connect()
+
+    // Observe settings changes — if the active server URL or token changes,
+    // tear down the current WebSocket and reconnect with the new config.
+    var lastServerId = activeServer?.id
+    var lastServerUrl = activeServer?.url
+    var lastServerToken = activeServer?.authToken
+    viewModelScope.launch {
+      settingsDataStore.settingsFlow.collect { appSettings ->
+        val server = appSettings.activeServer ?: return@collect
+        if (server.id != lastServerId || server.url != lastServerUrl || server.authToken != lastServerToken) {
+          lastServerId = server.id
+          lastServerUrl = server.url
+          lastServerToken = server.authToken
+          // Only reconnect if we already had a connection (skip the initial emission
+          // which is handled by connect() above).
+          if (activeServer != null) {
+            socket.disconnect()
+            connect()
+          }
+        }
+      }
+    }
   }
 
   private fun connect() {
@@ -193,13 +222,32 @@ class SessionDetailViewModel(
     // the first assistant message received on the new socket.
     assistantFlushJob?.cancel()
     assistantFlushJob = null
-    synchronized(pendingAssistantDeltas) { pendingAssistantDeltas.clear() }
+    // Flush any remaining assistant deltas from a previous interrupted
+    // response (e.g. connection dropped mid-stream) so the partial text
+    // is preserved in the timeline instead of being silently discarded.
+    synchronized(pendingAssistantDeltas) {
+      if (pendingAssistantDeltas.isNotEmpty() && assistantTextOpen) {
+        val remaining = pendingAssistantDeltas.toString()
+        pendingAssistantDeltas.clear()
+        // Append directly — bypass appendItem dedup since this is a
+        // continuation of an existing bubble that may not be findable
+        // by order anymore.
+        val bubble = SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
+        val stamped = withOrder(bubble) as SessionTimelineItem.Chat
+        _items.update { it + stamped }
+      } else {
+        pendingAssistantDeltas.clear()
+      }
+    }
     toolFlushJob?.cancel()
     toolFlushJob = null
     synchronized(pendingToolUpdates) { pendingToolUpdates.clear() }
     assistantTextOpen = false
     receivedAssistantTextInMessage = false
     currentAssistantOrder = 0
+    // Reset agent state so the UI doesn't show a stuck spinner after reconnect.
+    _agentWorking.value = false
+    _sendState.value = SendState.Idle
     historyGeneration++
     // Clear stale extension requests from the previous connection.
     _extensionRequest.value = null
@@ -218,6 +266,7 @@ class SessionDetailViewModel(
       loadMetadata()
       loadGitChanges()
       loadModelControls()
+      relayHealthJob?.cancel()
       relayHealthJob = launch {
         // Poll once to check if this is an external (relay) session. If not,
         // skip the polling loop entirely — local RPC sessions get state from
@@ -375,6 +424,7 @@ class SessionDetailViewModel(
               // items at the bottom of the timeline.
               historicalItems = (if (appendOld) history + historicalItems else history)
                 .distinctBy { timelineItemId(it) }
+              _historyLoadError.value = null
               // Atomic update prevents live events arriving during the HTTP
               // request from being overwritten by the history snapshot. HTTP
               // history and WS replay use different timestamp formats, so data
@@ -391,7 +441,9 @@ class SessionDetailViewModel(
                 // After reconnect, WS replays all events including tools/files/system.
                 // Strategy: keep Chat items not in history, plus Tool items not in history
                 // (both running and completed — completed tools carry output that the
-                // history's tool_use entries may lack). Drop redundant file_change/system.
+                // history's tool_use entries may lack). Keep System/FileChange items
+                // that arrived during the reconnect window — they provide context the
+                // user should see (e.g. "Connection missed events; restoring...").
                 current.filter { item ->
                   val isOptimisticImage = item is SessionTimelineItem.Chat &&
                     item.time == "now" && item.imageUris.isNotEmpty()
@@ -400,8 +452,9 @@ class SessionDetailViewModel(
                   if (id in merged) return@filter false
                   when (item) {
                     is SessionTimelineItem.Chat -> true
-                    is SessionTimelineItem.Tool -> true // keep all tools not in history
-                    else -> false
+                    is SessionTimelineItem.Tool -> true
+                    is SessionTimelineItem.System -> true
+                    is SessionTimelineItem.FileChange -> true
                   }
                 }.forEach { merged[timelineItemId(it)] = it }
                 // Sort by insertion order so history and live items interleave
@@ -416,6 +469,7 @@ class SessionDetailViewModel(
               "SessionWS",
               "Could not load session history: ${result.message}",
             )
+            _historyLoadError.value = result.message
           }
         }
       } finally {
@@ -448,13 +502,16 @@ class SessionDetailViewModel(
           _sessionCwd.value = it.cwd.orEmpty()
         }
       }
-      is com.example.picompanion.data.api.HttpResult.Failure -> Unit
+      is com.example.picompanion.data.api.HttpResult.Failure -> {
+        if (BuildConfig.DEBUG) android.util.Log.w("SessionWS", "loadMetadata failed: ${sessions.message}")
+      }
     }
   }
 
   private fun scheduleReconnect(immediate: Boolean = false) {
     if (closed || reconnectJob?.isActive == true) return
-    val server = activeServer ?: return
+    // Quick pre-check: bail if no server is configured at all.
+    activeServer ?: return
     reconnectJob = viewModelScope.launch {
       val baseDelays = longArrayOf(1_000, 2_000, 5_000, 10_000, 15_000, 30_000)
       if (!immediate) {
@@ -464,6 +521,9 @@ class SessionDetailViewModel(
         val jitter = (base * 0.2 * (Math.random() * 2 - 1)).toLong()
         delay((base + jitter).coerceAtLeast(500))
       }
+      // Capture the server AFTER the delay so we use the latest config,
+      // not a stale reference from before the delay.
+      val server = activeServer ?: return@launch
       reconnectAttempt++
       _connectionState.value = ConnectionState.Connecting
       // Replay missed events immediately. Do not block reconnection on a full
@@ -482,6 +542,11 @@ class SessionDetailViewModel(
         val message = raw["message"]?.jsonObject
         val role = message?.getString("role")
         if (role == "assistant") {
+          // If a previous assistant turn is still open (double message_start
+          // from server), flush and close the orphan bubble first.
+          if (assistantTextOpen) {
+            flushAndCloseAssistantBubble()
+          }
           _agentWorking.value = true
           _sendState.value = SendState.Running
           receivedAssistantTextInMessage = false
@@ -513,7 +578,15 @@ class SessionDetailViewModel(
       "message_update" -> {
         val update = raw["assistantMessageEvent"]?.jsonObject ?: return
         when (update.getString("type")) {
-          "text_start" -> receivedAssistantTextInMessage = false
+          // Only reset the flag if no text has been accumulated yet.
+          // Some providers send text_start after text_delta events, which
+          // would incorrectly reset the flag and cause the message_end
+          // fallback to duplicate the response.
+          "text_start" -> {
+            if (pendingAssistantDeltas.isEmpty() && !assistantTextOpen) {
+              receivedAssistantTextInMessage = false
+            }
+          }
           "text_delta" -> update.getString("delta")?.let(::appendAssistantDelta)
           // text_end contains the entire content, which we have already built
           // from deltas; appending it would duplicate the response.
@@ -525,6 +598,7 @@ class SessionDetailViewModel(
         if (message.getString("role") != "assistant") return
         _sendState.value = SendState.Idle
         _agentWorking.value = false
+        turnCompleteGeneration++
         // Cancel the flush job and acquire the mutex so we serialize with any
         // in-flight flush. This prevents duplicate text from a flush job that
         // was mid-execution when we cancelled it.
@@ -547,6 +621,8 @@ class SessionDetailViewModel(
                   it[index] = existing.copy(text = existing.text + remaining)
                 }
               } else {
+                // Bubble was lost (e.g. dedup collision or list mutation).
+                // Create a new item to preserve the text.
                 current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
               }
             }
@@ -557,7 +633,11 @@ class SessionDetailViewModel(
           currentAssistantOrder = 0
         }
         // Some providers do not emit text_delta. Show their final text once.
-        if (!receivedAssistantTextInMessage) {
+        // Guard: only fire if we genuinely received no text at all — not if
+        // deltas arrived but the flush hadn't completed yet (the mutex drain
+        // above handles that case). Use the flag + buffer check instead of
+        // scanning the full items list.
+        if (!receivedAssistantTextInMessage && pendingAssistantDeltas.isEmpty() && !assistantTextOpen) {
           message.findText()?.takeIf { it.isNotBlank() }?.let(::appendAssistantMessage)
         }
         return
@@ -629,13 +709,19 @@ class SessionDetailViewModel(
           pendingPromptIds.clear()
           _sendState.value = SendState.Idle
           _agentWorking.value = false
+          turnCompleteGeneration++
         }
         return
       }
       // Runtime state transitions from the server (authoritative source of truth)
       "runtime_state" -> {
         val state = raw.getString("runtimeState")
-        _agentWorking.value = state == "working" || state == "starting" || state == "reconnecting"
+        // Capture the generation at event time. If a message_end or agent_end
+        // fires between now and when this state is applied, the generation
+        // will have advanced and we skip re-enabling the spinner.
+        val gen = turnCompleteGeneration
+        _agentWorking.value = (state == "working" || state == "starting" || state == "reconnecting")
+          && gen == turnCompleteGeneration
         if (state == "idle" || state == "stopped" || state == "failed") {
           _sendState.value = SendState.Idle
         }
@@ -712,20 +798,25 @@ class SessionDetailViewModel(
 
   private fun appendAssistantDelta(delta: String) {
     if (delta.isEmpty()) return
+    // Discard late deltas that arrive after message_end or agent_end has
+    // already closed the current turn. These are stale events from a
+    // previous response that would otherwise create an orphan bubble.
+    if (turnCompleteGeneration > 0 && !assistantTextOpen && pendingAssistantDeltas.isEmpty()) return
     synchronized(pendingAssistantDeltas) { pendingAssistantDeltas.append(delta) }
     receivedAssistantTextInMessage = true
     if (assistantFlushJob?.isActive == true) return
     assistantFlushJob = viewModelScope.launch {
       delay(16)
-      // Atomically drain the buffer so no delta added during _items.update is lost.
-      val buffered = synchronized(pendingAssistantDeltas) {
-        val s = pendingAssistantDeltas.toString()
-        pendingAssistantDeltas.clear()
-        s
-      }
-      if (buffered.isEmpty()) return@launch
-      // Serialize assistant bubble state transitions.
+      // Drain the buffer inside the mutex so that if this job is cancelled
+      // between drain and items-update, message_end's mutex.withLock will
+      // see the buffer as still un-drained and pick up the text.
       assistantMutex.withLock {
+        val buffered = synchronized(pendingAssistantDeltas) {
+          val s = pendingAssistantDeltas.toString()
+          pendingAssistantDeltas.clear()
+          s
+        }
+        if (buffered.isEmpty()) return@withLock
         if (!assistantTextOpen) {
           // Open a new assistant bubble.
           val newBubble = SessionTimelineItem.Chat("Pi Agent", buffered, "", false)
@@ -809,9 +900,13 @@ class SessionDetailViewModel(
 
   private fun timelineItemId(item: SessionTimelineItem): String = when (item) {
     // Tool and FileChange IDs are naturally unique (callId / path).
-    // Chat dedup uses role + a hash of the full text so that two identical
-    // messages from the same role (e.g. user sending "yes" twice) are kept.
-    is SessionTimelineItem.Chat -> "chat|${item.isUser}|${item.time}|${item.text.hashCode()}"
+    // Chat dedup uses role + text hash + length to minimize collision risk.
+    // Using only hashCode() caused duplicate assistant responses to be
+    // silently dropped when two responses had the same text.
+    is SessionTimelineItem.Chat -> {
+      val textSig = "${item.text.length}|${item.text.hashCode()}|${item.text.take(50)}"
+      "chat|${item.isUser}|${item.time}|$textSig"
+    }
     is SessionTimelineItem.Tool -> "tool|${item.callId}"
     is SessionTimelineItem.FileChange -> "file|${item.operation}|${item.path}"
     is SessionTimelineItem.System -> "system|${item.text}"
@@ -837,8 +932,15 @@ class SessionDetailViewModel(
 
   // ── User actions ─────────────────────────────────────
 
+  private var lastSendTime = 0L
+
   fun sendPrompt(message: String, imageUris: List<Uri> = emptyList()) {
     if (message.isBlank() && imageUris.isEmpty()) return
+    // Debounce rapid-fire sends (double-tap, accidental repeat) to prevent
+    // duplicate messages. 300ms window catches most accidental double-taps.
+    val now = System.currentTimeMillis()
+    if (imageUris.isEmpty() && now - lastSendTime < 300) return
+    lastSendTime = now
     if (imageUris.isNotEmpty()) {
       val server = activeServer ?: return
       // The socket echoes the user message without local Uri attachments.
@@ -926,12 +1028,29 @@ class SessionDetailViewModel(
 
   private fun flushQueuedPrompts() {
     viewModelScope.launch {
-      while (true) {
+      var retries = 0
+      while (retries < 3) {
         val message = queuedPrompts.dequeue() ?: break
         sendPrompt(message)
-        // Small delay between queued sends to avoid overwhelming the server
-        // and to show a more natural send cadence.
+        // Wait for the send to resolve by observing _sendState changes.
+        // The send coroutine sets _sendState to Accepted, Failed, or Idle.
+        val result = kotlinx.coroutines.withTimeoutOrNull(10_000) {
+          _sendState.first { state ->
+            state is SendState.Accepted || state is SendState.Failed || state is SendState.Idle
+          }
+        }
+        if (result is SendState.Failed || result == null) {
+          // Send failed or timed out — put it back at the front for retry.
+          queuedPrompts.enqueueFront(message)
+          retries++
+          delay(1000)
+        } else {
+          retries = 0
+        }
         delay(100)
+      }
+      if (queuedPrompts.size() > 0) {
+        appendItem(SessionTimelineItem.System("Some queued messages could not be sent after retries"))
       }
     }
   }

@@ -136,7 +136,7 @@ fun DirectoryBrowserSheet(
             )
             if (currentPath != null) {
               Text(
-                text = currentPath!!,
+                text = currentPath ?: "",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -157,7 +157,7 @@ fun DirectoryBrowserSheet(
             .clickable(
               interactionSource = remember { MutableInteractionSource() },
               indication = null,
-              onClick = { onSelect(currentPath!!) },
+              onClick = { currentPath?.let(onSelect) },
             ),
           shape = RoundedCornerShape(12.dp),
           color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
@@ -170,7 +170,7 @@ fun DirectoryBrowserSheet(
             Spacer(Modifier.width(10.dp))
             Column {
               Text("Use this folder", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-              Text(currentPath!!, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+              Text(currentPath ?: "", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
           }
         }
@@ -189,7 +189,7 @@ fun DirectoryBrowserSheet(
       // Error
       if (error != null) {
         Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-          Text(error!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+          Text(error ?: "", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
           Spacer(Modifier.height(8.dp))
           TextButton(onClick = { load(currentPath) }) { Text("Retry") }
         }
