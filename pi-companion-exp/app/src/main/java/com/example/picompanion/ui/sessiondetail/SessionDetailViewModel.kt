@@ -475,8 +475,8 @@ class SessionDetailViewModel(
                 )
               }
               // Second pass: merge tool_result output into matching tool_use items.
-              val toolCount = parsed.count { it is SessionTimelineItem.Tool }
               val chatCount = parsed.count { it is SessionTimelineItem.Chat }
+              val toolCount = parsed.count { it is SessionTimelineItem.Tool }
               debugLog("Parsed: $chatCount chats, $toolCount tools, ${toolResults.size} tool results")
               val history = parsed.map { item ->
                 if (item is SessionTimelineItem.Tool && item.callId in toolResults) {
@@ -485,6 +485,8 @@ class SessionDetailViewModel(
                   item
                 }
               }.distinctBy { timelineItemId(it) }
+              val histToolCount = history.count { it is SessionTimelineItem.Tool }
+              debugLog("After dedup: ${history.size} items, $histToolCount tools")
               val historyMeta = data["history"]?.jsonObject
               _hasOlderHistory.value = historyMeta?.get("hasOlder")
                 ?.jsonPrimitive?.booleanOrNull == true
@@ -503,6 +505,8 @@ class SessionDetailViewModel(
               _items.update { current ->
                 val merged = LinkedHashMap<String, SessionTimelineItem>()
                 historicalItems.forEach { merged[timelineItemId(it)] = it }
+                val mergedToolCount = merged.values.count { it is SessionTimelineItem.Tool }
+                debugLog("Merged: ${merged.size} items, $mergedToolCount tools, items.size=${current.size}")
                 // Keep local image URIs when the server history only returns the
                 // text portion of a multimodal user message.
                 current.filter {
