@@ -521,11 +521,12 @@ class SessionDetailViewModel(
                     merged[id] = item
                   }
                 }
-                // History items arrive with order=0 which causes duplicate Compose
-                // keys. Stamp them with monotonic order values.
+                // LinkedHashMap preserves insertion order (chronological from parser).
+                // Stamp items with order=0 (from history) so Compose keys are unique,
+                // but do NOT re-sort — the insertion order IS the correct order.
                 merged.values.map { item ->
                   if (item.order == 0L) withOrder(item) else item
-                }.sortedBy { it.order }
+                }
               }
               // Log AFTER the update to confirm items were set
             }
