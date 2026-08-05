@@ -474,26 +474,29 @@ class SessionDetailViewModel(
                 current.filter {
                   it is SessionTimelineItem.Chat && it.time == "now" && it.imageUris.isNotEmpty()
                 }.forEach { merged[timelineItemId(it)] = it }
-                // Keep live items that aren't in history.
-                // After reconnect, WS replays all events including tools/files/system.
-                // Strategy: keep Chat items not in history, plus Tool items not in history
-                // (both running and completed — completed tools carry output that the
-                // history's tool_use entries may lack). Keep System/FileChange items
-                // that arrived during the reconnect window — they provide context the
-                // user should see (e.g. "Connection missed events; restoring...").
+                // Keep live items that aren't in history, OR replace history
+                // items with richer live versions (e.g. a Tool item from the
+                // live stream has running status + partial output that the
+                // history version lacks).
                 current.filter { item ->
                   val isOptimisticImage = item is SessionTimelineItem.Chat &&
                     item.time == "now" && item.imageUris.isNotEmpty()
                   if (isOptimisticImage) return@filter false
-                  val id = timelineItemId(item)
-                  if (id in merged) return@filter false
                   when (item) {
                     is SessionTimelineItem.Chat -> true
                     is SessionTimelineItem.Tool -> true
                     is SessionTimelineItem.System -> true
                     is SessionTimelineItem.FileChange -> true
                   }
-                }.forEach { merged[timelineItemId(it)] = it }
+                }.forEach { item ->
+                  val id = timelineItemId(item)
+                  val existing = merged[id]
+                  // Always keep live Tool items — they have richer data
+                  // (running status, partial output) than history versions.
+                  if (item is SessionTimelineItem.Tool || existing == null) {
+                    merged[id] = item
+                  }
+                }
                 // History items arrive with order=0 which causes duplicate Compose
                 // keys. Stamp them with monotonic order values.
                 merged.values.map { item ->
