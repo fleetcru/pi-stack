@@ -311,8 +311,13 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
           if (scoped && scoped.length > 0) {
             const models = scoped.map((sm: any) => sm.model ?? sm);
             emit({ type: "available_models", models });
+          } else {
+            const allModels = (sessionCtx as any)?.getModels?.() ?? [];
+            if (allModels.length > 0) {
+              emit({ type: "available_models", models: allModels });
+            }
           }
-        } catch { /* getScopedModels may not be available */ }
+        } catch { /* model APIs may not be available */ }
         // Wait for any in-flight HTTP flush before draining the backlog over the
         // socket so both paths never send the same queue concurrently.
         while (flushRunning) await new Promise((resolve) => setTimeout(resolve, 50));
@@ -485,13 +490,20 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     if (ctx.model) emit({ type: "model_select", model: ctx.model });
     emit({ type: "thinking_level_select", level: pi.getThinkingLevel() });
     // Report available models so the server can serve them to companion apps.
+    // Try multiple API paths since getScopedModels may not exist in all Pi versions.
     try {
       const scoped = ctx.getScopedModels?.();
       if (scoped && scoped.length > 0) {
         const models = scoped.map((sm: any) => sm.model ?? sm);
         emit({ type: "available_models", models });
+      } else {
+        // Fallback: try getModels or list available from the provider
+        const allModels = (ctx as any).getModels?.() ?? [];
+        if (allModels.length > 0) {
+          emit({ type: "available_models", models: allModels });
+        }
       }
-    } catch { /* getScopedModels may not be available in all contexts */ }
+    } catch { /* model APIs may not be available in all contexts */ }
     ui.setStatus("external-session-bridge", "Bridge: connecting");
     await register();
     void flushEvents();
