@@ -168,5 +168,6 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /v1/sessions/", s.deleteSession)
 	mux.HandleFunc("POST /v1/sessions/", s.sessionPost)
 	mux.HandleFunc("GET /v1/sessions/", s.sessionGet)
+	mux.HandleFunc("GET /v1/ws", s.sessionMultiplexWebSocket)
 	return mux
 }

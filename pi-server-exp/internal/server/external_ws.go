@@ -16,6 +16,7 @@ func (s *Server) externalSessionWebSocket(w http.ResponseWriter, r *http.Request
 	}
 	defer conn.Close()
 	conn.SetReadLimit(1 << 20) // 1 MiB, matching HTTP body limit
+	codec := ParseCodec(r.URL.Query().Get("codec"))
 	since, _ := strconv.ParseUint(r.URL.Query().Get("since"), 10, 64)
 	events, replay, unsubscribe, ok := s.external.subscribe(id, since)
 	if !ok {
@@ -36,14 +37,14 @@ func (s *Server) externalSessionWebSocket(w http.ResponseWriter, r *http.Request
 	write := func(v any) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
-		return conn.WriteJSON(v)
+		return codec.WriteWebSocket(conn, v)
 	}
 	// Companion sends prompts over its session WebSocket. Translate supported
 	// Pi RPC commands into relay commands just like the REST convenience paths.
 	go func() {
 		for {
 			var command RPCCommand
-			if err := conn.ReadJSON(&command); err != nil {
+			if err := codec.ReadWebSocket(conn, &command); err != nil {
 				return
 			}
 			var queued ExternalCommand

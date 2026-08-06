@@ -24,6 +24,10 @@ func (s *Server) sessionWebSocket(w http.ResponseWriter, r *http.Request, p *PiP
 	// Cap incoming WebSocket frames to prevent OOM from a malicious or
 	// buggy client sending multi-gigabyte messages.
 	conn.SetReadLimit(1 << 20) // 1 MiB, matching HTTP body limit
+	// Negotiate event encoding format. "msgpack" sends binary MessagePack
+	// frames (~30% smaller, faster parse). "json" (default) is backward-
+	// compatible with existing clients.
+	codec := ParseCodec(r.URL.Query().Get("codec"))
 	// Filesystem watching is opt-in because recursively watching a workspace can
 	// consume many OS handles. Clients request it with ?watch=files.
 	if r.URL.Query().Get("watch") == "files" {
@@ -60,7 +64,7 @@ func (s *Server) sessionWebSocket(w http.ResponseWriter, r *http.Request, p *PiP
 		for {
 			select {
 			case msg := <-out:
-				if err := conn.WriteJSON(msg); err != nil {
+				if err := codec.WriteWebSocket(conn, msg); err != nil {
 					return
 				}
 			case <-ticker.C:
@@ -89,7 +93,7 @@ func (s *Server) sessionWebSocket(w http.ResponseWriter, r *http.Request, p *PiP
 		defer closeDone()
 		for {
 			var cmd RPCCommand
-			if err := conn.ReadJSON(&cmd); err != nil {
+			if err := codec.ReadWebSocket(conn, &cmd); err != nil {
 				return
 			}
 			if err := p.Send(cmd); err != nil {
