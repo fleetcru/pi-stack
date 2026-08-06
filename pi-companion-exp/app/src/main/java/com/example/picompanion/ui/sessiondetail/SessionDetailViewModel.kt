@@ -806,14 +806,13 @@ class SessionDetailViewModel(
         val model = raw["model"]?.jsonObject
         val provider = model?.getString("provider") ?: "?"
         val modelId = model?.getString("id") ?: "?"
-        // Update the model controls so the picker reflects the change
         _modelControls.update { it.copy(selectedProvider = provider, selectedModelId = modelId) }
-        SessionTimelineItem.System("Model changed: $provider/$modelId")
+        return // don't show system message — the model picker reflects this
       }
       "thinking_level_select" -> {
         val level = raw.getString("level") ?: return
         _modelControls.update { it.copy(thinkingLevel = level) }
-        SessionTimelineItem.System("Thinking level: $level")
+        return // don't show system message — the picker reflects this
       }
       // Available models list update (from bridge extension on relay sessions)
       "available_models" -> {

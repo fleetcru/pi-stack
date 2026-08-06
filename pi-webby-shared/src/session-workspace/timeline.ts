@@ -84,26 +84,8 @@ export function buildTimeline(
           text: `File ${change ?? "changed"}: ${path}`,
         })
     }
-    if (event.type === "model_select") {
-      const model = event.model as
-        | { provider?: string; id?: string }
-        | undefined
-      if (model?.id)
-        items.push({
-          id: `model-${String(event._daemonEventId ?? index)}`,
-          kind: "system",
-          text: `Model changed: ${model.provider ?? "?"}/${model.id}`,
-        })
-    }
-    if (event.type === "thinking_level_select") {
-      const level = event.level as string | undefined
-      if (level)
-        items.push({
-          id: `think-${String(event._daemonEventId ?? index)}`,
-          kind: "system",
-          text: `Thinking level: ${level}`,
-        })
-    }
+    // model_select and thinking_level_select are handled by the
+    // model picker UI — no system message in the timeline needed.
 
     if (event.type === "tool_execution_start") {
       items.push({
