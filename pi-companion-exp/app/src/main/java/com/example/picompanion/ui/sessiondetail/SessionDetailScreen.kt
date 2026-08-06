@@ -159,6 +159,7 @@ fun SessionDetailScreen(
       onFiles = { filesOpen = true },
       onModelControls = { actionsOpen = true; actionsTab = 0; viewModel.loadModelControls() },
       modelControls = modelControls,
+      title = viewModel.sessionTitle.collectAsStateWithLifecycle().value,
       sharedTransitionScope = sharedTransitionScope,
       animatedVisibilityScope = animatedVisibilityScope,
 

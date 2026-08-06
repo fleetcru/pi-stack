@@ -49,6 +49,7 @@ fun SessionHeader(
   onFiles: () -> Unit,
   onModelControls: () -> Unit,
   modelControls: ModelControls = ModelControls(),
+  title: String? = null,
   sharedTransitionScope: SharedTransitionScope,
   animatedVisibilityScope: AnimatedVisibilityScope,
   modifier: Modifier = Modifier,
@@ -88,7 +89,7 @@ fun SessionHeader(
           }
 
           Text(
-            text = "Session $sessionId",
+            text = title?.takeIf { it.isNotBlank() } ?: "Session $sessionId",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.weight(1f).then(
