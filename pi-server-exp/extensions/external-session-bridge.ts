@@ -307,16 +307,26 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
         emit({ type: "thinking_level_select", level: pi.getThinkingLevel() });
         // Re-emit available models on reconnect.
         try {
+          let models: any[] = [];
           const scoped = sessionCtx?.getScopedModels?.();
           if (scoped && scoped.length > 0) {
-            const models = scoped.map((sm: any) => sm.model ?? sm);
-            emit({ type: "available_models", models });
-          } else {
-            const allModels = (sessionCtx as any)?.getModels?.() ?? [];
-            if (allModels.length > 0) {
-              emit({ type: "available_models", models: allModels });
+            models = scoped.map((sm: any) => sm.model ?? sm);
+          }
+          if (models.length === 0) {
+            const all = (sessionCtx as any)?.getModels?.();
+            if (all && all.length > 0) models = all;
+          }
+          if (models.length === 0) {
+            const avail = (sessionCtx as any)?.getAvailableModels?.();
+            if (avail && avail.length > 0) models = avail;
+          }
+          if (models.length === 0 && sessionCtx?.model) {
+            const m = sessionCtx.model as any;
+            if (m.provider && m.id) {
+              models = [{ provider: m.provider, id: m.id, name: m.name ?? m.id }];
             }
           }
+          if (models.length > 0) emit({ type: "available_models", models });
         } catch { /* model APIs may not be available */ }
         // Wait for any in-flight HTTP flush before draining the backlog over the
         // socket so both paths never send the same queue concurrently.
@@ -511,6 +521,45 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     connectRelay();
     // HTTP polling remains a temporary fallback if a network blocks WebSockets.
     void pollCommands();
+    // Periodically try to get available models from Pi and emit them.
+    // Pi may not expose getScopedModels/getModels in all versions, so we
+    // try multiple fallbacks and emit whenever we find them.
+    let modelsEmitted = false;
+    const pollModels = async () => {
+      if (stopped) return;
+      try {
+        let models: any[] = [];
+        // Try getScopedModels first
+        const scoped = (ctx as any).getScopedModels?.();
+        if (scoped && scoped.length > 0) {
+          models = scoped.map((sm: any) => sm.model ?? sm);
+        }
+        // Fallback: try getModels
+        if (models.length === 0) {
+          const all = (ctx as any).getModels?.();
+          if (all && all.length > 0) models = all;
+        }
+        // Fallback: try getAvailableModels
+        if (models.length === 0) {
+          const avail = (ctx as any).getAvailableModels?.();
+          if (avail && avail.length > 0) models = avail;
+        }
+        // Fallback: construct from active model + provider
+        if (models.length === 0 && ctx.model) {
+          const m = ctx.model as any;
+          if (m.provider && m.id) {
+            models = [{ provider: m.provider, id: m.id, name: m.name ?? m.id }];
+          }
+        }
+        if (models.length > 0 && !modelsEmitted) {
+          emit({ type: "available_models", models });
+          modelsEmitted = true;
+        }
+      } catch { /* ignore */ }
+      // Poll again in 10s until we get models
+      if (!stopped && !modelsEmitted) setTimeout(pollModels, 10_000);
+    };
+    void pollModels();
   });
   pi.on("session_shutdown", async () => {
     stopped = true;

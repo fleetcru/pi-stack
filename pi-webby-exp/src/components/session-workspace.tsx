@@ -77,7 +77,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const socket = useActiveSessionSocket(sessionId, true)
   const historyQuery = useSessionHistory(sessionId)
   const gitStatusQuery = useSessionGitStatus(sessionId)
-  const modelsQuery = useSessionData(sessionId, "models")
+  const modelsQuery = useSessionData(sessionId, "models", { refetchInterval: 5_000 })
   const stateQuery = useSessionData(sessionId, "state", {
     // Poll only when the WebSocket is not open — the stream provides live state.
     refetchInterval: socket.status === "open" ? false : 5_000,
