@@ -141,6 +141,7 @@ func (r *ExternalRegistry) get(id string) (ExternalSession, bool) {
 		Title:          s.Title,
 		SessionPath:    s.SessionPath,
 		Model:          s.Model,
+		AvailableModels: s.AvailableModels,
 		ThinkingLevel:  s.ThinkingLevel,
 		LastUsage:      s.LastUsage,
 		TotalCost:      s.TotalCost,
