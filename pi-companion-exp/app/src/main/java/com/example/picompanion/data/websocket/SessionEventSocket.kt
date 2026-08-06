@@ -59,6 +59,7 @@ class SessionEventSocket(
       val query = buildList {
         if (!existingQuery.isNullOrBlank()) add(existingQuery)
         if (since != null) add("since=$since")
+        add("codec=msgpack")
       }.joinToString("&")
       java.net.URI(wsScheme, null, uri.host, uri.port, path, query.ifBlank { null }, null).toString()
     } catch (e: Exception) {
@@ -93,6 +94,27 @@ class SessionEventSocket(
           }
         } catch (e: Exception) {
           _events.trySend(SocketEvent.RawMessage(text))
+        }
+      }
+
+      override fun onMessage(webSocket: WebSocket, bytes: okio.ByteString) {
+        if (generation.get() != connectionId) return
+        try {
+          // Decode MessagePack binary to JSON string, then parse as JsonObject
+          val unpacker = org.msgpack.core.MessagePack.newDefaultUnpacker(bytes.toByteArray())
+          val value = unpacker.unpackValue()
+          unpacker.close()
+          // Convert msgpack Value to JSON string via toString (produces valid JSON)
+          val jsonString = value.toString()
+          val jsonObj = json.decodeFromString<JsonObject>(jsonString)
+          eventSequence.process(jsonObj).forEach { event ->
+            val result = _events.trySend(event)
+            if (result.isClosed) {
+              Log.w("SessionEventSocket", "Channel closed — event dropped: ${event::class.simpleName}")
+            }
+          }
+        } catch (e: Exception) {
+          Log.w("SessionEventSocket", "Failed to decode MessagePack: ${e.message}")
         }
       }
 

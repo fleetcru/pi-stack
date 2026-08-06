@@ -78,6 +78,8 @@ dependencies {
 
   // Pi Server client dependencies: HTTP, WebSocket, JSON, preferences, navigation
   implementation(libs.okhttp)
+  // MessagePack for binary event streaming (~30% smaller payloads)
+  implementation("org.msgpack:msgpack-core:0.9.8")
   // EncryptedSharedPreferences for secure auth token storage
   implementation("androidx.security:security-crypto:1.1.0-alpha06")
   implementation(libs.kotlinx.serialization.json)
