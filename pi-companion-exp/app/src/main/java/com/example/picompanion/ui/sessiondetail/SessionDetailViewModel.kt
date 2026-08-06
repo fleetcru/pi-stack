@@ -806,11 +806,33 @@ class SessionDetailViewModel(
         val model = raw["model"]?.jsonObject
         val provider = model?.getString("provider") ?: "?"
         val modelId = model?.getString("id") ?: "?"
+        // Update the model controls so the picker reflects the change
+        _modelControls.update { it.copy(selectedProvider = provider, selectedModelId = modelId) }
         SessionTimelineItem.System("Model changed: $provider/$modelId")
       }
       "thinking_level_select" -> {
         val level = raw.getString("level") ?: return
+        _modelControls.update { it.copy(thinkingLevel = level) }
         SessionTimelineItem.System("Thinking level: $level")
+      }
+      // Available models list update (from bridge extension on relay sessions)
+      "available_models" -> {
+        val modelsJson = raw["models"]
+        if (modelsJson is JsonArray) {
+          val providers = mutableMapOf<String, MutableList<ModelChoice>>()
+          for (element in modelsJson) {
+            val obj = element as? JsonObject ?: continue
+            val p = obj.getString("provider") ?: continue
+            val id = obj.getString("id") ?: continue
+            val name = obj.getString("name") ?: id
+            providers.getOrPut(p) { mutableListOf() }.add(ModelChoice(p, id, name))
+          }
+          val allModels = providers.values.flatten()
+          if (allModels.isNotEmpty()) {
+            _modelControls.update { it.copy(models = allModels) }
+          }
+        }
+        return // don't show as system message
       }
       // Daemon events
       "daemon_error" -> {
