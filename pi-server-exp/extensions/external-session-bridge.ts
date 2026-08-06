@@ -326,7 +326,10 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
               models = [{ provider: m.provider, id: m.id, name: m.name ?? m.id }];
             }
           }
-          if (models.length > 0) emit({ type: "available_models", models });
+          // Only emit if we found a real model list (not just the active model).
+          // The emitModels() function may have already sent the full list from
+          // models-store.json — don't overwrite it with a single-item fallback.
+          if (models.length > 1) emit({ type: "available_models", models });
         } catch { /* model APIs may not be available */ }
         // Wait for any in-flight HTTP flush before draining the backlog over the
         // socket so both paths never send the same queue concurrently.
