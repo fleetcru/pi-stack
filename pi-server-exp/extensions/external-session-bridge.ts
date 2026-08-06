@@ -521,45 +521,61 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     connectRelay();
     // HTTP polling remains a temporary fallback if a network blocks WebSockets.
     void pollCommands();
-    // Periodically try to get available models from Pi and emit them.
-    // Pi may not expose getScopedModels/getModels in all versions, so we
-    // try multiple fallbacks and emit whenever we find them.
+    // Emit available models so the server can serve them to companion/webby.
+    // Try multiple sources: Pi API → models-store.json → active model fallback.
     let modelsEmitted = false;
-    const pollModels = async () => {
-      if (stopped) return;
+    const emitModels = async () => {
+      if (stopped || modelsEmitted) return;
       try {
         let models: any[] = [];
-        // Try getScopedModels first
+        // 1. Try Pi API: getScopedModels
         const scoped = (ctx as any).getScopedModels?.();
         if (scoped && scoped.length > 0) {
           models = scoped.map((sm: any) => sm.model ?? sm);
         }
-        // Fallback: try getModels
+        // 2. Try Pi API: getModels
         if (models.length === 0) {
           const all = (ctx as any).getModels?.();
           if (all && all.length > 0) models = all;
         }
-        // Fallback: try getAvailableModels
+        // 3. Read models-store.json from ~/.pi/agent/
         if (models.length === 0) {
-          const avail = (ctx as any).getAvailableModels?.();
-          if (avail && avail.length > 0) models = avail;
+          try {
+            const fs = await import("fs");
+            const path = await import("path");
+            const home = process.env.HOME || process.env.USERPROFILE || "";
+            const storePath = path.join(home, ".pi", "agent", "models-store.json");
+            const raw = fs.readFileSync(storePath, "utf-8");
+            const store = JSON.parse(raw);
+            for (const [provider, providerData] of Object.entries(store)) {
+              const providerModels = (providerData as any)?.models;
+              if (Array.isArray(providerModels)) {
+                for (const m of providerModels) {
+                  models.push({ provider, id: m.id, name: m.name ?? m.id });
+                }
+              }
+            }
+          } catch { /* models-store.json not available */ }
         }
-        // Fallback: construct from active model + provider
+        // 4. Fallback: construct from active model
         if (models.length === 0 && ctx.model) {
           const m = ctx.model as any;
           if (m.provider && m.id) {
             models = [{ provider: m.provider, id: m.id, name: m.name ?? m.id }];
           }
         }
-        if (models.length > 0 && !modelsEmitted) {
+        if (models.length > 0) {
           emit({ type: "available_models", models });
           modelsEmitted = true;
         }
       } catch { /* ignore */ }
-      // Poll again in 10s until we get models
-      if (!stopped && !modelsEmitted) setTimeout(pollModels, 10_000);
     };
-    void pollModels();
+    // Try immediately, then retry every 5s until we get models
+    void emitModels();
+    const modelPoller = setInterval(() => {
+      if (modelsEmitted || stopped) { clearInterval(modelPoller); return; }
+      void emitModels();
+    }, 5_000);
   });
   pi.on("session_shutdown", async () => {
     stopped = true;
