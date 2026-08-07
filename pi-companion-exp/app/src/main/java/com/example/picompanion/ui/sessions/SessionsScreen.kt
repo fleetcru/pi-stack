@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -120,8 +121,21 @@ fun SessionsScreen(
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
-      IconButton(onClick = { viewModel.refresh() }) {
-        Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+      IconButton(
+        onClick = { viewModel.refresh() },
+        modifier = Modifier
+          .size(36.dp)
+          .background(
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            shape = CircleShape,
+          ),
+      ) {
+        Icon(
+          Icons.Default.Refresh,
+          contentDescription = "Refresh",
+          modifier = Modifier.size(18.dp),
+          tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
       }
     }
 
