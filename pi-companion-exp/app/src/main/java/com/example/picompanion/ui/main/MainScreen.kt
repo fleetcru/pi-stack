@@ -158,7 +158,7 @@ internal fun HomeContent(
       contentPadding = PaddingValues(bottom = 80.dp),
     ) {
       // Header
-      item { TopAppBarCompact(onMenuClick = onMenuClick, onSettingsClick = { onNavigate(AppRoute.Settings) }) }
+      item { TopAppBarCompact(onMenuClick = onMenuClick, onSettingsClick = { onNavigate(AppRoute.Settings) }, onRefresh = onRefresh) }
 
       // Connection status
       if (!state.connected) {

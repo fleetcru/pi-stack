@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -24,6 +25,7 @@ import androidx.compose.ui.unit.dp
 fun TopAppBarCompact(
   onMenuClick: () -> Unit = {},
   onSettingsClick: () -> Unit = {},
+  onRefresh: (() -> Unit)? = null,
   modifier: Modifier = Modifier,
 ) {
   Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -38,5 +40,8 @@ fun TopAppBarCompact(
       Text("Pi Dev Control", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     IconTile(Icons.Rounded.Settings, "Settings", onClick = onSettingsClick)
+    if (onRefresh != null) {
+      IconTile(Icons.Rounded.Refresh, "Refresh", onClick = onRefresh)
+    }
   }
 }
