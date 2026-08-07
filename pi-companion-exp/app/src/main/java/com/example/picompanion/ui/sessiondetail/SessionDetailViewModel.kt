@@ -868,10 +868,10 @@ class SessionDetailViewModel(
   private fun updateTool(callId: String?, output: String?, status: String, endedAt: Long? = null) {
     synchronized(pendingToolUpdates) { pendingToolUpdates.add(ToolUpdate(callId, output, status, endedAt)) }
     if (toolFlushJob?.isActive == true) return
-    // Batch tool updates at 16ms cadence to avoid Compose recomposition
-    // churn during rapid tool_execution_update events.
+    // Batch tool updates at 8ms cadence — fast enough to feel instant,
+    // still avoids Compose recomposition churn during rapid updates.
     toolFlushJob = viewModelScope.launch {
-      delay(16)
+      delay(8)
       // Atomically drain the buffer so no update added during _items.update is lost.
       val batch = synchronized(pendingToolUpdates) {
         val copy = pendingToolUpdates.toList()
@@ -901,7 +901,7 @@ class SessionDetailViewModel(
     receivedAssistantTextInMessage = true
     if (assistantFlushJob?.isActive == true) return
     assistantFlushJob = viewModelScope.launch {
-      delay(16)
+      delay(8)
       // Drain the buffer inside the mutex so that if this job is cancelled
       // between drain and items-update, message_end's mutex.withLock will
       // see the buffer as still un-drained and pick up the text.

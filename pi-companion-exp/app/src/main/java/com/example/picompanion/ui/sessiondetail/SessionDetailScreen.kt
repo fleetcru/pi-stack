@@ -23,6 +23,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
@@ -76,6 +80,7 @@ fun SessionDetailScreen(
   val agentWorking by viewModel.agentWorking.collectAsStateWithLifecycle()
   val streamingOrder by viewModel.streamingAssistantOrder.collectAsStateWithLifecycle()
   val listState = rememberLazyListState()
+  val scope = rememberCoroutineScope()
   var actionsOpen by rememberSaveable { mutableStateOf(false) }
   var actionsTab by rememberSaveable { mutableIntStateOf(0) }
   var filesOpen by rememberSaveable { mutableStateOf(false) }
@@ -108,16 +113,20 @@ fun SessionDetailScreen(
     is SessionTimelineItem.Tool -> (lastItem.output?.length ?: 0) + lastItem.status.hashCode()
     else -> items.size
   }
-  // Don't auto-scroll on initial history load — let the user see the
-  // full conversation from the start. Only follow streaming when
-  // already near the bottom (handled by the LaunchedEffect below).
-  // Follow streaming replies when already near the bottom.
+  // Auto-scroll to bottom on initial load, then follow streaming replies
+  // when already near the bottom.
+  var initialScrollDone by remember { mutableStateOf(false) }
   LaunchedEffect(items.size, streamVersion) {
-    delay(80)
-    if (items.isNotEmpty()) {
+    if (items.isEmpty()) return@LaunchedEffect
+    delay(60)
+    if (!initialScrollDone) {
+      // First load — scroll to the bottom so the user sees the latest message
+      listState.animateScrollToItem(items.lastIndex)
+      initialScrollDone = true
+    } else if (!listState.isScrollInProgress) {
       val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-      if (!listState.isScrollInProgress && lastVisible >= items.lastIndex - 1) {
-        listState.scrollToItem(items.lastIndex)
+      if (lastVisible >= items.lastIndex - 2) {
+        listState.animateScrollToItem(items.lastIndex)
       }
     }
   }
@@ -322,7 +331,7 @@ fun SessionDetailScreen(
               is SessionTimelineItem.FileChange -> "file"
               is SessionTimelineItem.System -> "system"
             }
-          }) { _, item ->
+          }) { index, item ->
           when (item) {
             is SessionTimelineItem.Chat -> ChatBubble(
               author = item.author,
@@ -331,8 +340,9 @@ fun SessionDetailScreen(
               isUser = item.isUser,
               imageUris = item.imageUris,
               streaming = !item.isUser && item.order == streamingOrder,
+              modifier = Modifier.animateItem(),
             )
-            is SessionTimelineItem.Tool -> ToolEventRow(item)
+            is SessionTimelineItem.Tool -> ToolEventRow(item, modifier = Modifier.animateItem())
             is SessionTimelineItem.FileChange -> FileChangeRow(item)
             is SessionTimelineItem.System -> SystemMessageRow(item)
           }
@@ -370,6 +380,44 @@ fun SessionDetailScreen(
         onRemoveAttachment = { index -> attachments = attachments.toMutableList().apply { removeAt(index) } },
         modifier = Modifier.align(Alignment.BottomCenter),
       )
+
+      // Scroll-to-bottom FAB — appears when user scrolls up
+      val showScrollDown by remember {
+        derivedStateOf {
+          val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+          items.isNotEmpty() && lastVisible < items.lastIndex - 3
+        }
+      }
+      androidx.compose.animation.AnimatedVisibility(
+        visible = showScrollDown,
+        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.scaleIn(
+          initialScale = 0.8f,
+        ),
+        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.scaleOut(
+          targetScale = 0.8f,
+        ),
+        modifier = Modifier
+          .align(Alignment.BottomEnd)
+          .padding(end = 16.dp, bottom = 140.dp),
+      ) {
+        androidx.compose.material3.FloatingActionButton(
+          onClick = {
+            scope.launch {
+              listState.animateScrollToItem(items.lastIndex)
+            }
+          },
+          containerColor = MaterialTheme.colorScheme.primaryContainer,
+          contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+          modifier = Modifier.size(40.dp),
+          shape = androidx.compose.foundation.shape.CircleShape,
+        ) {
+          Icon(
+            imageVector = Icons.Default.KeyboardArrowDown,
+            contentDescription = "Scroll to latest",
+            modifier = Modifier.size(20.dp),
+          )
+        }
+      }
     }
   }
 }
