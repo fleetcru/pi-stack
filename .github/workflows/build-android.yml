@@ -65,6 +65,12 @@ jobs:
           VERSION_NAME: ${{ steps.version.outputs.name }}
           VERSION_CODE: ${{ steps.version.outputs.code }}
 
+      - name: Verify MessagePack runtime classes
+        run: |
+          set -euo pipefail
+          unzip -p pi-companion-exp/app/build/outputs/apk/release/*.apk 'classes*.dex' > /tmp/release-dex.bin
+          grep -a -q 'MessageBufferU' /tmp/release-dex.bin
+
       - name: Stage APK with versioned name
         run: |
           mkdir -p staging

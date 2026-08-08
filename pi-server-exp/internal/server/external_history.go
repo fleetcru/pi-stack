@@ -24,18 +24,14 @@ func (s *Server) relaySessionMessages(w http.ResponseWriter, r *http.Request, ex
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
-	end := total - offset
-	if end < 0 {
-		end = 0
-	}
-	start := end - len(messages)
-	if start < 0 {
-		start = 0
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"command": "get_messages", "success": true, "data": map[string]any{
-		"messages": messages[start:end],
-		"history":  map[string]any{"total": total, "offset": offset, "limit": limit, "hasOlder": start > 0, "nextOffset": offset + (end - start)},
-	}})
+	writeJSON(w, http.StatusOK, relayMessagesPageResponse(messages, total, offset, limit))
+}
+
+func relayMessagesPageResponse(messages []any, total, offset, limit int) map[string]any {
+	return map[string]any{"command": "get_messages", "success": true, "data": map[string]any{
+		"messages": messages,
+		"history":  map[string]any{"total": total, "offset": offset, "limit": limit, "hasOlder": offset+len(messages) < total, "nextOffset": offset + len(messages)},
+	}}
 }
 
 func isDefaultPiSessionFile(path string) bool {
