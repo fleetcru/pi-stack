@@ -76,10 +76,10 @@ class SessionsRepository(
     }
   }
 
-  suspend fun getSessionMessages(sessionId: String, server: ServerEntry? = null, offset: Int = 0): HttpResult<JsonObject> {
+  suspend fun getSessionMessages(sessionId: String, server: ServerEntry? = null, offset: Int = 0, limit: Int = 50): HttpResult<JsonObject> {
     val target = server ?: getActiveServer() ?: return HttpResult.Failure("No server configured")
     return withContext(Dispatchers.IO) {
-      client.getSessionMessages(target, sessionId, offset)
+      client.getSessionMessages(target, sessionId, offset, limit)
     }
   }
 }

@@ -1,6 +1,9 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -29,6 +32,40 @@ func (s *Server) proxyRemoteSession(w http.ResponseWriter, r *http.Request, id, 
 		s.proxyWorkerWebSocket(w, r, worker, path)
 		return true
 	}
-	s.proxyWorker(w, r, worker, path)
+	admitted := r.Method == http.MethodPost && (action == "prompt" || ((action == "command" || action == "send") && remoteBodyStartsPrompt(r)))
+	cursor := uint64(0)
+	if admitted {
+		var cursorOK bool
+		cursor, cursorOK = s.remoteEventCursor(worker, record.WorkerSessionID)
+		if !cursorOK {
+			writeErrorText(w, http.StatusBadGateway, "worker lifecycle cursor is unavailable")
+			return true
+		}
+	}
+	if admitted && !s.acquireDistributedRun(r.Context(), id, worker.ID) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "hub run capacity is busy or this session already has an active run", "scheduler": s.admission.Snapshot()})
+		return true
+	}
+	if admitted {
+		s.setDistributedRunMetadata(id, "remote", record.WorkerSessionID)
+	}
+	ok = s.proxyWorker(w, r, worker, path)
+	if admitted {
+		if ok {
+			s.subscribeRemoteRun(worker, record.WorkerSessionID, id, cursor, true)
+		} else {
+			s.releaseDistributedRun(id)
+		}
+	}
 	return true
+}
+
+func remoteBodyStartsPrompt(r *http.Request) bool {
+	body, err := io.ReadAll(io.LimitReader(r.Body, (1<<20)+1))
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil || len(body) > 1<<20 {
+		return false
+	}
+	var command RPCCommand
+	return json.Unmarshal(body, &command) == nil && command["type"] == "prompt"
 }

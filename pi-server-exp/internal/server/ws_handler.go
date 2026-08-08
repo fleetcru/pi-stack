@@ -96,7 +96,17 @@ func (s *Server) sessionWebSocket(w http.ResponseWriter, r *http.Request, p *PiP
 			if err := codec.ReadWebSocket(conn, &cmd); err != nil {
 				return
 			}
+			if cmd["type"] == "prompt" && !s.admitLocalRun(r.Context(), p) {
+				select {
+				case out <- map[string]any{"type": "daemon_error", "error": "run capacity is busy or this session already has an active run", "scheduler": s.admission.Snapshot()}:
+				case <-done:
+				}
+				continue
+			}
 			if err := p.Send(cmd); err != nil {
+				if cmd["type"] == "prompt" {
+					p.releaseAdmission()
+				}
 				select {
 				case out <- map[string]any{"type": "daemon_error", "error": err.Error()}:
 				case <-done:

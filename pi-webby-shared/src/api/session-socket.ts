@@ -191,10 +191,12 @@ export class SessionSocket {
       this.setStatus("closed")
       return
     }
-    const delay = Math.min(
+    const cappedDelay = Math.min(
       this.maxDelay,
       this.minDelay * 2 ** this.retryAttempt
     )
+    // Prevent all clients from retrying in lockstep after a server restart.
+    const delay = Math.round(cappedDelay * (0.75 + Math.random() * 0.5))
     this.retryAttempt += 1
     this.setStatus("reconnecting")
     this.retryTimer = window.setTimeout(() => {

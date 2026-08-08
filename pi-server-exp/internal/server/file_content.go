@@ -159,16 +159,8 @@ func (s *Server) allowedFilePath(path string) error {
 	if len(s.cfg.AllowedRoots) == 0 {
 		return nil
 	}
-	for _, root := range s.cfg.AllowedRoots {
-		abs, err := filepath.Abs(strings.TrimSpace(root))
-		if err != nil {
-			continue
-		}
-		abs, err = filepath.EvalSymlinks(abs)
-		if err != nil {
-			continue
-		}
-		rel, err := filepath.Rel(abs, path)
+	for _, root := range s.resolvedRoots {
+		rel, err := filepath.Rel(root, path)
 		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return nil
 		}

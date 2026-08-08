@@ -33,6 +33,17 @@ type AppState = {
   servers: ServerConnectionSettings[]
   selectedSessionId?: string
   selectSession: (sessionId?: string) => void
+  setLiveSessionState: (sessionId: string, state: {
+    status: SessionSocketStatus
+    latestEventId?: number
+    lastEventAt?: number
+    taskId?: string
+    runId?: string
+    runtimeState?: string
+    runtimeReason?: string
+    resynchronizing: boolean
+  }) => void
+  clearLiveSessionState: (sessionId: string) => void
 }
 type UseAppStore = <T>(selector: (state: AppState) => T) => T
 
@@ -50,6 +61,7 @@ function useAppStore<T>(selector: (state: AppState) => T): T {
 
 export const piQueryKeys = {
   health: (baseUrl: string) => ["pi-server", baseUrl, "health"] as const,
+  scheduler: (baseUrl: string) => ["pi-server", baseUrl, "scheduler"] as const,
   capabilities: (baseUrl: string) =>
     ["pi-server", baseUrl, "capabilities"] as const,
   workers: (baseUrl: string) => ["pi-server", baseUrl, "workers"] as const,
@@ -81,7 +93,18 @@ export function useServerConfigured() {
 export function useServerHealth() {
   const client = usePiServerClient()
   const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.health(client.baseUrl), queryFn: () => client.health(), refetchInterval: 15_000, enabled: configured })
+  return useQuery({ queryKey: piQueryKeys.health(client.baseUrl), queryFn: () => client.health(), refetchInterval: 30_000, enabled: configured })
+}
+
+export function useSchedulerStatus(enabled = true) {
+  const client = usePiServerClient()
+  const configured = useServerConfigured()
+  return useQuery({
+    queryKey: piQueryKeys.scheduler(client.baseUrl),
+    queryFn: () => client.schedulerStatus(),
+    refetchInterval: 2_000,
+    enabled: configured && enabled,
+  })
 }
 
 export function useServerCapabilities() {
@@ -93,19 +116,19 @@ export function useServerCapabilities() {
 export function useWorkers() {
   const client = usePiServerClient()
   const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.workers(client.baseUrl), queryFn: () => client.listWorkers(), select: (result) => result.workers, refetchInterval: 15_000, enabled: configured })
+  return useQuery({ queryKey: piQueryKeys.workers(client.baseUrl), queryFn: () => client.listWorkers(), select: (result) => result.workers, refetchInterval: 30_000, enabled: configured })
 }
 
 export function useSessions() {
   const client = usePiServerClient()
   const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.sessions(client.baseUrl), queryFn: () => client.listSessions(), refetchInterval: 10_000, enabled: configured })
+  return useQuery({ queryKey: piQueryKeys.sessions(client.baseUrl), queryFn: () => client.listSessions(), refetchInterval: 20_000, enabled: configured })
 }
 
 export function useGlobalSessions() {
   const client = usePiServerClient()
   const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.globalSessions(client.baseUrl), queryFn: () => client.listGlobalSessions(), refetchInterval: 10_000, enabled: configured })
+  return useQuery({ queryKey: piQueryKeys.globalSessions(client.baseUrl), queryFn: () => client.listGlobalSessions(), refetchInterval: 20_000, enabled: configured })
 }
 
 export function useMachineSessions() {
@@ -307,11 +330,22 @@ export function useSessionCommand() {
   })
 }
 
+export interface SessionEventHealth {
+  latestEventId?: number
+  lastEventAt?: number
+  taskId?: string
+  runId?: string
+  runtime?: { state?: string; reason?: string; detail?: string }
+  gap?: { expectedAfter: number; received: number }
+  resynchronizing: boolean
+}
+
 export interface ActiveSessionSocket {
   events: SessionEvent[]
   error?: Error
   send: (command: RpcCommand) => void
   status: SessionSocketStatus
+  health: SessionEventHealth
 }
 
 /**
@@ -325,17 +359,20 @@ export function useActiveSessionSocket(
   const client = usePiServerClient()
   const selectedSessionId = useAppStore((state) => state.selectedSessionId)
   const activeSessionId = sessionId ?? selectedSessionId
+  const setLiveSessionState = useAppStore((state) => state.setLiveSessionState)
+  const clearLiveSessionState = useAppStore((state) => state.clearLiveSessionState)
   const [status, setStatus] = useState<SessionSocketStatus>("idle")
   const [events, setEvents] = useState<SessionEvent[]>([])
   const [error, setError] = useState<Error>()
+  const [health, setHealth] = useState<SessionEventHealth>({ resynchronizing: false })
   const socketRef = useRef<SessionSocket | undefined>(undefined)
   const queryClient = useQueryClient()
   const bufferedEventsRef = useRef<SessionEvent[]>([])
-  // Use a Map<number, boolean> instead of Set for O(1) eviction: when the
-  // map exceeds the cap, delete the oldest entries by insertion order rather
-  // than spreading/slicing the entire collection (which pauses for ~200ms).
+  // Use a bounded Map rather than copying/slicing a Set. Keep the eviction
+  // batch small so a busy event stream never causes a long handler pause.
   const seenEventIdsRef = useRef<Map<number, boolean>>(new Map())
-  const flushFrameRef = useRef<number | undefined>(undefined)
+  const flushTimerRef = useRef<number | undefined>(undefined)
+  const bufferOverflowRef = useRef(false)
 
   useEffect(() => {
     let disposed = false
@@ -345,6 +382,7 @@ export function useActiveSessionSocket(
       bufferedEventsRef.current = []
       seenEventIdsRef.current.clear()
       setError(undefined)
+      setHealth({ resynchronizing: false })
       if (!activeSessionId) setStatus("idle")
     })
     if (!activeSessionId) {
@@ -365,31 +403,75 @@ export function useActiveSessionSocket(
         if (typeof id === "number") {
           if (seenEventIdsRef.current.has(id)) return
           seenEventIdsRef.current.set(id, true)
-          if (seenEventIdsRef.current.size > 10_000) {
-            // Evict the oldest 5000 entries by insertion order. Map iteration
-            // order is insertion order, so the first 5000 keys are the oldest.
-            let toRemove = 5_000
+          if (seenEventIdsRef.current.size > 5_000) {
+            // Map iteration order is insertion order, so remove a small
+            // oldest batch instead of doing thousands of deletes at once.
+            let toRemove = 1_000
             for (const key of seenEventIdsRef.current.keys()) {
               if (toRemove-- <= 0) break
               seenEventIdsRef.current.delete(key)
             }
           }
         }
+        setHealth((current) => ({
+          ...current,
+          latestEventId: typeof id === "number" ? id : current.latestEventId,
+          lastEventAt: Date.now(),
+          taskId: typeof event._daemonTaskId === "string" ? event._daemonTaskId : current.taskId,
+          runId: typeof event._daemonRunId === "string" ? event._daemonRunId : current.runId,
+          runtime: event.type === "runtime_state"
+            ? {
+                state: event.runtimeState as string | undefined,
+                reason: event.runtimeReason as string | undefined,
+                detail: event.runtimeDetail as string | undefined,
+              }
+            : current.runtime,
+          gap: undefined,
+          resynchronizing: false,
+        }))
+        // Keep burst buffering bounded. If a producer outpaces rendering, do
+        // not silently discard events: mark the stream for durable-history
+        // reconciliation while retaining lifecycle events in the queue.
+        if (bufferedEventsRef.current.length >= 1_000) {
+          const discardIndex = bufferedEventsRef.current.findIndex((queued) =>
+            queued.type === "message_update" ||
+            queued.type === "tool_execution_update" ||
+            queued.type === "file_change"
+          )
+          if (discardIndex >= 0) {
+            bufferedEventsRef.current.splice(discardIndex, 1)
+          } else {
+            // An all-lifecycle burst is exceptional. Retain the newest state
+            // and reconcile history rather than allowing unbounded memory.
+            bufferedEventsRef.current.shift()
+          }
+          if (!bufferOverflowRef.current) {
+            bufferOverflowRef.current = true
+            setError(new Error("Session event buffer overflow; restoring conversation history"))
+            setHealth((current) => ({ ...current, resynchronizing: true }))
+            void queryClient.invalidateQueries({
+              queryKey: ["pi-server", client.baseUrl, "sessions", activeSessionId, "history"],
+            })
+          }
+        }
         bufferedEventsRef.current.push(event)
-        if (flushFrameRef.current !== undefined) return
-        // Batch at ~60fps using requestAnimationFrame for smooth streaming.
-        // The streaming assistant row re-parses its full Markdown on each
-        // flush, but requestAnimationFrame ensures we only update once per
-        // frame, preventing excessive recomposition.
-        flushFrameRef.current = requestAnimationFrame(() => {
-          flushFrameRef.current = undefined
+        if (flushTimerRef.current !== undefined) return
+        // A 30fps cap keeps streamed output responsive while avoiding full
+        // timeline reconstruction and Markdown work on every display frame.
+        flushTimerRef.current = window.setTimeout(() => {
+          flushTimerRef.current = undefined
           const incoming = bufferedEventsRef.current.splice(0)
-          setEvents((current) => [...current, ...incoming].slice(-500))
-        })
+          bufferOverflowRef.current = false
+          setEvents((current) => {
+            const next = current.concat(incoming)
+            return next.length > 500 ? next.slice(next.length - 500) : next
+          })
+        }, 33)
       },
       onGap: (expectedAfter, received) => {
         if (disposed) return
         setError(new Error(`Session event history gap detected (${expectedAfter} → ${received}); resynchronizing conversation`))
+        setHealth((current) => ({ ...current, gap: { expectedAfter, received }, resynchronizing: true }))
         void queryClient.invalidateQueries({
           queryKey: ["pi-server", client.baseUrl, "sessions", activeSessionId, "history"],
         })
@@ -401,11 +483,30 @@ export function useActiveSessionSocket(
     return () => {
       disposed = true
       socket.close()
-      if (flushFrameRef.current !== undefined) window.cancelAnimationFrame(flushFrameRef.current)
-      flushFrameRef.current = undefined
+      if (flushTimerRef.current !== undefined) window.clearTimeout(flushTimerRef.current)
+      flushTimerRef.current = undefined
       if (socketRef.current === socket) socketRef.current = undefined
     }
   }, [activeSessionId, client, queryClient, watchFiles])
+
+  useEffect(() => {
+    if (!activeSessionId) return
+    setLiveSessionState(activeSessionId, {
+      status,
+      latestEventId: health.latestEventId,
+      lastEventAt: health.lastEventAt,
+      taskId: health.taskId,
+      runId: health.runId,
+      runtimeState: health.runtime?.state,
+      runtimeReason: health.runtime?.reason,
+      resynchronizing: health.resynchronizing,
+    })
+  }, [activeSessionId, health, setLiveSessionState, status])
+
+  useEffect(() => {
+    if (!activeSessionId) return
+    return () => clearLiveSessionState(activeSessionId)
+  }, [activeSessionId, clearLiveSessionState])
 
   const send = useCallback(
     (command: RpcCommand) => socketRef.current?.send(command),
@@ -417,6 +518,7 @@ export function useActiveSessionSocket(
     error,
     send,
     status,
+    health,
   }
 }
 

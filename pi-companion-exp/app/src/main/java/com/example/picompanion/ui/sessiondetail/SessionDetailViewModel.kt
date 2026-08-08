@@ -16,7 +16,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.picompanion.di.AppModule
 import com.example.picompanion.data.repository.SessionsRepository
-import com.example.picompanion.data.websocket.SessionEventSocket
 import com.example.picompanion.data.websocket.SocketEvent
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
@@ -50,7 +49,7 @@ class SessionDetailViewModel(
 
   private val settingsDataStore = AppModule.settingsDataStore
   private val client = AppModule.client
-  private val socket = SessionEventSocket(client.okHttpClient)
+  private val transport = SessionTransportCoordinator(client, sessionId)
   private val repository = SessionsRepository(client, settingsDataStore)
 
   private val _items = MutableStateFlow<List<SessionTimelineItem>>(emptyList())
@@ -90,8 +89,7 @@ class SessionDetailViewModel(
   val loadingOlderHistory: StateFlow<Boolean> = _loadingOlderHistory.asStateFlow()
   private val _historyLoadError = MutableStateFlow<String?>(null)
   val historyLoadError: StateFlow<String?> = _historyLoadError.asStateFlow()
-  private var nextHistoryOffset = 0
-  private var historicalItems: List<SessionTimelineItem> = emptyList()
+  private val historyState = SessionHistoryState()
   private val historyMutex = kotlinx.coroutines.sync.Mutex()
   // Generation counter for loadHistory: incremented on each connect() so a
   // stale in-flight history request from a previous connection is discarded.
@@ -196,6 +194,7 @@ class SessionDetailViewModel(
         // OEM restriction — reconnection will rely on manual retry.
       }
     }
+    observeTransport()
     connect()
 
     // Observe settings changes — if the active server URL or token changes,
@@ -213,7 +212,7 @@ class SessionDetailViewModel(
           // Only reconnect if we already had a connection (skip the initial emission
           // which is handled by connect() above).
           if (activeServer != null) {
-            socket.disconnect()
+            transport.disconnect()
             connect()
           }
         }
@@ -277,9 +276,11 @@ class SessionDetailViewModel(
       }
 
       activeServer = server
-      loadMetadata()
-      loadGitChanges()
-      loadModelControls()
+      restoreCachedSession(server.id)
+      launch { loadMetadata() }
+      launch { loadGitChanges() }
+      launch { loadModelControls() }
+      launch { loadHistory() }
       relayHealthJob?.cancel()
       relayHealthJob = launch {
         // Poll once to check if this is an external (relay) session. If not,
@@ -294,76 +295,91 @@ class SessionDetailViewModel(
         }
       }
 
-      launch {
-        socket.events.collect { event ->
-          when (event) {
-            is SocketEvent.Connected -> {
-              reconnectJob?.cancel()
-              reconnectAttempt = 0
-              _connectionState.value = ConnectionState.Connected
-              flushQueuedPrompts()
-            }
-            is SocketEvent.EventsLost -> {
-              appendItem(SessionTimelineItem.System("Connection missed session events; restoring conversation history"))
-              // Full replay plus persisted JSONL history reconciles any gap
-              // caused by a bounded server ring or slow subscriber.
-              activeServer?.let { server ->
-                viewModelScope.launch {
-                  // Load fresh history first. The history merge in loadHistory
-                  // will reconcile with whatever is currently in _items.
-                  // Open the new stream after history is loaded so replay
-                  // events don't race with the history merge.
-                  loadHistory()
-                  openTicketedStream(server, null)
-                }
-              }
-            }
-            is SocketEvent.Disconnected -> {
-              _connectionState.value = ConnectionState.Disconnected(event.reason)
-              scheduleReconnect()
-            }
-            is SocketEvent.Error -> {
-              _connectionState.value = ConnectionState.Error(event.message)
-              scheduleReconnect()
-            }
-            is SocketEvent.Message -> {
-              lastEventId = event.eventId ?: lastEventId
-              handleEvent(event.raw, event.type)
-            }
-            is SocketEvent.RawMessage -> {
-              appendItem(SessionTimelineItem.System(event.text))
+      // Ticket acquisition runs alongside metadata/history startup. Resume from
+      // the cached cursor when available; fresh sessions intentionally skip replay
+      // because durable history is loading in parallel.
+      openTicketedStream(server, lastEventId.takeIf { it > 0 } ?: Long.MAX_VALUE)
+    }
+  }
+
+  private fun observeTransport() {
+    viewModelScope.launch {
+      transport.events.collect { event ->
+        when (event) {
+          is SocketEvent.Connected -> {
+            reconnectJob?.cancel()
+            reconnectAttempt = 0
+            _connectionState.value = ConnectionState.Connected
+            flushQueuedPrompts()
+          }
+          is SocketEvent.EventsLost -> {
+            appendItem(SessionTimelineItem.System("Connection missed session events; restoring conversation history"))
+            activeServer?.let { server ->
+              launch { loadHistory(); openTicketedStream(server, null) }
             }
           }
+          is SocketEvent.Disconnected -> {
+            _connectionState.value = ConnectionState.Disconnected(event.reason)
+            scheduleReconnect()
+          }
+          is SocketEvent.Error -> {
+            _connectionState.value = ConnectionState.Error(event.message)
+            scheduleReconnect()
+          }
+          is SocketEvent.Message -> {
+            lastEventId = event.eventId ?: lastEventId
+            handleEvent(event.raw, event.type)
+          }
+          is SocketEvent.RawMessage -> appendItem(SessionTimelineItem.System(event.text))
         }
       }
-
-      // Open the low-latency stream first. A fresh Pi process can take several
-      // seconds to answer get_messages; waiting for history here made mobile
-      // interaction appear disconnected even though the server was reachable.
-      openTicketedStream(server, Long.MAX_VALUE)
-      launch { loadHistory() }
     }
+  }
+
+  private fun restoreCachedSession(serverId: String) {
+    val cached = SessionStateCache.get("$serverId:$sessionId") ?: return
+    _items.value = cached.items
+    historyState.restore(cached.historicalItems, cached.nextHistoryOffset, cached.hasOlder)
+    _hasOlderHistory.value = cached.hasOlder
+    _sessionTitle.value = cached.title
+    _sessionProject.value = cached.project
+    _sessionCwd.value = cached.cwd
+    lastEventId = cached.lastEventId
+    timelineSeq = cached.items.maxOfOrNull { item -> when (item) {
+      is SessionTimelineItem.Chat -> item.order
+      is SessionTimelineItem.Tool -> item.order
+      is SessionTimelineItem.FileChange -> item.order
+      is SessionTimelineItem.System -> item.order
+    } } ?: 0
+  }
+
+  private fun cacheCurrentSession() {
+    val serverId = activeServer?.id ?: return
+    SessionStateCache.put("$serverId:$sessionId", SessionStateCache.Entry(
+      items = _items.value,
+      historicalItems = historyState.historicalItems,
+      nextHistoryOffset = historyState.nextOffset,
+      hasOlder = _hasOlderHistory.value,
+      title = _sessionTitle.value,
+      project = _sessionProject.value,
+      cwd = _sessionCwd.value,
+      lastEventId = lastEventId,
+    ))
   }
 
   private suspend fun openTicketedStream(
     server: com.example.picompanion.data.settings.ServerEntry,
     since: Long?,
   ) {
-    when (val ticket = withContext(Dispatchers.IO) {
-      client.issueWebSocketTicket(server, sessionId)
-    }) {
-      is com.example.picompanion.data.api.HttpResult.Success ->
-        socket.connect(server, ticket.value.ws, since)
-      is com.example.picompanion.data.api.HttpResult.Failure -> {
-        _connectionState.value = ConnectionState.Error(ticket.message)
-        scheduleReconnect()
-      }
+    transport.open(server, since)?.let { message ->
+      _connectionState.value = ConnectionState.Error(message)
+      scheduleReconnect()
     }
   }
 
   fun loadOlderHistory() {
     if (!_hasOlderHistory.value || _loadingOlderHistory.value) return
-    viewModelScope.launch { loadHistory(nextHistoryOffset, appendOld = true) }
+    viewModelScope.launch { loadHistory(historyState.nextOffset, appendOld = true) }
   }
 
   private suspend fun loadHistory(offset: Int = 0, appendOld: Boolean = false) {
@@ -376,129 +392,20 @@ class SessionDetailViewModel(
       if (!appendOld && generation != historyGeneration) return
       if (appendOld) _loadingOlderHistory.value = true
       try {
-        when (val result = repository.getSessionMessages(sessionId, offset = offset)) {
+        when (val result = repository.getSessionMessages(sessionId, offset = offset, limit = if (appendOld) 75 else 40)) {
           is com.example.picompanion.data.api.HttpResult.Success -> {
             val data = result.value["data"]?.jsonObject
             val messages = data?.get("messages") as? JsonArray
             if (messages != null) {
-              // First pass: parse all entries. tool_result entries carry the
-              // output of a tool_use, so we collect them separately and merge
-              // into the matching tool_use in a second pass.
-              val toolResults = mutableMapOf<String, String>() // callId → output text
-              // Show first 3 messages with their roles and content types
-              messages.take(3).forEachIndexed { i, el ->
-                val obj = el as? JsonObject
-                val msgObj = obj?.get("message") as? JsonObject
-                val role = msgObj?.get("role")?.toString()?.trim('"')
-                val content = msgObj?.get("content")
-                val contentType = when (content) {
-                  is kotlinx.serialization.json.JsonArray -> "array[${content.size}] types=${content.mapNotNull { (it as? JsonObject)?.get("type")?.toString()?.trim('"') }}"
-                  is kotlinx.serialization.json.JsonPrimitive -> "string(${content.content.take(50)})"
-                  else -> content?.javaClass?.simpleName ?: "null"
-                }
+              // Parsing persisted JSON and tool payloads can be expensive for long
+              // sessions; keep it off Main, then merge atomically on return.
+              val history = withContext(Dispatchers.Default) {
+                SessionHistoryParser.parse(messages)
               }
-              val parsed = mutableListOf<SessionTimelineItem>()
-              for (element in messages) {
-                val message = element as? JsonObject ?: continue
-                val role = message.getString("role") ?: continue
-                val historyType = message.getString("_historyType")
-
-                // Handle tool_use entries (standalone format)
-                if (historyType == "tool_use") {
-                  val name = message.getString("name") ?: "tool"
-                  val id = message.getString("id") ?: "tool-${System.nanoTime()}"
-                  parsed.add(SessionTimelineItem.Tool(
-                    callId = id,
-                    name = name,
-                    status = "completed",
-                    args = message["input"]?.toString(),
-                  ))
-                  continue
-                }
-                if (historyType == "tool_result") {
-                  val toolUseId = message.getString("tool_use_id") ?: message.getString("id")
-                  if (toolUseId != null) {
-                    val output = message.findText() ?: message["content"]?.findText()
-                    if (output != null) toolResults[toolUseId] = output
-                  }
-                  continue
-                }
-
-                // Handle tool role entries (some servers emit role="tool")
-                if (role == "tool") {
-                  val toolUseId = message.getString("tool_use_id") ?: message.getString("toolCallId") ?: message.getString("id")
-                  if (toolUseId != null) {
-                    val output = message.findText() ?: message["content"]?.findText()
-                    if (output != null) toolResults[toolUseId] = output
-                  }
-                  continue
-                }
-                // Handle toolResult role (Pi/OpenAI format)
-                if (role == "toolResult") {
-                  val toolUseId = message.getString("toolCallId") ?: message.getString("tool_use_id") ?: message.getString("id")
-                  if (toolUseId != null) {
-                    val output = message.findText() ?: message["content"]?.findText()
-                    if (output != null) toolResults[toolUseId] = output
-                  }
-                  continue
-                }
-
-                if (role != "user" && role != "assistant") continue
-
-                // Check if the message content contains tool call blocks.
-                // Pi/OpenAI uses type:"toolCall", Anthropic uses type:"tool_use".
-                val content = message["content"]
-                if (content is JsonArray) {
-                  val toolBlocks = content.filterIsInstance<JsonObject>().filter {
-                    val t = it.getString("type")
-                    t == "toolCall" || t == "tool_use"
-                  }
-                  if (toolBlocks.isNotEmpty()) {
-                    toolBlocks.forEach { block ->
-                      val name = block.getString("name") ?: "tool"
-                      val id = block.getString("id") ?: "tool-${System.nanoTime()}"
-                      // Pi/OpenAI uses "arguments", Anthropic uses "input"
-                      val args = block["arguments"]?.toString() ?: block["input"]?.toString()
-                      toolResults[id] = toolResults[id] ?: ""
-                      parsed.add(SessionTimelineItem.Tool(
-                        callId = id,
-                        name = name,
-                        status = "completed",
-                        args = args,
-                      ))
-                    }
-                  }
-                }
-
-                val text = message.findText()?.trim()?.takeIf { it.isNotEmpty() }
-                if (text != null) {
-                  parsed.add(SessionTimelineItem.Chat(
-                    author = if (role == "user") "You" else "Pi Agent",
-                    text = text,
-                    time = message.getString("timestamp").orEmpty(),
-                    isUser = role == "user",
-                  ))
-                }
-              } // end for loop
-              // Second pass: merge tool_result output into matching tool_use items.
-              val toolCount = parsed.count { it is SessionTimelineItem.Tool }
-              val history = parsed.map { item ->
-                if (item is SessionTimelineItem.Tool && item.callId in toolResults) {
-                  item.copy(output = toolResults[item.callId])
-                } else {
-                  item
-                }
-              }.distinctBy { timelineItemId(it) }
               val historyMeta = data["history"]?.jsonObject
-              _hasOlderHistory.value = historyMeta?.get("hasOlder")
-                ?.jsonPrimitive?.booleanOrNull == true
-              nextHistoryOffset = historyMeta?.get("nextOffset")
-                ?.jsonPrimitive?.intOrNull ?: 0
-
-              // Preserve already-loaded older pages while keeping live socket
-              // items at the bottom of the timeline.
-              historicalItems = (if (appendOld) history + historicalItems else history)
-                .distinctBy { timelineItemId(it) }
+              val hasOlder = historyMeta?.get("hasOlder")?.jsonPrimitive?.booleanOrNull == true
+              val nextOffset = historyMeta?.get("nextOffset")?.jsonPrimitive?.intOrNull ?: 0
+              _hasOlderHistory.value = hasOlder
               _historyLoadError.value = null
               // Atomic update prevents live events arriving during the HTTP
               // request from being overwritten by the history snapshot. HTTP
@@ -507,32 +414,15 @@ class SessionDetailViewModel(
               // Build merged list OUTSIDE _items.update to avoid withOrder()
               // being called on CAS retries (which would create different
               // order values and cause LazyColumn key instability).
-              val currentItems = _items.value
-              val merged = LinkedHashMap<String, SessionTimelineItem>()
-              historicalItems.forEach { merged[timelineItemId(it)] = it }
-              currentItems.filter {
-                it is SessionTimelineItem.Chat && it.time == "now" && it.imageUris.isNotEmpty()
-              }.forEach { merged[timelineItemId(it)] = it }
-              currentItems.filter { item ->
-                val isOptimisticImage = item is SessionTimelineItem.Chat &&
-                  item.time == "now" && item.imageUris.isNotEmpty()
-                if (isOptimisticImage) return@filter false
-                when (item) {
-                  is SessionTimelineItem.Chat -> true
-                  is SessionTimelineItem.Tool -> true
-                  is SessionTimelineItem.System -> true
-                  is SessionTimelineItem.FileChange -> true
-                }
-              }.forEach { item ->
-                val id = timelineItemId(item)
-                val existing = merged[id]
-                if (item is SessionTimelineItem.Tool || existing == null) {
-                  merged[id] = item
-                }
-              }
-              // LinkedHashMap preserves chronological insertion order.
-              // Assign fresh sequential order values for stable Compose keys.
-              _items.value = merged.values.map { withOrder(it) }
+              _items.value = historyState.applyPage(
+                page = history,
+                appendOld = appendOld,
+                nextOffset = nextOffset,
+                hasOlder = hasOlder,
+                liveItems = _items.value,
+                stamp = ::withOrder,
+              )
+              cacheCurrentSession()
               // Log AFTER the update to confirm items were set
             }
           }
@@ -1364,16 +1254,17 @@ class SessionDetailViewModel(
 
   fun reconnect() {
     reconnectJob?.cancel()
-    socket.disconnect()
+    transport.disconnect()
     scheduleReconnect(immediate = true)
   }
 
   override fun onCleared() {
+    cacheCurrentSession()
     closed = true
     reconnectJob?.cancel()
     relayHealthJob?.cancel()
     if (networkCallbackRegistered) connectivityManager.unregisterNetworkCallback(networkCallback)
-    socket.disconnect()
+    transport.close()
     super.onCleared()
   }
 

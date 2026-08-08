@@ -26,11 +26,22 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if action == "prompt" || action == "steer" || action == "follow-up" {
+			admitted := action == "prompt"
+			if admitted && !s.acquireDistributedRun(r.Context(), id, "relay:"+id) {
+				writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "hub run capacity is busy or this relay already has an active run", "scheduler": s.admission.Snapshot()})
+				return
+			}
+			if admitted {
+				s.setDistributedRunMetadata(id, "relay", "")
+			}
 			var body struct {
 				Message string `json:"message"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			if body.Message == "" {
+				if admitted {
+					s.releaseDistributedRun(id)
+				}
 				writeErrorText(w, http.StatusBadRequest, "message is required")
 				return
 			}
@@ -43,6 +54,9 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 			}
 			command := ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: body.Message, Delivery: delivery}
 			if !s.external.enqueue(id, command) {
+				if admitted {
+					s.releaseDistributedRun(id)
+				}
 				writeErrorText(w, http.StatusBadGateway, "relay is unavailable")
 				return
 			}
@@ -195,6 +209,22 @@ func (s *Server) handleRawCommand(w http.ResponseWriter, r *http.Request, p *PiP
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if cmd["type"] == "prompt" {
+		ctx, cancel := requestContext(r.Context(), s.cfg.RequestTimeout)
+		defer cancel()
+		if !s.admitLocalRun(ctx, p) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "run capacity is busy or this session already has an active run", "scheduler": s.admission.Snapshot()})
+			return
+		}
+		resp, err := p.Request(ctx, cmd)
+		if err != nil {
+			p.releaseAdmission()
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 	s.requestAndWrite(w, r, p, cmd)
 }
 
@@ -204,7 +234,14 @@ func (s *Server) handleRawSend(w http.ResponseWriter, r *http.Request, p *PiProc
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if cmd["type"] == "prompt" && !s.admitLocalRun(r.Context(), p) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "run capacity is busy or this session already has an active run", "scheduler": s.admission.Snapshot()})
+		return
+	}
 	if err := p.Send(cmd); err != nil {
+		if cmd["type"] == "prompt" {
+			p.releaseAdmission()
+		}
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}

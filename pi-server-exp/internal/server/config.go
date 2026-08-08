@@ -12,27 +12,32 @@ import (
 )
 
 type Config struct {
-	Addr               string
-	PiBinary           string
-	Extensions         []string
-	CWD                string
-	DataDir            string
-	AllowedOrigins     []string
-	AllowedRoots       []string
-	AllowedWorkerHosts []string
-	AuthToken          string
-	ShutdownTimeout    time.Duration
-	RequestTimeout     time.Duration
-	ReadTimeout        time.Duration
-	WriteTimeout       time.Duration
-	IdleTimeout        time.Duration
-	MaxSessions        int
-	RestartMax         int
-	RestartBackoff     time.Duration
-	EventHistoryMax    int
-	EventHistoryBytes  int
-	MaxWatches         int
-	LogLevel           slog.Level
+	Addr                  string
+	PiBinary              string
+	Extensions            []string
+	CWD                   string
+	DataDir               string
+	AllowedOrigins        []string
+	AllowedRoots          []string
+	AllowedWorkerHosts    []string
+	AuthToken             string
+	ShutdownTimeout       time.Duration
+	RequestTimeout        time.Duration
+	ReadTimeout           time.Duration
+	WriteTimeout          time.Duration
+	IdleTimeout           time.Duration
+	MaxSessions           int
+	MaxActiveRuns         int
+	MaxRunsPerSession     int
+	MaxRunsPerWorker      int
+	MaxQueuedRuns         int
+	DistributedRunTimeout time.Duration
+	RestartMax            int
+	RestartBackoff        time.Duration
+	EventHistoryMax       int
+	EventHistoryBytes     int
+	MaxWatches            int
+	LogLevel              slog.Level
 }
 
 // ValidateConfig checks local prerequisites before the daemon starts accepting
@@ -72,27 +77,32 @@ func ValidateConfig(cfg Config) error {
 func ConfigFromEnv() Config {
 	cwd, _ := os.Getwd()
 	cfg := Config{
-		Addr:               env("PI_SERVER_ADDR", "127.0.0.1:3141"),
-		PiBinary:           env("PI_SERVER_PI_BINARY", "pi"),
-		Extensions:         envList("PI_SERVER_PI_EXTENSIONS"),
-		CWD:                env("PI_SERVER_CWD", cwd),
-		DataDir:            env("PI_SERVER_DATA_DIR", defaultDataDir()),
-		AuthToken:          env("PI_SERVER_AUTH_TOKEN", ""),
-		AllowedOrigins:     envList("PI_SERVER_ALLOWED_ORIGINS"),
-		AllowedRoots:       envList("PI_SERVER_ALLOWED_ROOTS"),
-		AllowedWorkerHosts: envList("PI_SERVER_ALLOWED_WORKER_HOSTS"),
-		ShutdownTimeout:    envDuration("PI_SERVER_SHUTDOWN_TIMEOUT", 10*time.Second),
-		RequestTimeout:     envDuration("PI_SERVER_REQUEST_TIMEOUT", 30*time.Second),
-		ReadTimeout:        envDuration("PI_SERVER_READ_TIMEOUT", 30*time.Second),
-		WriteTimeout:       envDuration("PI_SERVER_WRITE_TIMEOUT", 60*time.Second),
-		IdleTimeout:        envDuration("PI_SERVER_IDLE_TIMEOUT", 120*time.Second),
-		MaxSessions:        envInt("PI_SERVER_MAX_SESSIONS", 8),
-		RestartMax:         envInt("PI_SERVER_RESTART_MAX", 5),
-		RestartBackoff:     envDuration("PI_SERVER_RESTART_BACKOFF", time.Second),
-		EventHistoryMax:    envInt("PI_SERVER_EVENT_HISTORY_MAX", 100),
-		EventHistoryBytes:  envInt("PI_SERVER_EVENT_HISTORY_BYTES", 2<<20),
-		MaxWatches:         envInt("PI_SERVER_MAX_WATCHES", 2048),
-		LogLevel:           slog.LevelInfo,
+		Addr:                  env("PI_SERVER_ADDR", "127.0.0.1:3141"),
+		PiBinary:              env("PI_SERVER_PI_BINARY", "pi"),
+		Extensions:            envList("PI_SERVER_PI_EXTENSIONS"),
+		CWD:                   env("PI_SERVER_CWD", cwd),
+		DataDir:               env("PI_SERVER_DATA_DIR", defaultDataDir()),
+		AuthToken:             env("PI_SERVER_AUTH_TOKEN", ""),
+		AllowedOrigins:        envList("PI_SERVER_ALLOWED_ORIGINS"),
+		AllowedRoots:          envList("PI_SERVER_ALLOWED_ROOTS"),
+		AllowedWorkerHosts:    envList("PI_SERVER_ALLOWED_WORKER_HOSTS"),
+		ShutdownTimeout:       envDuration("PI_SERVER_SHUTDOWN_TIMEOUT", 10*time.Second),
+		RequestTimeout:        envDuration("PI_SERVER_REQUEST_TIMEOUT", 30*time.Second),
+		ReadTimeout:           envDuration("PI_SERVER_READ_TIMEOUT", 30*time.Second),
+		WriteTimeout:          envDuration("PI_SERVER_WRITE_TIMEOUT", 60*time.Second),
+		IdleTimeout:           envDuration("PI_SERVER_IDLE_TIMEOUT", 120*time.Second),
+		MaxSessions:           envNonNegativeInt("PI_SERVER_MAX_SESSIONS", 8),
+		MaxActiveRuns:         envNonNegativeInt("PI_SERVER_MAX_ACTIVE_RUNS", 8),
+		MaxRunsPerSession:     envNonNegativeInt("PI_SERVER_MAX_RUNS_PER_SESSION", 1),
+		MaxRunsPerWorker:      envNonNegativeInt("PI_SERVER_MAX_RUNS_PER_WORKER", 4),
+		MaxQueuedRuns:         envNonNegativeInt("PI_SERVER_MAX_QUEUED_RUNS", 32),
+		DistributedRunTimeout: envDuration("PI_SERVER_DISTRIBUTED_RUN_TIMEOUT", 2*time.Hour),
+		RestartMax:            envInt("PI_SERVER_RESTART_MAX", 5),
+		RestartBackoff:        envDuration("PI_SERVER_RESTART_BACKOFF", time.Second),
+		EventHistoryMax:       envInt("PI_SERVER_EVENT_HISTORY_MAX", 100),
+		EventHistoryBytes:     envInt("PI_SERVER_EVENT_HISTORY_BYTES", 2<<20),
+		MaxWatches:            envInt("PI_SERVER_MAX_WATCHES", 2048),
+		LogLevel:              slog.LevelInfo,
 	}
 	if os.Getenv("PI_SERVER_DEBUG") == "1" || os.Getenv("PI_SERVER_DEBUG") == "true" {
 		cfg.LogLevel = slog.LevelDebug
@@ -120,6 +130,17 @@ func env(key, fallback string) string {
 func envInt(key string, fallback int) int {
 	if value, err := strconv.Atoi(os.Getenv(key)); err == nil && value > 0 {
 		return value
+	}
+	return fallback
+}
+
+func envNonNegativeInt(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	if parsed, err := strconv.Atoi(value); err == nil && parsed >= 0 {
+		return parsed
 	}
 	return fallback
 }

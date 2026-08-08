@@ -9,12 +9,25 @@ export interface ServerConnectionSettings {
   rememberToken?: boolean
 }
 
+export interface LiveSessionState {
+  status: "idle" | "connecting" | "open" | "reconnecting" | "closed"
+  latestEventId?: number
+  lastEventAt?: number
+  taskId?: string
+  runId?: string
+  runtimeState?: string
+  runtimeReason?: string
+  resynchronizing: boolean
+}
+
 interface AppState {
   connection?: ServerConnectionSettings
   servers: ServerConnectionSettings[]
   selectedSessionId?: string
   expandedTreeNodes: Record<string, true>
   pinnedSessionIds: Record<string, true>
+  /** Volatile socket-derived state; intentionally excluded from persistence. */
+  liveSessionState: Record<string, LiveSessionState>
   setConnection: (connection?: ServerConnectionSettings) => void
   addServer: (connection: ServerConnectionSettings) => void
   removeServer: (baseUrl: string) => void
@@ -22,6 +35,8 @@ interface AppState {
   setTreeNodeExpanded: (nodeId: string, expanded: boolean) => void
   toggleTreeNode: (nodeId: string) => void
   togglePinSession: (sessionId: string) => void
+  setLiveSessionState: (sessionId: string, state: LiveSessionState) => void
+  clearLiveSessionState: (sessionId: string) => void
 }
 
 /**
@@ -37,6 +52,7 @@ export function createAppStore(storageName: string) {
         selectedSessionId: undefined,
         expandedTreeNodes: {},
         pinnedSessionIds: {},
+        liveSessionState: {},
         setConnection: (connection) =>
           set((state) => ({
             connection,
@@ -89,6 +105,14 @@ export function createAppStore(storageName: string) {
             else pinnedSessionIds[sessionId] = true
             return { pinnedSessionIds }
           }),
+        setLiveSessionState: (sessionId, liveState) => set((state) => ({
+          liveSessionState: { ...state.liveSessionState, [sessionId]: liveState },
+        })),
+        clearLiveSessionState: (sessionId) => set((state) => {
+          const liveSessionState = { ...state.liveSessionState }
+          delete liveSessionState[sessionId]
+          return { liveSessionState }
+        }),
       }),
       {
         name: storageName,

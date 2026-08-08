@@ -13,51 +13,71 @@ import (
 )
 
 type Server struct {
-	cfg              Config
+	cfg               Config
 	maxSessionsAtomic int64 // atomic; mirrors cfg.MaxSessions for lock-free reads
-	logger           *slog.Logger
-	httpSrv        *http.Server
-	sessions       *SessionRegistry
-	workers        *WorkerRegistry
-	remoteSessions *RemoteSessionRegistry
-	external       *ExternalRegistry
-	wsTickets      *wsTicketStore
-	httpClient     *http.Client
-	upgrader       websocket.Upgrader
-	watchMu        sync.Mutex
-	watchers       map[string]func()
-	historyMu      sync.Mutex
-	historyCache   map[string]historyCacheEntry
-	stateCacheMu   sync.Mutex
-	stateCache     map[string]cachedSessionState
-	pendingTitleMu sync.Mutex
-	pendingTitle   map[string]bool
+	logger            *slog.Logger
+	httpSrv           *http.Server
+	sessions          *SessionRegistry
+	admission         *TaskAdmission
+	workers           *WorkerRegistry
+	remoteSessions    *RemoteSessionRegistry
+	external          *ExternalRegistry
+	wsTickets         *wsTicketStore
+	httpClient        *http.Client
+	upgrader          websocket.Upgrader
+	watchMu           sync.Mutex
+	watchers          map[string]func()
+	historyMu         sync.Mutex
+	historyCache      map[string]historyCacheEntry
+	historyIndexes    map[string]historyIndex
+	historyIndexPaths map[string]string
+	stateCacheMu      sync.Mutex
+	stateCache        map[string]cachedSessionState
+	pendingTitleMu    sync.Mutex
+	pendingTitle      map[string]bool
 	// Idempotency cache: maps "sessionId:key" to expiry time.
 	// Prevents duplicate prompt processing within a TTL window.
-	idempotencyMu sync.Mutex
-	idempotency   map[string]time.Time
-	resolvedRoots  []string // pre-resolved allowed roots (symlinks evaluated)
-	stopHeartbeat  chan struct{}
-	sessionBridge  *SessionBridge
+	idempotencyMu             sync.Mutex
+	idempotency               map[string]time.Time
+	resolvedRoots             []string // pre-resolved allowed roots (symlinks evaluated)
+	stopHeartbeat             chan struct{}
+	sessionBridge             *SessionBridge
+	distributedMu             sync.Mutex
+	distributedPersistMu      sync.Mutex
+	distributedRuns           map[string]distributedReservation // hub session ID -> reservation
+	distributedPath           string
+	distributedReconstructing bool
 }
 
 func New(cfg Config, logger *slog.Logger) *Server {
 	s := &Server{
-		cfg:              cfg,
+		cfg:               cfg,
 		maxSessionsAtomic: int64(cfg.MaxSessions),
-		logger:         logger,
-		sessions:       NewSessionRegistry(filepath.Join(cfg.DataDir, "sessions.json"), cfg.MaxSessions),
-		workers:        NewWorkerRegistry(filepath.Join(cfg.DataDir, "workers.json")),
-		remoteSessions: NewRemoteSessionRegistry(filepath.Join(cfg.DataDir, "remote-sessions.json")),
-		external:       newExternalRegistry(filepath.Join(cfg.DataDir, "relay-commands.json")),
-		wsTickets:      newWSTicketStore(),
-		httpClient:     &http.Client{Timeout: cfg.RequestTimeout, Transport: &http.Transport{MaxIdleConns: 64, MaxIdleConnsPerHost: 16, MaxConnsPerHost: 32, IdleConnTimeout: 90 * time.Second}},
-		watchers:       map[string]func(){},
-		historyCache:   map[string]historyCacheEntry{},
-		stateCache:     map[string]cachedSessionState{},
-		pendingTitle:   map[string]bool{},
-		resolvedRoots:  resolveAllowedRoots(cfg.AllowedRoots),
-		stopHeartbeat:  make(chan struct{}),
+		logger:            logger,
+		sessions:          NewSessionRegistry(filepath.Join(cfg.DataDir, "sessions.json"), cfg.MaxSessions),
+		admission:         NewTaskAdmissionWithQueue(cfg.MaxActiveRuns, cfg.MaxRunsPerSession, cfg.MaxRunsPerWorker, cfg.MaxQueuedRuns),
+		workers:           NewWorkerRegistry(filepath.Join(cfg.DataDir, "workers.json")),
+		remoteSessions:    NewRemoteSessionRegistry(filepath.Join(cfg.DataDir, "remote-sessions.json")),
+		external:          newExternalRegistry(filepath.Join(cfg.DataDir, "relay-commands.json")),
+		wsTickets:         newWSTicketStore(),
+		httpClient:        &http.Client{Timeout: cfg.RequestTimeout, Transport: &http.Transport{MaxIdleConns: 64, MaxIdleConnsPerHost: 16, MaxConnsPerHost: 32, IdleConnTimeout: 90 * time.Second}},
+		watchers:          map[string]func(){},
+		historyCache:      map[string]historyCacheEntry{},
+		historyIndexes:    map[string]historyIndex{},
+		historyIndexPaths: map[string]string{},
+		stateCache:        map[string]cachedSessionState{},
+		pendingTitle:      map[string]bool{},
+		resolvedRoots:     resolveAllowedRoots(cfg.AllowedRoots),
+		stopHeartbeat:     make(chan struct{}),
+		distributedRuns:   map[string]distributedReservation{},
+		distributedPath:   filepath.Join(cfg.DataDir, "distributed-runs.json"),
+	}
+	s.external.onLifecycle = func(sessionID, eventType string) {
+		if eventType == "agent_start" {
+			s.observeDistributedRun(sessionID, "relay:"+sessionID, "relay")
+		} else {
+			s.releaseDistributedRun(sessionID)
+		}
 	}
 	if err := s.sessions.Load(); err != nil {
 		logger.Warn("failed to load session registry", "error", err)
@@ -76,6 +96,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 	if err := s.remoteSessions.Load(); err != nil {
 		logger.Warn("failed to load remote session registry", "error", err)
 	}
+	s.restoreDistributedRuns()
 	s.startWorkerHeartbeats()
 	s.upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
@@ -134,6 +155,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /v1/capabilities", s.capabilities)
 	mux.HandleFunc("PATCH /v1/capacity", s.updateCapacity)
+	mux.HandleFunc("GET /v1/scheduler", s.schedulerStatus)
 	mux.HandleFunc("GET /v1/rpc/commands", s.rpcCommandCatalog)
 	mux.HandleFunc("GET /openapi.json", s.openapi)
 	mux.HandleFunc("GET /v1/directories", s.listDirectories)

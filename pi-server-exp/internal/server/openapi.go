@@ -102,6 +102,7 @@ func paths() map[string]any {
 	get := func(path, summary string) { p[path] = map[string]any{"get": op(summary, "RPCResponse", "")} }
 	post := func(path, summary, body string) { p[path] = map[string]any{"post": op(summary, "RPCResponse", body)} }
 	p["/healthz"] = map[string]any{"get": op("Health check", "RPCResponse", "")}
+	p["/v1/scheduler"] = map[string]any{"get": op("Scheduler admission status", "RPCResponse", "")}
 	p["/openapi.json"] = map[string]any{"get": op("OpenAPI document", "RPCResponse", "")}
 	p["/v1/capabilities"] = map[string]any{"get": op("API capabilities", "Capabilities", "")}
 	p["/v1/ws-tickets"] = map[string]any{"post": op("Issue WebSocket ticket", "WSTicketResponse", "WSTicketRequest")}

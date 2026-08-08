@@ -23,6 +23,14 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import java.util.concurrent.atomic.AtomicBoolean
+import com.example.picompanion.ui.sessiondetail.SessionHistoryParser
+import com.example.picompanion.ui.sessiondetail.SessionStateCache
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -33,7 +41,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
   val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
   private var refreshJob: Job? = null
   private var pollingJob: Job? = null
-  private val refreshIntervalMs = 10_000L
+  // The home screen fans out to five endpoints per refresh. Thirty seconds
+  // keeps it current while reducing mobile radio wakeups and server load.
+  private val refreshIntervalMs = 30_000L
   private val pollingActive = AtomicBoolean(false)
   private val connectivityManager = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
@@ -117,6 +127,35 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         activeSessions = capacity?.activeSessions ?: sessionList.size,
         maxSessions = capacity?.maxSessions ?: 0,
       )
+      // Warm only the two most likely next sessions, after visible Home data is
+      // ready. This avoids delaying the list while making taps feel immediate.
+      launch(Dispatchers.IO) { prefetchRecentSessions(server, sessionList.take(2)) }
+    }
+  }
+
+  private fun prefetchRecentSessions(
+    server: com.example.picompanion.data.settings.ServerEntry,
+    sessions: List<ServerSession>,
+  ) {
+    sessions.forEach { session ->
+      val key = "${server.id}:${session.id}"
+      if (SessionStateCache.contains(key)) return@forEach
+      val result = client.getSessionMessages(server, session.id, limit = 30)
+      val payload = (result as? HttpResult.Success)?.value ?: return@forEach
+      val data = payload["data"] as? JsonObject ?: return@forEach
+      val messages = data["messages"] as? JsonArray ?: return@forEach
+      val parsed = SessionHistoryParser.parse(messages)
+      val history = data["history"] as? JsonObject
+      SessionStateCache.put(key, SessionStateCache.Entry(
+        items = parsed,
+        historicalItems = parsed,
+        nextHistoryOffset = history?.get("nextOffset")?.jsonPrimitive?.intOrNull ?: parsed.size,
+        hasOlder = history?.get("hasOlder")?.jsonPrimitive?.booleanOrNull == true,
+        title = session.title.orEmpty(),
+        project = session.project.orEmpty(),
+        cwd = session.cwd.orEmpty(),
+        lastEventId = 0,
+      ))
     }
   }
 

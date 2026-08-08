@@ -19,18 +19,18 @@ import (
 // accidental token leakage in logs, fmt.Sprintf, or debug output.
 type SensitiveString string
 
-func (s SensitiveString) String() string  { return "***" }
+func (s SensitiveString) String() string   { return "***" }
 func (s SensitiveString) GoString() string { return "***" }
 
 type Worker struct {
-	ID             string    `json:"id"`
-	URL            string    `json:"url"`
+	ID             string          `json:"id"`
+	URL            string          `json:"url"`
 	Token          SensitiveString `json:"-"`
-	Tags           []string  `json:"tags,omitempty"`
-	Status         string    `json:"status,omitempty"`
-	LastHeartbeat  time.Time `json:"lastHeartbeat,omitempty"`
-	ActiveSessions int       `json:"activeSessions,omitempty"`
-	MaxSessions    int       `json:"maxSessions,omitempty"`
+	Tags           []string        `json:"tags,omitempty"`
+	Status         string          `json:"status,omitempty"`
+	LastHeartbeat  time.Time       `json:"lastHeartbeat,omitempty"`
+	ActiveSessions int             `json:"activeSessions,omitempty"`
+	MaxSessions    int             `json:"maxSessions,omitempty"`
 }
 
 type persistedWorker struct {
@@ -506,17 +506,47 @@ func (s *Server) workerPost(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		s.proxyWorker(w, r, worker, "/v1/"+wp.rest)
+		parts := strings.Split(wp.rest, "/")
+		admitted := len(parts) == 3 && (parts[2] == "prompt" || ((parts[2] == "command" || parts[2] == "send") && remoteBodyStartsPrompt(r)))
+		hubSessionID := worker.ID + ":" + parts[1]
+		cursor := uint64(0)
+		if admitted {
+			var cursorOK bool
+			cursor, cursorOK = s.remoteEventCursor(worker, parts[1])
+			if !cursorOK {
+				writeErrorText(w, http.StatusBadGateway, "worker lifecycle cursor is unavailable")
+				return
+			}
+			for _, mapped := range s.remoteSessions.List() {
+				if mapped.WorkerID == worker.ID && mapped.WorkerSessionID == parts[1] {
+					hubSessionID = mapped.ID
+					break
+				}
+			}
+			if !s.acquireDistributedRun(r.Context(), hubSessionID, worker.ID) {
+				writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "hub run capacity is busy or this session already has an active run", "scheduler": s.admission.Snapshot()})
+				return
+			}
+			s.setDistributedRunMetadata(hubSessionID, "remote", parts[1])
+		}
+		ok := s.proxyWorker(w, r, worker, "/v1/"+wp.rest)
+		if admitted {
+			if ok {
+				s.subscribeRemoteRun(worker, parts[1], hubSessionID, cursor, true)
+			} else {
+				s.releaseDistributedRun(hubSessionID)
+			}
+		}
 		return
 	}
 	http.NotFound(w, r)
 }
 
-func (s *Server) proxyWorker(w http.ResponseWriter, r *http.Request, worker Worker, path string) {
+func (s *Server) proxyWorker(w http.ResponseWriter, r *http.Request, worker Worker, path string) bool {
 	base, err := url.Parse(strings.TrimRight(worker.URL, "/"))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
-		return
+		return false
 	}
 	// Preserve any path prefix in the worker URL and append the requested path
 	if base.Path == "" {
@@ -529,12 +559,12 @@ func (s *Server) proxyWorker(w http.ResponseWriter, r *http.Request, worker Work
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
 		writeError(w, http.StatusRequestEntityTooLarge, err)
-		return
+		return false
 	}
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, base.String(), bytes.NewReader(body))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
-		return
+		return false
 	}
 	req.Header.Set("Content-Type", r.Header.Get("Content-Type"))
 	if string(worker.Token) != "" {
@@ -543,7 +573,7 @@ func (s *Server) proxyWorker(w http.ResponseWriter, r *http.Request, worker Work
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
-		return
+		return false
 	}
 	defer resp.Body.Close()
 	// Only forward safe response headers from remote workers. Internal
@@ -556,4 +586,5 @@ func (s *Server) proxyWorker(w http.ResponseWriter, r *http.Request, worker Work
 	}
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }

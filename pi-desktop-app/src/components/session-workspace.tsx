@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { ArrowUp, Bot, Brain, ChevronRight, Code, Copy, CopyCheck, Folder, ImagePlus, Search, Sparkles, Square, Terminal, X } from "lucide-react"
 import { useImageAttachments } from "@/hooks/use-image-attachments"
 import ReactMarkdown from "react-markdown"
@@ -11,6 +11,7 @@ import {
   useSessionData,
   useSessionHistory,
   useSessionGitStatus,
+  useSchedulerStatus,
 } from "@/api/hooks"
 import {
   type TimelineItem,
@@ -19,7 +20,7 @@ import {
   LARGE_RENDER_THRESHOLD,
   MARKDOWN_HARD_CAP,
   LARGE_TOOL_OUTPUT_THRESHOLD,
-  buildTimeline,
+  TimelineStore,
   buildHistory,
   mergeTimeline,
   responseModels,
@@ -75,8 +76,12 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   // Subscribe to filesystem watcher events so file changes are rendered in
   // the chat timeline as well as in the changed-files summary.
   const socket = useActiveSessionSocket(sessionId, true)
+  const timelineStore = useMemo(() => new TimelineStore(sessionId), [sessionId])
+  useEffect(() => timelineStore.update(socket.events), [timelineStore, socket.events])
+  const liveTimelineItems = useSyncExternalStore(timelineStore.subscribe, timelineStore.getSnapshot, timelineStore.getSnapshot)
   const historyQuery = useSessionHistory(sessionId)
   const gitStatusQuery = useSessionGitStatus(sessionId)
+  const schedulerQuery = useSchedulerStatus()
   const modelsQuery = useSessionData(sessionId, "models")
   const stateQuery = useSessionData(sessionId, "state", {
     // Poll only when the WebSocket is not open — the stream provides live state.
@@ -99,36 +104,36 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
       .slice()
       .reverse()
       .flatMap((page) => buildHistory(page)) ?? []
-    const live = buildTimeline(socket.events)
-    return mergeTimeline(history, live)
-  }, [historyQuery.data, socket.events])
+    return mergeTimeline(history, liveTimelineItems)
+  }, [historyQuery.data, liveTimelineItems])
 
   const deliveryStage = useMemo(() => {
     if (!deliveryCommandId) return deliveryNotice
-    const receiptIndex = socket.events.findLastIndex((event) => event.type === "bridge_receipt" && event.commandId === deliveryCommandId)
+    let receiptIndex = -1
+    for (let index = socket.events.length - 1; index >= 0; index -= 1) {
+      const event = socket.events[index]
+      if (event.type === "bridge_receipt" && event.commandId === deliveryCommandId) {
+        receiptIndex = index
+        break
+      }
+    }
     if (receiptIndex < 0) return deliveryNotice
-    const responding = socket.events.slice(receiptIndex + 1).some((event) => event.type === "message_start" && (event.message as { role?: string } | undefined)?.role === "assistant")
-    return responding ? "Pi responding…" : "Delivered to Pi"
+    for (let index = receiptIndex + 1; index < socket.events.length; index += 1) {
+      const event = socket.events[index]
+      if (
+        event.type === "message_start" &&
+        (event.message as { role?: string } | undefined)?.role === "assistant"
+      ) {
+        return "Pi responding…"
+      }
+    }
+    return "Delivered to Pi"
   }, [deliveryCommandId, deliveryNotice, socket.events])
 
   const models = responseModels(modelsQuery.data)
   const state = stateQuery.data?.data as { model?: { provider?: string; id?: string }; thinkingLevel?: string; isStreaming?: boolean; external?: boolean; relayConnected?: boolean; relayLatencyMs?: number } | undefined
-  // Derive live runtime state from WS events. The runtime_state event is
-  // emitted by the server whenever the process state transitions. This is
-  // more responsive than HTTP polling which freezes when WS is open.
-  const wsRuntimeState = (() => {
-    for (let i = socket.events.length - 1; i >= 0; i--) {
-      const ev = socket.events[i]
-      if (ev.type === "runtime_state") {
-        return {
-          state: ev.runtimeState as string | undefined,
-          reason: ev.runtimeReason as string | undefined,
-          detail: ev.runtimeDetail as string | undefined,
-        }
-      }
-    }
-    return undefined
-  })()
+  // The shared socket hook derives this incrementally from the event stream.
+  const wsRuntimeState = socket.health.runtime
   // Use WS runtime state when available (WS open), fall back to HTTP polling (WS closed).
   const isWorking = socket.status === "open"
     ? wsRuntimeState?.state === "working" || wsRuntimeState?.state === "starting" || wsRuntimeState?.state === "reconnecting"
@@ -392,6 +397,9 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
             </p>
           )}
           {deliveryStage && <p className="mx-auto mt-2 max-w-3xl text-xs text-muted-foreground" role="status">{deliveryStage}</p>}
+          <p className="mx-auto mt-2 max-w-3xl text-xs text-muted-foreground" role="status">
+            Event stream: {socket.status}{socket.health.runtime?.state ? ` · ${socket.health.runtime.state}` : ""}{socket.health.resynchronizing ? " · restoring history" : ""}{(schedulerQuery.data?.admission.queued ?? 0) > 0 ? ` · queue: ${schedulerQuery.data?.admission.queued} waiting, ${schedulerQuery.data?.admission.active} active` : ""}
+          </p>
           {socket.error && (
             <p className="mx-auto mt-2 max-w-3xl text-xs text-destructive">
               {socket.error.message}

@@ -47,6 +47,8 @@ type ExternalSession struct {
 	relayGeneration uint64
 	RelayConnected  bool
 	RelayLatencyMS  int64
+	TaskID          string
+	RunID           string
 	// leaseID identifies the bridge instance that owns this session; leaseToken
 	// must be presented on HTTP command polling and ack. A different bridge
 	// re-registering rotates the lease and detaches any stale relay.
@@ -55,10 +57,14 @@ type ExternalSession struct {
 }
 
 type ExternalRegistry struct {
-	mu          sync.RWMutex
+	mu sync.RWMutex
+	// persistMu serializes command snapshots and disk writes without holding
+	// mu, so publishing and subscriber fan-out are not stalled by filesystem I/O.
+	persistMu   sync.Mutex
 	sessions    map[string]*ExternalSession
 	commandPath string
 	persisted   persistedRelayCommands
+	onLifecycle func(sessionID, eventType string)
 }
 
 func newExternalRegistry(commandPath string) *ExternalRegistry {
@@ -66,7 +72,9 @@ func newExternalRegistry(commandPath string) *ExternalRegistry {
 	return &ExternalRegistry{sessions: map[string]*ExternalSession{}, commandPath: commandPath, persisted: persisted}
 }
 
-func (r *ExternalRegistry) saveCommandsLocked() {
+// snapshotCommandsLocked updates the durable command view and returns an
+// independent snapshot. The caller must hold mu and persistMu.
+func (r *ExternalRegistry) snapshotCommandsLocked() persistedRelayCommands {
 	for id, session := range r.sessions {
 		if len(session.commands) == 0 {
 			delete(r.persisted, id)
@@ -74,9 +82,15 @@ func (r *ExternalRegistry) saveCommandsLocked() {
 			r.persisted[id] = append([]ExternalCommand(nil), session.commands...)
 		}
 	}
-	// Persist synchronously to ensure commands survive a server restart.
-	// The atomic rename is fast and the lock is held for a very short time.
-	if err := saveRelayCommands(r.commandPath, r.persisted); err != nil {
+	snapshot := make(persistedRelayCommands, len(r.persisted))
+	for id, commands := range r.persisted {
+		snapshot[id] = append([]ExternalCommand(nil), commands...)
+	}
+	return snapshot
+}
+
+func (r *ExternalRegistry) saveCommands(snapshot persistedRelayCommands) {
+	if err := saveRelayCommands(r.commandPath, snapshot); err != nil {
 		slog.Error("failed to persist relay commands", "error", err, "path", r.commandPath)
 	}
 }
@@ -88,7 +102,7 @@ func (r *ExternalRegistry) register(id, cwd, title, sessionPath, leaseID string)
 	r.mu.Lock()
 	s := r.sessions[id]
 	if s == nil {
-		s = &ExternalSession{ID: id, CWD: cwd, Title: title, SessionPath: sessionPath, Status: "idle", subs: map[chan RPCEvent]struct{}{}}
+		s = &ExternalSession{ID: id, CWD: cwd, Title: title, SessionPath: sessionPath, Status: "idle", TaskID: id, RunID: newRequestID(), subs: map[chan RPCEvent]struct{}{}}
 		if pending := r.persisted[id]; len(pending) > 0 {
 			s.commands = append([]ExternalCommand(nil), pending...)
 		}
@@ -136,20 +150,20 @@ func (r *ExternalRegistry) get(id string) (ExternalSession, bool) {
 		return ExternalSession{}, false
 	}
 	return ExternalSession{
-		ID:             s.ID,
-		CWD:            s.CWD,
-		Title:          s.Title,
-		SessionPath:    s.SessionPath,
-		Model:          s.Model,
+		ID:              s.ID,
+		CWD:             s.CWD,
+		Title:           s.Title,
+		SessionPath:     s.SessionPath,
+		Model:           s.Model,
 		AvailableModels: s.AvailableModels,
-		ThinkingLevel:  s.ThinkingLevel,
-		LastUsage:      s.LastUsage,
-		TotalCost:      s.TotalCost,
-		MessageCount:   s.MessageCount,
-		Status:         s.Status,
-		UpdatedAt:      s.UpdatedAt,
-		RelayConnected: s.RelayConnected,
-		RelayLatencyMS: s.RelayLatencyMS,
+		ThinkingLevel:   s.ThinkingLevel,
+		LastUsage:       s.LastUsage,
+		TotalCost:       s.TotalCost,
+		MessageCount:    s.MessageCount,
+		Status:          s.Status,
+		UpdatedAt:       s.UpdatedAt,
+		RelayConnected:  s.RelayConnected,
+		RelayLatencyMS:  s.RelayLatencyMS,
 	}, true
 }
 
@@ -185,6 +199,8 @@ func (r *ExternalRegistry) stateSnapshot(id string) map[string]any {
 		"transport":      "relay",
 		"relayConnected": s.RelayConnected,
 		"relayLatencyMs": s.RelayLatencyMS,
+		"taskId":         s.TaskID,
+		"runId":          s.RunID,
 	}
 }
 
@@ -194,6 +210,9 @@ func (r *ExternalRegistry) publish(id string, ev RPCEvent) bool {
 	if s == nil {
 		r.mu.Unlock()
 		return false
+	}
+	if ev["type"] == "agent_start" {
+		s.RunID = newRequestID()
 	}
 	s.next++
 	encoded, err := json.Marshal(ev)
@@ -249,16 +268,23 @@ func (r *ExternalRegistry) publish(id string, ev RPCEvent) bool {
 	}
 	s.UpdatedAt = record.Timestamp
 	out := eventWithID(ev, record.ID)
+	out["_daemonTaskId"] = s.TaskID
+	out["_daemonRunId"] = s.RunID
 	subs := make([]chan RPCEvent, 0, len(s.subs))
 	for ch := range s.subs {
 		subs = append(subs, ch)
 	}
+	eventType, _ := ev["type"].(string)
+	onLifecycle := r.onLifecycle
 	r.mu.Unlock()
 	for _, ch := range subs {
 		select {
 		case ch <- out:
 		default: // live viewers can reconnect and replay the bounded event ring
 		}
+	}
+	if onLifecycle != nil && (eventType == "agent_start" || eventType == "agent_end" || eventType == "agent_settled") {
+		onLifecycle(id, eventType)
 	}
 	return true
 }
@@ -291,16 +317,21 @@ func (r *ExternalRegistry) subscribe(id string, since uint64) (chan RPCEvent, []
 }
 
 func (r *ExternalRegistry) enqueue(id string, command ExternalCommand) bool {
+	// Acquire persistence serialization before the state lock. The subsequent
+	// disk write happens after releasing mu, so publish() stays responsive.
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	s := r.sessions[id]
 	if s == nil || s.Status == "stale" || s.Status == "stopped" {
+		r.mu.Unlock()
 		return false
 	}
 	if len(s.commands) >= 100 {
 		if command.Type != "abort" {
 			// Non-abort commands are rejected when the queue is full so the
 			// caller can surface the failure.
+			r.mu.Unlock()
 			return false
 		}
 		// Abort always succeeds: evict the oldest command regardless of type.
@@ -309,11 +340,14 @@ func (r *ExternalRegistry) enqueue(id string, command ExternalCommand) bool {
 		s.commands = s.commands[1:]
 	}
 	s.commands = append(s.commands, command)
-	r.saveCommandsLocked()
 	s.UpdatedAt = time.Now().UTC()
-	if s.relay != nil {
+	snapshot := r.snapshotCommandsLocked()
+	relay := s.relay
+	r.mu.Unlock()
+	r.saveCommands(snapshot)
+	if relay != nil {
 		select {
-		case s.relay <- command:
+		case relay <- command:
 		default:
 		}
 	}
@@ -421,13 +455,16 @@ func (r *ExternalRegistry) acknowledgeForLease(id string, ids []string, lease st
 }
 
 func (r *ExternalRegistry) acknowledgeLocked(id string, ids []string, lease string, requireLease bool) (exists, authorized bool) {
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	s := r.sessions[id]
 	if s == nil {
+		r.mu.Unlock()
 		return false, false
 	}
 	if requireLease && (s.leaseToken == "" || subtle.ConstantTimeCompare([]byte(s.leaseToken), []byte(lease)) != 1) {
+		r.mu.Unlock()
 		return true, false
 	}
 	seen := make(map[string]struct{}, len(ids))
@@ -441,8 +478,10 @@ func (r *ExternalRegistry) acknowledgeLocked(id string, ids []string, lease stri
 		}
 	}
 	s.commands = kept
-	r.saveCommandsLocked()
 	s.UpdatedAt = time.Now().UTC()
+	snapshot := r.snapshotCommandsLocked()
+	r.mu.Unlock()
+	r.saveCommands(snapshot)
 	return true, true
 }
 

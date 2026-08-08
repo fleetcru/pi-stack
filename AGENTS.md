@@ -319,6 +319,11 @@ Key invariants:
 | `PI_SERVER_ALLOWED_ROOTS` | `.` | Restrict session CWDs |
 | `PI_SERVER_ALLOWED_ORIGINS` | _(none)_ | CORS origins (comma-separated) |
 | `PI_SERVER_MAX_SESSIONS` | `8` | Max concurrent sessions (0 = unlimited) |
+| `PI_SERVER_MAX_ACTIVE_RUNS` | `8` | Hub-wide active local/remote/relay run limit (0 = unlimited) |
+| `PI_SERVER_MAX_RUNS_PER_SESSION` | `1` | Active runs allowed per session |
+| `PI_SERVER_MAX_RUNS_PER_WORKER` | `4` | Active runs allowed per worker |
+| `PI_SERVER_MAX_QUEUED_RUNS` | `32` | Hub admission queue bound (0 = reject when busy) |
+| `PI_SERVER_DISTRIBUTED_RUN_TIMEOUT` | `2h` | Fallback lease timeout for missing distributed lifecycle events (0 = disabled) |
 | `PI_SERVER_ALLOW_INSECURE` | _(empty)_ | `1` to allow non-loopback without auth |
 | `PI_SERVER_PI_BINARY` | `pi` | Path to Pi CLI |
 | `PI_SERVER_PI_EXTENSIONS` | _(none)_ | Extensions to load |

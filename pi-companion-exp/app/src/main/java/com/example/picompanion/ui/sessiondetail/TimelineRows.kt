@@ -328,7 +328,9 @@ private fun SectionHeader(text: String) {
 
 @Composable
 private fun OutputBlock(text: String) {
-  val maxPreviewChars = 80_000
+  // A single Compose Text with tens of thousands of characters can block
+  // measurement and line breaking. Keep an interactive preview lightweight.
+  val maxPreviewChars = 8_000
   val preview = text.take(maxPreviewChars)
   Surface(
     shape = RoundedCornerShape(8.dp),

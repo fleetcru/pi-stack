@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { lazy, Suspense, useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router"
 import { usePanelRef } from "react-resizable-panels"
 import {
@@ -23,8 +23,8 @@ import { CapacityControl } from "@/components/capacity-control"
 import { CreateSessionDialog } from "@/components/create-session-dialog"
 import { GlobalSessionList, MachineSessionList } from "@/components/machine-session-list"
 import { ServerConnectionsDialog } from "@/components/server-connections-dialog"
-import { SessionInspector } from "@/components/session-inspector"
-import SessionWorkspace from "@/components/session-workspace"
+const SessionInspector = lazy(() => import("@/components/session-inspector").then((module) => ({ default: module.SessionInspector })) )
+const SessionWorkspace = lazy(() => import("@/components/session-workspace"))
 import { SessionTree, TreeNode } from "@/components/sidebar-tree"
 import { Button } from "@/components/ui/button"
 import { useTheme } from "@/components/theme-provider"
@@ -206,10 +206,9 @@ export function WorkspaceShell() {
             />
             <Separator />
             {selectedSession ? (
-              <SessionWorkspace
-                key={selectedSession.id}
-                sessionId={selectedSession.id}
-              />
+              <Suspense fallback={<div className="h-full animate-pulse rounded-xl bg-muted/30" />}>
+                <SessionWorkspace key={selectedSession.id} sessionId={selectedSession.id} />
+              </Suspense>
             ) : (
               <EmptyWorkspace sessionSelected={false} />
             )}
@@ -225,7 +224,7 @@ export function WorkspaceShell() {
               minSize="18"
               maxSize="30"
             >
-              <SessionInspector session={selectedSession} />
+              <Suspense fallback={<div className="h-full animate-pulse rounded-xl bg-muted/30" />}><SessionInspector session={selectedSession} /></Suspense>
             </ResizablePanel>
           </>
         )}
@@ -308,7 +307,7 @@ function MobileWorkspace({
         <Button size="icon-sm" variant="ghost" aria-label="Create session" onClick={onCreate}><Plus /></Button>
         <Button size="icon-sm" variant="ghost" aria-label="Open inspector" disabled={!selectedSession} onClick={() => setInspectorOpen(true)}><PanelRight /></Button>
       </header>
-      {selectedSession ? <SessionWorkspace key={selectedSession.id} sessionId={selectedSession.id} /> : <EmptyWorkspace sessionSelected={false} />}
+      {selectedSession ? <Suspense fallback={<div className="h-full animate-pulse rounded-xl bg-muted/30" />}><SessionWorkspace key={selectedSession.id} sessionId={selectedSession.id} /></Suspense> : <EmptyWorkspace sessionSelected={false} />}
       <Sheet open={sessionsOpen} onOpenChange={setSessionsOpen}>
         <SheetContent side="left" className="w-[88vw] max-w-sm p-0" showCloseButton>
           <SheetHeader>
@@ -344,7 +343,7 @@ function MobileWorkspace({
       </Sheet>
       <Sheet open={inspectorOpen} onOpenChange={setInspectorOpen}>
         <SheetContent side="right" className="w-[92vw] max-w-md p-0" showCloseButton>
-          <SessionInspector session={selectedSession} />
+          <Suspense fallback={<div className="h-full animate-pulse rounded-xl bg-muted/30" />}><SessionInspector session={selectedSession} /></Suspense>
         </SheetContent>
       </Sheet>
     </section>

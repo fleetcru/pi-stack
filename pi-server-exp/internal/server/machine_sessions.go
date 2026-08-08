@@ -39,19 +39,24 @@ func defaultMachineSessionRoot() (string, error) {
 	return filepath.Join(home, ".pi", "agent", "sessions"), nil
 }
 
+type machineSessionCacheEntry struct {
+	items    []MachineSession
+	cachedAt time.Time
+}
+
 var (
-	machineSessionCache     []MachineSession
-	machineSessionCacheRoot string
-	machineSessionCacheTime time.Time
-	machineSessionCacheMu   sync.Mutex
+	// Keep an entry per root: listing native and managed sessions in one
+	// request must not evict the other root's cache.
+	machineSessionCaches  = map[string]machineSessionCacheEntry{}
+	machineSessionCacheMu sync.Mutex
 )
 
 const machineSessionCacheTTL = 10 * time.Second
 
 func listMachineSessions(root string) ([]MachineSession, error) {
 	machineSessionCacheMu.Lock()
-	if root == machineSessionCacheRoot && time.Since(machineSessionCacheTime) < machineSessionCacheTTL && machineSessionCache != nil {
-		result := machineSessionCache
+	if cached, ok := machineSessionCaches[root]; ok && time.Since(cached.cachedAt) < machineSessionCacheTTL {
+		result := cached.items
 		machineSessionCacheMu.Unlock()
 		return result, nil
 	}
@@ -97,9 +102,7 @@ func listMachineSessions(root string) ([]MachineSession, error) {
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].UpdatedAt.After(items[j].UpdatedAt) })
 	machineSessionCacheMu.Lock()
-	machineSessionCache = items
-	machineSessionCacheRoot = root
-	machineSessionCacheTime = time.Now()
+	machineSessionCaches[root] = machineSessionCacheEntry{items: items, cachedAt: time.Now()}
 	machineSessionCacheMu.Unlock()
 	return items, nil
 }

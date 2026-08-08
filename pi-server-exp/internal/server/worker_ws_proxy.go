@@ -59,7 +59,11 @@ func workerWebSocketURL(baseURL, remotePath string, rawQuery string) (string, er
 	case "https":
 		u.Scheme = "wss"
 	}
-	u.Path = remotePath
+	if u.Path == "" || u.Path == "/" {
+		u.Path = remotePath
+	} else {
+		u.Path = strings.TrimRight(u.Path, "/") + remotePath
+	}
 	u.RawQuery = rawQuery
 	return u.String(), nil
 }

@@ -131,8 +131,8 @@ class PiServerClient(
   }
 
   /** Pi-server proxies Pi's get_messages RPC response for the active session. */
-  fun getSessionMessages(server: ServerEntry, sessionId: String, offset: Int = 0): HttpResult<JsonObject> {
-    return doGet(server, "/v1/sessions/$sessionId/messages?offset=$offset", emptyMap(), JsonObject.serializer())
+  fun getSessionMessages(server: ServerEntry, sessionId: String, offset: Int = 0, limit: Int = 50): HttpResult<JsonObject> {
+    return doGet(server, "/v1/sessions/$sessionId/messages?offset=$offset&limit=$limit", emptyMap(), JsonObject.serializer())
   }
 
   fun getSessionGit(server: ServerEntry, sessionId: String, resource: String): HttpResult<JsonObject> {

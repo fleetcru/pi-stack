@@ -165,6 +165,20 @@ export interface FileContent {
   size?: number
 }
 
+export interface SchedulerStatus {
+  admission: {
+    active: number
+    queued: number
+    globalLimit: number
+    perSessionLimit: number
+    perWorkerLimit: number
+    queueLimit: number
+    sessions: Record<string, number>
+    workers: Record<string, number>
+  }
+  workers: ApiWorker[]
+}
+
 export interface HealthResponse {
   ok: boolean
   apiVersion: string
@@ -214,6 +228,10 @@ export class PiServerClient {
 
   health(): Promise<HealthResponse> {
     return this.request("/healthz")
+  }
+
+  schedulerStatus(): Promise<SchedulerStatus> {
+    return this.request("/v1/scheduler")
   }
 
   capabilities(): Promise<ApiCapabilities> {

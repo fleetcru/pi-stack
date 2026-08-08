@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 export interface PendingImage {
   id: string
@@ -45,7 +45,13 @@ export function useImageAttachments(inputRef?: React.RefObject<HTMLInputElement 
   const [images, setImages] = useState<PendingImage[]>([])
   const [error, setError] = useState<string | undefined>()
   const fallbackRef = useRef<HTMLInputElement>(null)
+  const previewUrlsRef = useRef(new Set<string>())
   const effectiveRef = inputRef ?? fallbackRef
+
+  useEffect(() => () => {
+    for (const url of previewUrlsRef.current) URL.revokeObjectURL(url)
+    previewUrlsRef.current.clear()
+  }, [])
 
   const addFiles = useCallback(async (files: File[]) => {
     setError(undefined)
@@ -71,12 +77,16 @@ export function useImageAttachments(inputRef?: React.RefObject<HTMLInputElement 
           }
           return true
         })
-        .map((file) => ({
-          id: `img-${++nextId}`,
-          file,
-          previewUrl: URL.createObjectURL(file),
-          mimeType: file.type || "image/png",
-        }))
+        .map((file) => {
+          const previewUrl = URL.createObjectURL(file)
+          previewUrlsRef.current.add(previewUrl)
+          return {
+            id: `img-${++nextId}`,
+            file,
+            previewUrl,
+            mimeType: file.type || "image/png",
+          }
+        })
 
       return [...current, ...newImages]
     })
@@ -85,14 +95,20 @@ export function useImageAttachments(inputRef?: React.RefObject<HTMLInputElement 
   const removeImage = useCallback((id: string) => {
     setImages((current) => {
       const target = current.find((img) => img.id === id)
-      if (target) URL.revokeObjectURL(target.previewUrl)
+      if (target) {
+        URL.revokeObjectURL(target.previewUrl)
+        previewUrlsRef.current.delete(target.previewUrl)
+      }
       return current.filter((img) => img.id !== id)
     })
   }, [])
 
   const clearImages = useCallback(() => {
     setImages((current) => {
-      for (const img of current) URL.revokeObjectURL(img.previewUrl)
+      for (const img of current) {
+        URL.revokeObjectURL(img.previewUrl)
+        previewUrlsRef.current.delete(img.previewUrl)
+      }
       return []
     })
     setError(undefined)

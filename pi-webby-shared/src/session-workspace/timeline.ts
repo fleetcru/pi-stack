@@ -4,6 +4,7 @@ import type {
   ToolItem,
   AvailableModel,
   ExtensionRequest,
+  TimelineRun,
 } from "./types"
 
 /**
@@ -32,106 +33,150 @@ export function contentText(content: unknown): string {
  * Processes message_start, message_update, message_end, tool_execution_*,
  * file_change, model_select, and thinking_level_select events.
  */
-export function buildTimeline(
-  events: Array<Record<string, unknown>>
-): TimelineItem[] {
-  const items: TimelineItem[] = []
-  let activeAssistant: TextItem | undefined
+export class IncrementalTimeline {
+  private items: TimelineItem[] = []
+  private toolIndexes = new Map<string, number>()
+  private activeAssistant: TextItem | undefined
+  private runs = new Map<string, TimelineRun>()
+  private processed = 0
+  private lastEventId: unknown
+  private lastEvent: Record<string, unknown> | undefined
 
-  for (const [index, event] of events.entries()) {
+  update(events: Array<Record<string, unknown>>, maxItems = adaptiveTimelineLimit()): TimelineItem[] {
+    let start = this.processed
+    if (this.lastEvent) {
+      const previous = this.lastEventId === undefined
+        ? events.findIndex((event) => event === this.lastEvent)
+        : events.findIndex((event) => event._daemonEventId === this.lastEventId)
+      if (previous >= 0) start = previous + 1
+      else { this.reset(); start = 0 }
+    } else if (events.length < this.processed) { this.reset(); start = 0 }
+    for (let index = start; index < events.length; index += 1) this.apply(events[index], index)
+    this.processed = events.length
+    this.lastEvent = events.at(-1)
+    this.lastEventId = this.lastEvent?._daemonEventId
+    if (this.items.length > maxItems) {
+      const retained = this.items.slice(-maxItems)
+      if (this.activeAssistant && !retained.includes(this.activeAssistant)) {
+        retained.shift()
+        retained.unshift(this.activeAssistant)
+      }
+      this.items = retained
+      this.reindexTools()
+      this.pruneRuns()
+    }
+    return this.items.filter((item) => item.kind !== "assistant" || item.text)
+  }
+
+  getRuns(): ReadonlyMap<string, TimelineRun> { return this.runs }
+
+  reset() {
+    this.items = []
+    this.toolIndexes.clear()
+    this.runs.clear()
+    this.activeAssistant = undefined
+    this.processed = 0
+    this.lastEventId = undefined
+    this.lastEvent = undefined
+  }
+
+  private apply(event: Record<string, unknown>, index: number) {
+    const taskId = typeof event._daemonTaskId === "string" ? event._daemonTaskId : undefined
+    const runId = typeof event._daemonRunId === "string" ? event._daemonRunId : undefined
+    if (runId && event.type === "agent_start") this.runs.set(runId, { id: runId, taskId, started: true, settled: false })
+    if (runId && (event.type === "agent_end" || event.type === "agent_settled")) {
+      const run = this.runs.get(runId) ?? { id: runId, taskId, started: true, settled: false }
+      this.runs.set(runId, { ...run, settled: true })
+    }
     if (event.type === "message_start") {
-      const message = event.message as
-        | { role?: string; content?: unknown; timestamp?: number }
-        | undefined
-      const messageId = `${message?.role ?? "message"}-${message?.timestamp ?? event._daemonEventId ?? index}`
+      const message = event.message as { role?: string; content?: unknown; timestamp?: number } | undefined
+      const id = `${message?.role ?? "message"}-${message?.timestamp ?? event._daemonEventId ?? index}`
       if (message?.role === "user") {
         const text = contentText(message.content)
-        if (text) items.push({ id: messageId, kind: "user", text })
+        if (text) this.items.push({ id, kind: "user", text, taskId, runId })
+      } else if (message?.role === "assistant") {
+        this.activeAssistant = { id, kind: "assistant", text: "", taskId, runId }
+        this.items.push(this.activeAssistant)
       }
-      if (message?.role === "assistant") {
-        activeAssistant = { id: messageId, kind: "assistant", text: "" }
-        items.push(activeAssistant)
-      }
-    }
-
-    if (event.type === "message_update") {
-      const delta = event.assistantMessageEvent as
-        | { type?: string; delta?: string }
-        | undefined
+    } else if (event.type === "message_update") {
+      const delta = event.assistantMessageEvent as { type?: string; delta?: string } | undefined
       if (delta?.type === "text_delta") {
-        if (!activeAssistant) {
-          activeAssistant = {
-            id: `assistant-${event._daemonEventId ?? index}`,
-            kind: "assistant",
-            text: "",
-          }
-          items.push(activeAssistant)
+        if (!this.activeAssistant) {
+          this.activeAssistant = { id: `assistant-${event._daemonEventId ?? index}`, kind: "assistant", text: "", taskId, runId }
+          this.items.push(this.activeAssistant)
         }
-        activeAssistant.text += delta.delta ?? ""
+        this.activeAssistant.text += delta.delta ?? ""
       }
-    }
+    } else if (event.type === "message_end") this.activeAssistant = undefined
 
-    if (event.type === "message_end") activeAssistant = undefined
-
-    // System events surfaced in the timeline for visibility.
-    if (event.type === "file_change") {
-      const path = event.path as string | undefined
-      const change = event.change as string | undefined
-      if (path)
-        items.push({
-          id: `file-${String(event._daemonEventId ?? index)}`,
-          kind: "system",
-          text: `File ${change ?? "changed"}: ${path}`,
-        })
-    }
-    // model_select and thinking_level_select are handled by the
-    // model picker UI — no system message in the timeline needed.
-
+    if (event.type === "file_change" && event.path) this.items.push({ id: `file-${String(event._daemonEventId ?? index)}`, kind: "system", text: `File ${event.change ?? "changed"}: ${event.path}`, taskId, runId })
     if (event.type === "tool_execution_start") {
-      items.push({
-        id: `tool-${String(event.toolCallId ?? event._daemonEventId ?? index)}`,
-        kind: "tool",
-        name: String(event.toolName ?? "tool"),
-        done: false,
-        startedAt: typeof event.timestamp === "string" ? event.timestamp : typeof event.timestamp === "number" ? event.timestamp : undefined,
-        args: typeof event.args === "object" && event.args !== null ? event.args as Record<string, unknown> : undefined,
-      })
-    }
-
-    if (
-      event.type === "tool_execution_update" ||
-      event.type === "tool_execution_end"
-    ) {
       const id = `tool-${String(event.toolCallId ?? event._daemonEventId ?? index)}`
-      const tool = items.find(
-        (item): item is ToolItem => item.id === id
-      )
-      const result = (event.partialResult ?? event.result) as
-        | { content?: Array<{ text?: string }> }
-        | undefined
-      const output = result?.content
-        ?.map((part) => part.text ?? "")
-        .join("")
+      this.items.push({ id, kind: "tool", name: String(event.toolName ?? "tool"), done: false, startedAt: typeof event.timestamp === "string" || typeof event.timestamp === "number" ? event.timestamp : undefined, args: typeof event.args === "object" && event.args !== null ? event.args as Record<string, unknown> : undefined, taskId, runId })
+      this.toolIndexes.set(id, this.items.length - 1)
+    }
+    if (event.type === "tool_execution_update" || event.type === "tool_execution_end") {
+      const id = `tool-${String(event.toolCallId ?? event._daemonEventId ?? index)}`
+      const at = this.toolIndexes.get(id)
+      const tool = at === undefined ? undefined : this.items[at] as ToolItem
+      const result = (event.partialResult ?? event.result) as { content?: Array<{ text?: string }> } | undefined
+      const output = result?.content?.map((part) => part.text ?? "").join("")
       if (tool) {
         tool.output = output ?? tool.output
         tool.done = event.type === "tool_execution_end"
-        if (event.type === "tool_execution_end") {
-          tool.endedAt = typeof event.timestamp === "string" ? event.timestamp : typeof event.timestamp === "number" ? event.timestamp : undefined
+        if (tool.done) {
+          tool.endedAt = typeof event.timestamp === "string" || typeof event.timestamp === "number" ? event.timestamp : undefined
           tool.failed = event.status === "failed" || event.status === "error"
         }
       } else {
-        items.push({
-          id,
-          kind: "tool",
-          name: String(event.toolName ?? "tool"),
-          output,
-          done: event.type === "tool_execution_end",
-        })
+        this.items.push({ id, kind: "tool", name: String(event.toolName ?? "tool"), output, done: event.type === "tool_execution_end", taskId, runId })
+        this.toolIndexes.set(id, this.items.length - 1)
       }
     }
   }
 
-  return items.filter((item) => item.kind !== "assistant" || item.text)
+  private reindexTools() {
+    this.toolIndexes.clear()
+    this.items.forEach((item, index) => { if (item.kind === "tool") this.toolIndexes.set(item.id, index) })
+  }
+
+  private pruneRuns() {
+    const retained = new Set(this.items.map((item) => item.runId).filter((id): id is string => Boolean(id)))
+    for (const [id, run] of this.runs) {
+      if (run.settled && !retained.has(id)) this.runs.delete(id)
+    }
+  }
+}
+
+export class TimelineStore {
+  private readonly reducer = new IncrementalTimeline()
+  private snapshot: TimelineItem[] = []
+  private listeners = new Set<() => void>()
+
+  constructor(readonly sessionId: string) {}
+
+  update(events: Array<Record<string, unknown>>): void {
+    this.snapshot = this.reducer.update(events)
+    for (const listener of this.listeners) listener()
+  }
+
+  getSnapshot = (): TimelineItem[] => this.snapshot
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+}
+
+
+export function adaptiveTimelineLimit(): number {
+  const memory = typeof navigator === "undefined" ? undefined : (navigator as Navigator & { deviceMemory?: number }).deviceMemory
+  if (memory !== undefined && memory <= 4) return 250
+  if (memory !== undefined && memory >= 12) return 1000
+  return 500
+}
+
+export function buildTimeline(events: Array<Record<string, unknown>>): TimelineItem[] {
+  return new IncrementalTimeline().update(events, Number.MAX_SAFE_INTEGER)
 }
 
 /**
@@ -274,11 +319,17 @@ export function groupModelsByProvider(models: AvailableModel[]) {
 export function findExtensionRequest(
   events: Array<Record<string, unknown>>
 ): ExtensionRequest | undefined {
-  const event = [...events].reverse().find(
-    (item) =>
-      item.type === "extension_ui_request" &&
-      item._daemonExtensionUiRequiresResponse === true
-  )
+  let event: Record<string, unknown> | undefined
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const candidate = events[index]
+    if (
+      candidate.type === "extension_ui_request" &&
+      candidate._daemonExtensionUiRequiresResponse === true
+    ) {
+      event = candidate
+      break
+    }
+  }
   if (!event || typeof event.id !== "string") return undefined
   return {
     id: event.id,

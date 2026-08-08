@@ -4,6 +4,8 @@ export type TextItem = {
   id: string
   kind: "user" | "assistant"
   text: string
+  taskId?: string
+  runId?: string
 }
 
 export type ToolItem = {
@@ -20,12 +22,23 @@ export type ToolItem = {
   args?: Record<string, unknown>
   /** Whether the tool failed. */
   failed?: boolean
+  taskId?: string
+  runId?: string
 }
 
 export type SystemItem = {
   id: string
   kind: "system"
   text: string
+  taskId?: string
+  runId?: string
+}
+
+export type TimelineRun = {
+  id: string
+  taskId?: string
+  started: boolean
+  settled: boolean
 }
 
 export type TimelineItem = TextItem | ToolItem | SystemItem

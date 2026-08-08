@@ -617,15 +617,8 @@ func (s *Server) pathWithinAllowedRoots(path string) bool {
 	if err != nil {
 		return false
 	}
-	for _, root := range s.cfg.AllowedRoots {
-		absRoot, err := filepath.Abs(strings.TrimSpace(root))
-		if err != nil {
-			continue
-		}
-		if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
-			absRoot = resolved
-		}
-		rel, err := filepath.Rel(absRoot, absPath)
+	for _, root := range s.resolvedRoots {
+		rel, err := filepath.Rel(root, absPath)
 		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
 			return true
 		}

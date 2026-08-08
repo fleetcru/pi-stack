@@ -56,9 +56,17 @@ type PiProcess struct {
 	runtimeDetail string
 	runtimeSince  time.Time
 	runtimeError  string
+	lastEventAt   time.Time
+	droppedEvents uint64
+	// taskID is stable for the session; runID changes for each agent turn.
+	taskID string
+	runID  string
 	// onMessageEnd is called when a message_end event is dispatched.
 	// Used to invalidate the history cache so REST requests return fresh data.
 	onMessageEnd func()
+	// onAgentSettled releases scheduler admission exactly once after a run.
+	onAgentSettled func()
+	admissionHeld  bool
 }
 
 func NewPiProcess(spec SessionSpec, cfg Config, logger *slog.Logger) *PiProcess {
@@ -70,7 +78,7 @@ func NewPiProcess(spec SessionSpec, cfg Config, logger *slog.Logger) *PiProcess 
 	if eventMaxBytes <= 0 {
 		eventMaxBytes = 8 << 20
 	}
-	return &PiProcess{id: spec.ID, cfg: cfg, spec: spec, logger: logger.With("session", spec.ID, "cwd", spec.CWD), waiters: map[string]responseWaiter{}, subs: map[chan RPCEvent]struct{}{}, eventMax: eventMax, eventMaxBytes: eventMaxBytes, runtimeState: "created"}
+	return &PiProcess{id: spec.ID, cfg: cfg, spec: spec, logger: logger.With("session", spec.ID, "cwd", spec.CWD), waiters: map[string]responseWaiter{}, subs: map[chan RPCEvent]struct{}{}, eventMax: eventMax, eventMaxBytes: eventMaxBytes, runtimeState: "created", taskID: spec.ID, runID: newRequestID()}
 }
 
 func (p *PiProcess) Start(_ context.Context) error {
@@ -207,6 +215,7 @@ func (p *PiProcess) Subscribe() (<-chan RPCEvent, func()) {
 }
 
 func (p *PiProcess) Close(ctx context.Context) error {
+	defer p.releaseAdmission()
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -347,6 +356,9 @@ func (p *PiProcess) wait(cmd *exec.Cmd) {
 	}
 	attempt := p.restarts
 	p.mu.Unlock()
+	// A process exit terminates the admitted run even if Pi could not emit its
+	// normal agent_end/agent_settled event.
+	p.releaseAdmission()
 	p.logger.Info("pi rpc process exited", "error", err, "restartAttempt", attempt)
 	if restart {
 		delay := p.cfg.RestartBackoff * time.Duration(1<<min(attempt-1, 5))
@@ -381,12 +393,16 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 		}
 	}
 	p.mu.Lock()
+	if ev["type"] == "agent_start" {
+		p.runID = newRequestID()
+	}
 	oldState := p.runtimeState
 	oldReason := p.runtimeReason
 	p.updateRuntimeFromEventLocked(ev)
 	stateChanged := p.runtimeState != oldState || p.runtimeReason != oldReason
 	p.eventSeq++
 	id := p.eventSeq
+	p.lastEventAt = time.Now().UTC()
 	// Retaining full Pi events is optional replay convenience, so account for
 	// serialized payload bytes and keep the per-session history on a hard budget.
 	if encoded, err := json.Marshal(ev); err != nil {
@@ -403,6 +419,8 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 		p.logger.Warn("not retaining oversized event", "bytes", len(encoded), "limit", p.eventMaxBytes)
 	}
 	out := eventWithID(ev, id)
+	out["_daemonTaskId"] = p.taskID
+	out["_daemonRunId"] = p.runID
 	// Copy subscriber set under the write lock to prevent a subscriber from
 	// being added between the write unlock and read lock, which could cause
 	// it to miss the event in its replay window.
@@ -415,6 +433,7 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 		select {
 		case ch <- out:
 		default:
+			atomic.AddUint64(&p.droppedEvents, 1)
 			p.logger.Warn("dropping event for slow subscriber")
 		}
 	}
@@ -434,16 +453,57 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 			"runtimeReason": rtReason,
 			"runtimeDetail": rtDetail,
 			"runtimeSince":  rtSince,
+			"_daemonTaskId": p.taskID,
+			"_daemonRunId":  p.runID,
 		}
 		if rtError != "" {
 			rtEvent["runtimeError"] = rtError
 		}
-		p.dispatch(rtEvent)
+		p.dispatchRuntimeState(rtEvent)
 	}
 	// Invalidate history cache when a message ends so REST requests return
 	// fresh data instead of stale cached responses.
 	if ev["type"] == "message_end" && p.onMessageEnd != nil {
 		p.onMessageEnd()
+	}
+	if ev["type"] == "agent_end" || ev["type"] == "agent_settled" {
+		p.releaseAdmission()
+	}
+}
+
+// dispatchRuntimeState appends and fans out the synthetic state event without
+// re-entering dispatch(). The runtime snapshot was already computed by the
+// triggering event, so response handling and state-transition detection would
+// be redundant work here.
+func (p *PiProcess) dispatchRuntimeState(ev RPCEvent) {
+	p.mu.Lock()
+	p.eventSeq++
+	id := p.eventSeq
+	p.lastEventAt = time.Now().UTC()
+	if encoded, err := json.Marshal(ev); err != nil {
+		p.logger.Warn("not retaining runtime state event", "error", err)
+	} else if len(encoded) <= p.eventMaxBytes {
+		record := EventRecord{ID: id, Timestamp: time.Now().UTC(), Event: cloneEvent(ev), size: len(encoded)}
+		p.events = append(p.events, record)
+		p.eventBytes += record.size
+		for len(p.events) > p.eventMax || p.eventBytes > p.eventMaxBytes {
+			p.eventBytes -= p.events[0].size
+			p.events = p.events[1:]
+		}
+	}
+	out := eventWithID(ev, id)
+	subs := make([]chan RPCEvent, 0, len(p.subs))
+	for ch := range p.subs {
+		subs = append(subs, ch)
+	}
+	p.mu.Unlock()
+	for _, ch := range subs {
+		select {
+		case ch <- out:
+		default:
+			atomic.AddUint64(&p.droppedEvents, 1)
+			p.logger.Warn("dropping runtime state event for slow subscriber")
+		}
 	}
 }
 
@@ -467,6 +527,8 @@ func (p *PiProcess) emitRuntimeStateLocked() {
 		"runtimeReason": p.runtimeReason,
 		"runtimeDetail": p.runtimeDetail,
 		"runtimeSince":  p.runtimeSince,
+		"_daemonTaskId": p.taskID,
+		"_daemonRunId":  p.runID,
 	}
 	if p.runtimeError != "" {
 		event["runtimeError"] = p.runtimeError
@@ -514,6 +576,32 @@ func stringValue(value any, fallback string) string {
 	return fallback
 }
 
+func (p *PiProcess) holdAdmission(release func()) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.admissionHeld {
+		return false
+	}
+	p.admissionHeld = true
+	p.onAgentSettled = release
+	return true
+}
+
+func (p *PiProcess) releaseAdmission() {
+	p.mu.Lock()
+	if !p.admissionHeld {
+		p.mu.Unlock()
+		return
+	}
+	release := p.onAgentSettled
+	p.admissionHeld = false
+	p.onAgentSettled = nil
+	p.mu.Unlock()
+	if release != nil {
+		release()
+	}
+}
+
 func (p *PiProcess) removeWaiter(id string) { p.mu.Lock(); delete(p.waiters, id); p.mu.Unlock() }
 
 func (p *PiProcess) Status() map[string]any {
@@ -527,7 +615,7 @@ func (p *PiProcess) Status() map[string]any {
 	if p.running {
 		status = "running"
 	}
-	return map[string]any{"id": p.id, "cwd": p.spec.CWD, "args": p.spec.Args, "sessionPath": p.spec.SessionPath, "running": p.running, "status": status, "runtimeStatus": map[string]any{"state": p.runtimeState, "reason": p.runtimeReason, "detail": p.runtimeDetail, "since": p.runtimeSince, "lastError": p.runtimeError}, "restart": p.spec.Restart, "pid": pid, "wsSubscribers": len(p.subs), "eventCount": len(p.events)}
+	return map[string]any{"id": p.id, "cwd": p.spec.CWD, "args": p.spec.Args, "sessionPath": p.spec.SessionPath, "running": p.running, "status": status, "taskId": p.taskID, "runId": p.runID, "runtimeStatus": map[string]any{"state": p.runtimeState, "reason": p.runtimeReason, "detail": p.runtimeDetail, "since": p.runtimeSince, "lastError": p.runtimeError}, "restart": p.spec.Restart, "pid": pid, "wsSubscribers": len(p.subs), "eventCount": len(p.events), "latestEventId": p.eventSeq, "lastEventAt": p.lastEventAt, "droppedEvents": atomic.LoadUint64(&p.droppedEvents)}
 }
 
 func (p *PiProcess) Emit(event RPCEvent) { p.dispatch(event) }
@@ -586,8 +674,6 @@ var sessionSeq uint64
 func NewSessionID() string {
 	return fmt.Sprintf("s-%d-%d", time.Now().UnixNano(), atomic.AddUint64(&sessionSeq, 1))
 }
-
-
 
 func envMapToList(env map[string]string) []string {
 	out := make([]string, 0, len(env))

@@ -48,10 +48,12 @@ func (s *Server) externalSessionWebSocket(w http.ResponseWriter, r *http.Request
 				return
 			}
 			var queued ExternalCommand
+			startsRun := false
 			switch command["type"] {
 			case "abort":
 				queued = ExternalCommand{ID: NewSessionID(), Type: "abort"}
 			case "prompt", "steer":
+				startsRun = command["type"] == "prompt"
 				message, _ := command["message"].(string)
 				if message == "" {
 					continue
@@ -66,9 +68,19 @@ func (s *Server) externalSessionWebSocket(w http.ResponseWriter, r *http.Request
 			default:
 				continue
 			}
+			if startsRun && !s.acquireDistributedRun(r.Context(), id, "relay:"+id) {
+				_ = write(map[string]any{"type": "daemon_error", "error": "hub run capacity is busy or this relay already has an active run", "commandId": queued.ID})
+				continue
+			}
+			if startsRun {
+				s.setDistributedRunMetadata(id, "relay", "")
+			}
 			// A failed enqueue (stale session, full queue) must be signalled back,
 			// otherwise the client believes the prompt was delivered.
 			if !s.external.enqueue(id, queued) {
+				if startsRun {
+					s.releaseDistributedRun(id)
+				}
 				_ = write(map[string]any{"type": "daemon_error", "error": "relay command rejected: session unavailable or queue full", "commandId": queued.ID})
 			}
 		}

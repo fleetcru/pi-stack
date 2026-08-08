@@ -3,6 +3,9 @@ export * from "./constants"
 export {
   contentText,
   buildTimeline,
+  IncrementalTimeline,
+  TimelineStore,
+  adaptiveTimelineLimit,
   buildHistory,
   mergeTimeline,
   responseModels,

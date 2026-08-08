@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -48,7 +49,37 @@ func (s *Server) handleConvenienceCommand(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true})
 		return
 	}
+	if action == "prompt" {
+		ctx, cancel := requestContext(r.Context(), s.cfg.RequestTimeout)
+		defer cancel()
+		if !s.admitLocalRun(ctx, p) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{
+				"error":     "run capacity is busy or this session already has an active run",
+				"scheduler": s.admission.Snapshot(),
+			})
+			return
+		}
+		resp, err := p.Request(ctx, cmd)
+		if err != nil {
+			p.releaseAdmission()
+			writeError(w, http.StatusBadGateway, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 	s.requestAndWrite(w, r, p, cmd)
+}
+
+func (s *Server) admitLocalRun(ctx context.Context, p *PiProcess) bool {
+	if !s.admission.Acquire(ctx, p.id, "local") {
+		return false
+	}
+	if p.holdAdmission(func() { s.admission.Release(p.id, "local") }) {
+		return true
+	}
+	s.admission.Release(p.id, "local")
+	return false
 }
 
 func commandFromBody(action string, r *http.Request) (RPCCommand, bool, error) {

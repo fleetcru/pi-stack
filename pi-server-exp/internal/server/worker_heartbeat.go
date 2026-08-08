@@ -32,6 +32,9 @@ func (s *Server) startWorkerHeartbeats() {
 					}(worker)
 				}
 				wg.Wait()
+				// Discover mapped sessions started directly on a worker so hub-wide
+				// admission remains accurate even when work bypasses hub prompt routes.
+				go s.reconstructMappedRemoteRuns()
 			case <-s.stopHeartbeat:
 				return
 			}

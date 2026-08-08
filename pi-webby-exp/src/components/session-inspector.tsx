@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { GitBranch } from "lucide-react"
 
 import type { ApiSession, RpcResponse } from "@/api/client"
@@ -67,7 +67,7 @@ export function SessionInspector({ session }: { session?: ApiSession }) {
             value="activity"
             className="min-h-0 flex-1 overflow-hidden"
           >
-            <ActivityFeed sessionId={session.id} />
+            {activeTab === "activity" && <ActivityFeed sessionId={session.id} />}
           </TabsContent>
           <TabsContent
             value="workspace"
@@ -176,7 +176,7 @@ function Overview({ session }: { session: ApiSession }) {
 
 function ActivityFeed({ sessionId }: { sessionId: string }) {
   const { data } = useSessionEvents(sessionId)
-  const events = [...(data?.events ?? [])].reverse()
+  const events = useMemo(() => (data?.events ?? []).slice().reverse(), [data?.events])
   return (
     <ScrollArea className="h-full">
       <div className="space-y-1 p-3">
