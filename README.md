@@ -36,6 +36,17 @@ A multi-device coding agent ecosystem for [Pi](https://github.com/earendil-works
 - **Image attachments** — Send images from web and Android clients as multimodal prompts.
 - **Session search** — Filter sessions by title, project, worker, or session ID across the sidebar.
 - **Pin sessions** — Star important sessions to keep them at the top of their project group.
+- **Bounded task admission** — Global, per-session, and per-worker run limits with a bounded queue and scheduler-pressure visibility.
+- **Durable distributed runs** — Remote and relay reservations survive hub restarts and reconcile from pushed lifecycle events.
+- **Indexed history paging** — Large JSONL transcripts use validated sidecar indexes and direct message-boundary seeks.
+- **Fast mobile switching** — Companion caches five recent timelines, prefetches likely sessions, and restores cached content while refreshing in the background.
+
+## Releases
+
+- [pi-server releases](https://github.com/fleetcru/pi-stack/releases?q=server-v) — Linux and Windows AMD64 binaries
+- [Pi Companion releases](https://github.com/fleetcru/pi-stack/releases?q=v) — directly installable Android APKs
+
+The current patch line is **pi-server v0.3.x** and **Pi Companion v1.4.x**.
 
 ## One-liner install (production)
 
@@ -156,6 +167,11 @@ All configuration is via environment variables (or CLI flags for the server):
 | `PI_SERVER_ALLOWED_ROOTS` | `.` | Restrict session CWDs to these paths |
 | `PI_SERVER_ALLOWED_ORIGINS` | _(none)_ | CORS allowed origins (comma-separated) |
 | `PI_SERVER_MAX_SESSIONS` | `8` | Max concurrent Pi sessions (0 = unlimited) |
+| `PI_SERVER_MAX_ACTIVE_RUNS` | `8` | Hub-wide active local, remote, and relay runs (0 = unlimited) |
+| `PI_SERVER_MAX_RUNS_PER_SESSION` | `1` | Concurrent runs permitted for one session |
+| `PI_SERVER_MAX_RUNS_PER_WORKER` | `4` | Concurrent runs admitted to one worker |
+| `PI_SERVER_MAX_QUEUED_RUNS` | `32` | Bounded admission queue (0 = reject immediately when busy) |
+| `PI_SERVER_DISTRIBUTED_RUN_TIMEOUT` | `2h` | Fallback lease expiry when distributed lifecycle delivery is lost |
 | `PI_SERVER_ALLOW_INSECURE` | _(empty)_ | Set to `1` to allow non-loopback binding without auth (install scripts use `--insecure` / `-AllowInsecure` flag) |
 | `PI_SERVER_PI_BINARY` | `pi` | Path to the Pi CLI executable |
 
@@ -164,15 +180,15 @@ All configuration is via environment variables (or CLI flags for the server):
 ### Server
 
 ```bash
-cd pi-server
+cd pi-server-exp
 go build ./cmd/pi-server
-go test ./... -race
+go test ./...
 ```
 
 ### Web app
 
 ```bash
-cd pi-webby
+cd pi-webby-exp
 pnpm install
 pnpm typecheck
 pnpm build
@@ -181,7 +197,7 @@ pnpm build
 ### Android app
 
 ```bash
-cd pi-companion
+cd pi-companion-exp
 ./gradlew :app:assembleDebug
 ```
 
@@ -195,7 +211,9 @@ The server exposes an OpenAPI spec at `GET /openapi.json`. Key endpoints:
 | `GET` | `/v1/sessions` | List sessions (local, remote, or all) |
 | `POST` | `/v1/sessions` | Create a new session |
 | `DELETE` | `/v1/sessions/{id}` | Delete a session |
-| `POST` | `/v1/sessions/{id}/prompt` | Send a prompt |
+| `POST` | `/v1/sessions/{id}/prompt` | Send an admitted local, remote, or relay prompt |
+| `GET` | `/v1/sessions/{id}/messages` | Page persisted history from newest to oldest |
+| `GET` | `/v1/scheduler` | Inspect active runs, queue depth, limits, and worker pressure |
 | `GET` | `/v1/sessions/{id}/ws` | WebSocket for live events |
 | `POST` | `/v1/ws-tickets` | Issue a single-use WS auth ticket |
 | `GET` | `/v1/workers` | List registered workers |
@@ -220,18 +238,18 @@ To control an existing Pi TUI session from Webby or Companion:
 
 ```
 pi-stack/
-├── pi-server/          # Go HTTP/WebSocket daemon
+├── pi-server-exp/      # Go HTTP/WebSocket daemon
 │   ├── cmd/pi-server/  # Entry point
 │   ├── internal/server/ # All server logic
 │   └── extensions/     # Pi extensions (relay bridge, session title)
-├── pi-webby/           # React + TypeScript browser client
+├── pi-webby-exp/       # React + TypeScript browser client
 │   ├── src/api/        # Server client, WebSocket, hooks
 │   ├── src/components/ # UI components
 │   └── src/state/      # Zustand store
 ├── pi-desktop-app/     # Tauri v2 desktop app
 │   ├── src/            # React frontend (shared components with pi-webby)
 │   └── src-tauri/      # Rust backend for native OS integration
-├── pi-companion/       # Android Kotlin/Compose client
+├── pi-companion-exp/   # Android Kotlin/Compose client
 │   └── app/src/main/java/
 │       ├── data/api/       # HTTP client
 │       ├── data/websocket/ # WebSocket listener

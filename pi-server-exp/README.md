@@ -69,7 +69,12 @@ Environment variables:
 - `PI_SERVER_REQUEST_TIMEOUT` default `30s`
 - `PI_SERVER_READ_TIMEOUT` default `30s`; `PI_SERVER_WRITE_TIMEOUT` default `60s`; `PI_SERVER_IDLE_TIMEOUT` default `120s`
 - `PI_SERVER_SHUTDOWN_TIMEOUT` default `10s`
-- `PI_SERVER_MAX_SESSIONS` default `2` active Pi child processes
+- `PI_SERVER_MAX_SESSIONS` default `8` active Pi child processes
+- `PI_SERVER_MAX_ACTIVE_RUNS` default `8` active runs across local, remote, and relay sessions (`0` = unlimited)
+- `PI_SERVER_MAX_RUNS_PER_SESSION` default `1`
+- `PI_SERVER_MAX_RUNS_PER_WORKER` default `4`
+- `PI_SERVER_MAX_QUEUED_RUNS` default `32` (`0` = reject immediately when busy)
+- `PI_SERVER_DISTRIBUTED_RUN_TIMEOUT` default `2h`; fallback cleanup when distributed lifecycle delivery is lost (`0` = disabled)
 - `PI_SERVER_EVENT_HISTORY_MAX` default `100` retained events per local session
 - `PI_SERVER_EVENT_HISTORY_BYTES` default `2097152` (2 MiB) retained event payload budget per local session
 - `PI_SERVER_MAX_WATCHES` default `2048` directories watched per session; dependency, VCS, cache, and generated-output directories are skipped
@@ -81,6 +86,12 @@ Environment variables:
 - `PI_SERVER_ALLOWED_WORKER_HOSTS` comma-separated remote worker host allowlist
 
 For any network-accessible deployment, set an auth token and all three allowlists. The browser test page should be served from an allowed HTTP origin rather than opened as `file://`.
+
+## Scheduling and history
+
+Prompt, raw-command, WebSocket, remote-worker, and relay entry points share the same bounded admission controller. `GET /v1/scheduler` reports active reservations, queue pressure, and configured limits. Distributed reservations are persisted in the data directory and remote lifecycle completion is delivered through replayable worker WebSockets.
+
+`GET /v1/sessions/<id>/messages?limit=40&offset=0` pages from newest to oldest. Large local JSONL histories use atomic `.piidx` message-boundary sidecars validated with SHA-256; relay histories are streamed with bounded memory.
 
 ## API
 

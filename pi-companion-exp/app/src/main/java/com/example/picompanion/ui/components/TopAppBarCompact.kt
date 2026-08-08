@@ -5,9 +5,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material.icons.rounded.Refresh
@@ -41,6 +43,7 @@ fun TopAppBarCompact(
     }
     IconTile(Icons.Rounded.Settings, "Settings", onClick = onSettingsClick)
     if (onRefresh != null) {
+      Spacer(Modifier.width(8.dp))
       IconTile(Icons.Rounded.Refresh, "Refresh", onClick = onRefresh)
     }
   }

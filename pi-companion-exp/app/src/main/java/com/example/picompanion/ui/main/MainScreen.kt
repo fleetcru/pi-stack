@@ -107,6 +107,7 @@ fun MainScreen(
     HomeUiState.NoServer -> HomeNoServerContent(
       onNavigate = onNavigate,
       onMenuClick = onMenuClick,
+      onRefresh = { viewModel.refresh() },
       modifier = modifier,
     )
     is HomeUiState.Content -> HomeContent(
@@ -282,7 +283,11 @@ private fun HomeErrorContent(
 ) {
   Box(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
     Column(Modifier.fillMaxSize()) {
-      TopAppBarCompact(onMenuClick = onMenuClick, onSettingsClick = { onNavigate(AppRoute.Settings) })
+      TopAppBarCompact(
+        onMenuClick = onMenuClick,
+        onSettingsClick = { onNavigate(AppRoute.Settings) },
+        onRefresh = onRetry,
+      )
       Spacer(Modifier.height(80.dp))
       Column(
         Modifier.fillMaxWidth(),
@@ -314,11 +319,16 @@ private fun HomeErrorContent(
 private fun HomeNoServerContent(
   onNavigate: (AppRoute) -> Unit,
   onMenuClick: () -> Unit,
+  onRefresh: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   Box(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
     Column(Modifier.fillMaxSize()) {
-      TopAppBarCompact(onMenuClick = onMenuClick, onSettingsClick = { onNavigate(AppRoute.Settings) })
+      TopAppBarCompact(
+        onMenuClick = onMenuClick,
+        onSettingsClick = { onNavigate(AppRoute.Settings) },
+        onRefresh = onRefresh,
+      )
       Spacer(Modifier.height(80.dp))
       Column(
         Modifier.fillMaxWidth(),
