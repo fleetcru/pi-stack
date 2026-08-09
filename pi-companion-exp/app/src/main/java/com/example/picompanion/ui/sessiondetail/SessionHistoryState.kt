@@ -25,7 +25,12 @@ internal class SessionHistoryState {
   ): List<SessionTimelineItem> {
     this.nextOffset = nextOffset
     this.hasOlder = hasOlder
-    historicalItems = (if (appendOld) page + historicalItems else page).distinctBy(::historyItemId)
+    val previousOrders = (historicalItems + liveItems)
+      .filter { it.order > 0 }
+      .associate { historyItemId(it) to it.order }
+    historicalItems = (if (appendOld) page + historicalItems else page)
+      .distinctBy(::historyItemId)
+      .map { item -> previousOrders[historyItemId(item)]?.let { item.withOrder(it) } ?: item }
 
     val merged = LinkedHashMap<String, SessionTimelineItem>()
     historicalItems.forEach { merged[historyItemId(it)] = it }
@@ -39,6 +44,13 @@ internal class SessionHistoryState {
       }
     }
     return merged.values.map(stamp)
+  }
+
+  private fun SessionTimelineItem.withOrder(order: Long): SessionTimelineItem = when (this) {
+    is SessionTimelineItem.Chat -> copy(order = order)
+    is SessionTimelineItem.Tool -> copy(order = order)
+    is SessionTimelineItem.FileChange -> copy(order = order)
+    is SessionTimelineItem.System -> copy(order = order)
   }
 
   private fun historyItemId(item: SessionTimelineItem): String = when (item) {

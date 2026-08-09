@@ -44,11 +44,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 import androidx.core.content.FileProvider
 import java.io.File
 import kotlinx.serialization.json.Json
@@ -79,7 +79,13 @@ fun SessionDetailScreen(
   val sendState by viewModel.sendState.collectAsStateWithLifecycle()
   val agentWorking by viewModel.agentWorking.collectAsStateWithLifecycle()
   val streamingOrder by viewModel.streamingAssistantOrder.collectAsStateWithLifecycle()
-  val listState = rememberLazyListState()
+  val hasOlderHistory by viewModel.hasOlderHistory.collectAsStateWithLifecycle()
+  val loadingOlderHistory by viewModel.loadingOlderHistory.collectAsStateWithLifecycle()
+  val historyLoadError by viewModel.historyLoadError.collectAsStateWithLifecycle()
+  val timelinePrefixItems = (if (hasOlderHistory) 1 else 0) + (if (historyLoadError != null) 1 else 0)
+  val timelineEndIndex = (items.lastIndex + timelinePrefixItems).coerceAtLeast(0)
+  val initialEndIndex = remember(sessionId) { timelineEndIndex }
+  val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialEndIndex)
   val scope = rememberCoroutineScope()
   var actionsOpen by rememberSaveable { mutableStateOf(false) }
   var actionsTab by rememberSaveable { mutableIntStateOf(0) }
@@ -101,9 +107,6 @@ fun SessionDetailScreen(
   val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
   val gitOutput by viewModel.gitOutput.collectAsStateWithLifecycle()
   val gitChanges by viewModel.gitChanges.collectAsStateWithLifecycle()
-  val hasOlderHistory by viewModel.hasOlderHistory.collectAsStateWithLifecycle()
-  val loadingOlderHistory by viewModel.loadingOlderHistory.collectAsStateWithLifecycle()
-  val historyLoadError by viewModel.historyLoadError.collectAsStateWithLifecycle()
   var extensionValue by remember { mutableStateOf("") }
 
   // Follow a streaming reply only while the reader is already at the end.
@@ -115,18 +118,18 @@ fun SessionDetailScreen(
   }
   // Auto-scroll to bottom on initial load, then follow streaming replies
   // when already near the bottom.
-  var initialScrollDone by remember { mutableStateOf(false) }
+  var initialScrollDone by remember(sessionId) { mutableStateOf(items.isNotEmpty()) }
   LaunchedEffect(items.size, streamVersion) {
     if (items.isEmpty()) return@LaunchedEffect
-    delay(60)
     if (!initialScrollDone) {
-      // First load — scroll to the bottom so the user sees the latest message
-      listState.animateScrollToItem(items.lastIndex)
+      // Position before revealing uncached history. Animating from index zero
+      // briefly paints old rows while entering a session.
+      listState.scrollToItem(timelineEndIndex)
       initialScrollDone = true
     } else if (!listState.isScrollInProgress) {
       val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-      if (lastVisible >= items.lastIndex - 2) {
-        listState.animateScrollToItem(items.lastIndex)
+      if (lastVisible >= timelineEndIndex - 2) {
+        listState.animateScrollToItem(timelineEndIndex)
       }
     }
   }
@@ -268,6 +271,7 @@ fun SessionDetailScreen(
         state = listState,
         modifier = Modifier
           .fillMaxSize()
+          .alpha(if (items.isEmpty() || initialScrollDone) 1f else 0f)
           .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         contentPadding = PaddingValues(top = 10.dp, bottom = 118.dp),
@@ -385,7 +389,7 @@ fun SessionDetailScreen(
       val showScrollDown by remember {
         derivedStateOf {
           val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-          items.isNotEmpty() && lastVisible < items.lastIndex - 3
+          items.isNotEmpty() && lastVisible < timelineEndIndex - 3
         }
       }
       androidx.compose.animation.AnimatedVisibility(
@@ -403,7 +407,7 @@ fun SessionDetailScreen(
         androidx.compose.material3.FloatingActionButton(
           onClick = {
             scope.launch {
-              listState.animateScrollToItem(items.lastIndex)
+              listState.animateScrollToItem(timelineEndIndex)
             }
           },
           containerColor = MaterialTheme.colorScheme.primaryContainer,
