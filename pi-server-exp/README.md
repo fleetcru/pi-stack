@@ -87,6 +87,19 @@ Environment variables:
 
 For any network-accessible deployment, set an auth token and all three allowlists. The browser test page should be served from an allowed HTTP origin rather than opened as `file://`.
 
+## Admin dashboard
+
+Open `http://<server-address>/admin` for the embedded administration dashboard. Sign in with the same value configured in `PI_SERVER_AUTH_TOKEN`; the token is exchanged for an eight-hour, HttpOnly, SameSite admin cookie and is never displayed by the dashboard. When authentication is disabled on a loopback-only server, the dashboard opens directly.
+
+The first dashboard version provides:
+
+- server uptime, API version, health warnings, session/worker counts, and scheduler pressure;
+- live editing of session, active-run, per-session, per-worker, and queue limits;
+- editing of all other non-secret server settings with validation and clear restart-required labels;
+- effective, pending, and configuration-source indicators.
+
+Settings are written atomically with owner-only permissions to `admin-config.json` under the bootstrap `PI_SERVER_DATA_DIR`. Persisted admin settings override environment variables at the next startup; explicitly supplied CLI flags remain authoritative. Startup-only changes require a manual service restart—the dashboard never attempts to restart systemd, Task Scheduler, or foreground processes itself. The authentication token is intentionally not stored in `admin-config.json` and remains controlled by `PI_SERVER_AUTH_TOKEN`.
+
 ## Scheduling and history
 
 Prompt, raw-command, WebSocket, remote-worker, and relay entry points share the same bounded admission controller. `GET /v1/scheduler` reports active reservations, queue pressure, and configured limits. Distributed reservations are persisted in the data directory and remote lifecycle completion is delivered through replayable worker WebSockets.

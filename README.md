@@ -36,6 +36,7 @@ A multi-device coding agent ecosystem for [Pi](https://github.com/earendil-works
 - **Image attachments** — Send images from web and Android clients as multimodal prompts.
 - **Session search** — Filter sessions by title, project, worker, or session ID across the sidebar.
 - **Pin sessions** — Star important sessions to keep them at the top of their project group.
+- **Embedded server administration** — `/admin` shows health and scheduler pressure and safely edits runtime or restart-required settings using the existing server token.
 - **Bounded task admission** — Global, per-session, and per-worker run limits with a bounded queue and scheduler-pressure visibility.
 - **Durable distributed runs** — Remote and relay reservations survive hub restarts and reconcile from pushed lifecycle events.
 - **Indexed history paging** — Large JSONL transcripts use validated sidecar indexes and direct message-boundary seeks.

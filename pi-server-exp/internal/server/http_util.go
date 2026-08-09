@@ -25,6 +25,12 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func corsMiddleware(allowed []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// /admin is a same-origin embedded application with its own Origin and
+		// CSRF checks. It must remain usable when API CORS is intentionally off.
+		if r.URL.Path == "/admin" || strings.HasPrefix(r.URL.Path, "/admin/") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		origin := r.Header.Get("Origin")
 		// When no origins are configured, reject browser cross-origin requests
 		// (those with an Origin header) to prevent malicious webpages from
@@ -89,6 +95,12 @@ func authMiddleware(token string, next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The embedded admin page has its own cookie-based authentication flow.
+		// Its login endpoint must be reachable before a browser has a session.
+		if r.URL.Path == "/admin" || strings.HasPrefix(r.URL.Path, "/admin/") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		// Session WebSocket may authenticate via single-use ticket instead of bearer.
 		// The relay WebSocket authenticates via a `pi-relay.<token>` subprotocol
 		// (keeps the secret out of URLs); the relayToken query param is a

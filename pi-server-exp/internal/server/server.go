@@ -47,9 +47,17 @@ type Server struct {
 	distributedRuns           map[string]distributedReservation // hub session ID -> reservation
 	distributedPath           string
 	distributedReconstructing bool
+	startedAt                 time.Time
+	admin                     *adminState
 }
 
 func New(cfg Config, logger *slog.Logger) *Server {
+	if cfg.ConfigSources == nil {
+		cfg.ConfigSources = defaultConfigSources()
+	}
+	if cfg.AdminConfigPath == "" {
+		cfg.AdminConfigPath = filepath.Join(cfg.DataDir, adminConfigFilename)
+	}
 	s := &Server{
 		cfg:               cfg,
 		maxSessionsAtomic: int64(cfg.MaxSessions),
@@ -71,6 +79,8 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		stopHeartbeat:     make(chan struct{}),
 		distributedRuns:   map[string]distributedReservation{},
 		distributedPath:   filepath.Join(cfg.DataDir, "distributed-runs.json"),
+		startedAt:         time.Now(),
+		admin:             newAdminState(cfg),
 	}
 	s.external.onLifecycle = func(sessionID, eventType string) {
 		if eventType == "agent_start" {
@@ -152,6 +162,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /admin", s.adminPage)
+	mux.HandleFunc("/admin/", s.adminRoot)
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /v1/capabilities", s.capabilities)
 	mux.HandleFunc("PATCH /v1/capacity", s.updateCapacity)

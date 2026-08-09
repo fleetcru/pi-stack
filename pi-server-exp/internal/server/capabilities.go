@@ -6,6 +6,7 @@ const APIVersion = "0.2.0"
 
 // Required desktop capability flags for pi-desk Phase 0 negotiation.
 var serverCapabilities = map[string]bool{
+	"adminDashboard":   true,
 	"workerCrud":       true,
 	"sessionInventory": true,
 	"fileContent":      true,

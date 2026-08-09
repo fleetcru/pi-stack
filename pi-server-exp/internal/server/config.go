@@ -38,6 +38,10 @@ type Config struct {
 	EventHistoryBytes     int
 	MaxWatches            int
 	LogLevel              slog.Level
+	ConfigSources         map[string]string
+	AdminConfigPath       string
+	AdminConfigLoaded     bool
+	AdminConfigError      string
 }
 
 // ValidateConfig checks local prerequisites before the daemon starts accepting
@@ -103,11 +107,45 @@ func ConfigFromEnv() Config {
 		EventHistoryBytes:     envInt("PI_SERVER_EVENT_HISTORY_BYTES", 2<<20),
 		MaxWatches:            envInt("PI_SERVER_MAX_WATCHES", 2048),
 		LogLevel:              slog.LevelInfo,
+		ConfigSources:         defaultConfigSources(),
 	}
+	markEnvironmentSources(cfg.ConfigSources)
 	if os.Getenv("PI_SERVER_DEBUG") == "1" || os.Getenv("PI_SERVER_DEBUG") == "true" {
 		cfg.LogLevel = slog.LevelDebug
 	}
+	// Persisted admin values intentionally override environment variables.
+	// Explicit command-line flags are parsed afterward and remain authoritative.
+	loadAdminSettings(&cfg)
 	return cfg
+}
+
+func defaultConfigSources() map[string]string {
+	out := make(map[string]string, len(adminSettingKeys))
+	for _, key := range adminSettingKeys {
+		out[key] = "default"
+	}
+	return out
+}
+
+func markEnvironmentSources(sources map[string]string) {
+	keys := map[string]string{
+		"addr": "PI_SERVER_ADDR", "piBinary": "PI_SERVER_PI_BINARY", "extensions": "PI_SERVER_PI_EXTENSIONS",
+		"cwd": "PI_SERVER_CWD", "dataDir": "PI_SERVER_DATA_DIR", "allowedOrigins": "PI_SERVER_ALLOWED_ORIGINS",
+		"allowedRoots": "PI_SERVER_ALLOWED_ROOTS", "allowedWorkerHosts": "PI_SERVER_ALLOWED_WORKER_HOSTS",
+		"shutdownTimeout": "PI_SERVER_SHUTDOWN_TIMEOUT", "requestTimeout": "PI_SERVER_REQUEST_TIMEOUT",
+		"readTimeout": "PI_SERVER_READ_TIMEOUT", "writeTimeout": "PI_SERVER_WRITE_TIMEOUT", "idleTimeout": "PI_SERVER_IDLE_TIMEOUT",
+		"maxSessions": "PI_SERVER_MAX_SESSIONS", "maxActiveRuns": "PI_SERVER_MAX_ACTIVE_RUNS",
+		"maxRunsPerSession": "PI_SERVER_MAX_RUNS_PER_SESSION", "maxRunsPerWorker": "PI_SERVER_MAX_RUNS_PER_WORKER",
+		"maxQueuedRuns": "PI_SERVER_MAX_QUEUED_RUNS", "distributedRunTimeout": "PI_SERVER_DISTRIBUTED_RUN_TIMEOUT",
+		"restartMax": "PI_SERVER_RESTART_MAX", "restartBackoff": "PI_SERVER_RESTART_BACKOFF",
+		"eventHistoryMax": "PI_SERVER_EVENT_HISTORY_MAX", "eventHistoryBytes": "PI_SERVER_EVENT_HISTORY_BYTES",
+		"maxWatches": "PI_SERVER_MAX_WATCHES", "debug": "PI_SERVER_DEBUG",
+	}
+	for key, envKey := range keys {
+		if os.Getenv(envKey) != "" {
+			sources[key] = "environment"
+		}
+	}
 }
 
 func defaultDataDir() string {

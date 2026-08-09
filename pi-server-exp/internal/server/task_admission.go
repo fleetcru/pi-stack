@@ -136,6 +136,16 @@ func (a *TaskAdmission) Release(sessionID, workerID string) {
 	}
 }
 
+// Reconfigure updates admission limits without disturbing active reservations.
+// Lower limits take effect for future grants; already-active work is allowed to
+// finish. Existing queued work is retained even if the new queue limit is lower.
+func (a *TaskAdmission) Reconfigure(globalMax, perSession, perWorker, maxQueued int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.globalMax, a.perSession, a.perWorker, a.maxQueued = globalMax, perSession, perWorker, maxQueued
+	a.dispatchWaitersLocked()
+}
+
 type TaskAdmissionSnapshot struct {
 	Active          int            `json:"active"`
 	Queued          int            `json:"queued"`

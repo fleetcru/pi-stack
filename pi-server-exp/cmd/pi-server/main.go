@@ -36,6 +36,15 @@ func main() {
 	logLevel := flag.String("log-level", "info", "log level: debug, info, warn, error")
 	bg := flag.Bool("bg", false, "detach and run in the background (not supported under systemd / Task Scheduler)")
 	flag.Parse()
+	flag.Visit(func(f *flag.Flag) {
+		key := map[string]string{
+			"addr": "addr", "pi": "piBinary", "cwd": "cwd", "data-dir": "dataDir",
+			"shutdown-timeout": "shutdownTimeout", "log-level": "debug",
+		}[f.Name]
+		if key != "" {
+			cfg.ConfigSources[key] = "cli"
+		}
+	})
 
 	// Validate log format early so we fail fast.
 	formatter, err := parseLogFormat(*logFormat)
@@ -49,7 +58,7 @@ func main() {
 		os.Exit(1)
 	}
 	// Honour PI_SERVER_DEBUG=1 even if --log-level was not set to debug.
-	if cfg.LogLevel == slog.LevelDebug && level > clog.DebugLevel {
+	if cfg.LogLevel == slog.LevelDebug && level > clog.DebugLevel && cfg.ConfigSources["debug"] != "cli" {
 		level = clog.DebugLevel
 	}
 
