@@ -39,10 +39,13 @@ type app struct {
 	done     chan struct{}
 	doneOnce sync.Once
 	exiting  atomic.Bool
+	busy     atomic.Bool
 	ctx      context.Context
 	cancel   context.CancelFunc
 
 	statusItem  *systray.MenuItem
+	versionItem *systray.MenuItem
+	pathItem    *systray.MenuItem
 	startItem   *systray.MenuItem
 	stopItem    *systray.MenuItem
 	restartItem *systray.MenuItem
@@ -123,10 +126,18 @@ func (a *app) onReady() {
 
 	a.statusItem = systray.AddMenuItem("Status: checking…", "Current pi-server status")
 	a.statusItem.Disable()
+	a.versionItem = systray.AddMenuItem("Server version: checking…", "Downloaded pi-server release")
+	a.versionItem.Disable()
+	a.pathItem = systray.AddMenuItem("Server: "+a.cfg.serverPath, "Downloaded server executable")
+	a.pathItem.Disable()
+	updateSource := systray.AddMenuItem("Updates: latest stable release", "Source: github.com/"+a.cfg.releaseRepo)
+	updateSource.Disable()
+	a.updateServerInfo()
 	systray.AddSeparator()
 
 	openAdmin := systray.AddMenuItem("Open Admin", "Open the pi-server admin page")
 	openLogs := systray.AddMenuItem("Open Logs", "Open the pi-server log file")
+	openServerFolder := systray.AddMenuItem("Open Server Folder", "Open the downloaded server location")
 	systray.AddSeparator()
 
 	a.startItem = systray.AddMenuItem("Start Server", "Start pi-server")
@@ -135,7 +146,7 @@ func (a *app) onReady() {
 	systray.AddSeparator()
 	quit := systray.AddMenuItem("Quit", "Stop the managed server and exit")
 
-	go a.handleMenu(openAdmin, openLogs, quit)
+	go a.handleMenu(openAdmin, openLogs, openServerFolder, quit)
 	go a.monitor()
 	go func() {
 		if !a.healthy() {
@@ -146,7 +157,7 @@ func (a *app) onReady() {
 	}()
 }
 
-func (a *app) handleMenu(openAdmin, openLogs, quit *systray.MenuItem) {
+func (a *app) handleMenu(openAdmin, openLogs, openServerFolder, quit *systray.MenuItem) {
 	for {
 		select {
 		case <-openAdmin.ClickedCh:
@@ -154,6 +165,9 @@ func (a *app) handleMenu(openAdmin, openLogs, quit *systray.MenuItem) {
 		case <-openLogs.ClickedCh:
 			_ = ensureFile(a.cfg.logPath)
 			_ = openTarget(a.cfg.logPath)
+		case <-openServerFolder.ClickedCh:
+			_ = os.MkdirAll(filepath.Dir(a.cfg.serverPath), 0o755)
+			_ = openTarget(filepath.Dir(a.cfg.serverPath))
 		case <-a.startItem.ClickedCh:
 			if err := a.start(); err != nil {
 				a.setStatus("Start failed: " + err.Error())
@@ -177,6 +191,8 @@ func (a *app) handleMenu(openAdmin, openLogs, quit *systray.MenuItem) {
 func (a *app) start() error {
 	a.startMu.Lock()
 	defer a.startMu.Unlock()
+	a.busy.Store(true)
+	defer a.busy.Store(false)
 
 	a.mu.Lock()
 	alreadyRunning := a.cmd != nil
@@ -186,13 +202,21 @@ func (a *app) start() error {
 	}
 
 	if a.cfg.autoDownload {
-		a.setStatus("Checking for server updates…")
+		a.setStatus("Checking latest stable server release…")
 		ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
-		_, err := newServerDownloader(a.cfg.releaseRepo).ensureLatest(ctx, a.cfg.serverPath)
+		version, err := newServerDownloader(a.cfg.releaseRepo).ensureLatest(ctx, a.cfg.serverPath)
 		cancel()
 		if err != nil && !fileExists(a.cfg.serverPath) {
 			return fmt.Errorf("download latest stable server: %w", err)
 		}
+		if err == nil {
+			a.setStatus("Starting server " + version + "…")
+		} else {
+			a.setStatus("Update unavailable; starting downloaded server…")
+		}
+		a.updateServerInfo()
+	} else {
+		a.setStatus("Starting server…")
 	}
 	if a.exiting.Load() {
 		return errors.New("tray is exiting")
@@ -310,6 +334,9 @@ func (a *app) monitor() {
 }
 
 func (a *app) updateStatus() {
+	if a.busy.Load() {
+		return
+	}
 	healthy := a.healthy()
 	a.mu.Lock()
 	managed := a.cmd != nil
@@ -332,6 +359,19 @@ func (a *app) updateStatus() {
 		a.stopItem.Disable()
 		a.restartItem.Disable()
 	}
+}
+
+func (a *app) updateServerInfo() {
+	if a.versionItem == nil {
+		return
+	}
+	version := "not downloaded"
+	if cached, err := cachedServerVersion(a.cfg.serverPath); err == nil && cached != "" {
+		version = cached
+	} else if fileExists(a.cfg.serverPath) {
+		version = "custom or unknown"
+	}
+	a.versionItem.SetTitle("Server version: " + version)
 }
 
 func (a *app) setStatus(status string) {

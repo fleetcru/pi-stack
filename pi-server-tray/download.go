@@ -60,6 +60,14 @@ func managedServerPath() (string, error) {
 	return filepath.Join(home, ".pi", "server", "bin", name), nil
 }
 
+func cachedServerVersion(destination string) (string, error) {
+	version, err := os.ReadFile(destination + ".version")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(version)), nil
+}
+
 func (d *serverDownloader) ensureLatest(ctx context.Context, destination string) (string, error) {
 	release, err := d.latestRelease(ctx)
 	if err != nil {
@@ -75,7 +83,7 @@ func (d *serverDownloader) ensureLatest(ctx context.Context, destination string)
 	}
 	versionPath := destination + ".version"
 	if fileExists(destination) {
-		if version, err := os.ReadFile(versionPath); err == nil && strings.TrimSpace(string(version)) == release.TagName {
+		if version, err := cachedServerVersion(destination); err == nil && version == release.TagName {
 			return release.TagName, nil
 		}
 	}
