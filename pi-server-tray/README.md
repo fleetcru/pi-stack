@@ -2,7 +2,7 @@
 
 A small cross-platform system-tray wrapper that downloads, starts, and manages `pi-server`.
 
-At startup, the tray checks the latest stable GitHub release from `fleetcru/pi-stack`, downloads the matching server binary to `~/.pi/server/bin/`, and runs it with the user's home directory as its working directory. If the update check fails, an already-downloaded server remains usable.
+The tray downloads the latest stable GitHub server release from `fleetcru/pi-stack` only when the user selects **Download / Update Server**. It installs the binary to `~/.pi/server/bin/` and can then run it with the user's home directory as its working directory. If the server is not installed, server actions remain disabled.
 
 ## Menu
 
@@ -11,7 +11,7 @@ At startup, the tray checks the latest stable GitHub release from `fleetcru/pi-s
 - **Open Logs** opens the combined server log.
 - **Open Server Folder** opens `~/.pi/server/bin/`.
 - **Download / Update Server** explicitly downloads and installs the latest stable server while it is stopped, with success or failure shown in the menu.
-- **Start Server** also downloads or updates the server when needed before launching it.
+- **Start Server** launches the installed server and remains disabled until the server executable exists.
 - **Start / Stop / Restart Server** controls the process started by this tray.
 - **Quit** stops the managed server and closes the tray.
 
@@ -45,7 +45,7 @@ From PowerShell in this directory:
 .\install.ps1
 ```
 
-The script builds and installs `pi-server-tray.exe` to `%LOCALAPPDATA%\PiServer`, creates a startup shortcut, and launches it. On first launch, the tray downloads the latest stable `pi-server.exe` to `%USERPROFILE%\.pi\server\bin`.
+The script builds and installs `pi-server-tray.exe` to `%LOCALAPPDATA%\PiServer`, creates a startup shortcut, and launches it. Use **Download / Update Server** in the tray to install the latest stable `pi-server.exe` to `%USERPROFILE%\.pi\server\bin`.
 
 If script execution is restricted, run:
 

@@ -43,14 +43,15 @@ type app struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 
-	statusItem   *systray.MenuItem
-	versionItem  *systray.MenuItem
-	pathItem     *systray.MenuItem
-	downloadInfo *systray.MenuItem
-	downloadItem *systray.MenuItem
-	startItem    *systray.MenuItem
-	stopItem     *systray.MenuItem
-	restartItem  *systray.MenuItem
+	statusItem    *systray.MenuItem
+	versionItem   *systray.MenuItem
+	pathItem      *systray.MenuItem
+	downloadInfo  *systray.MenuItem
+	downloadItem  *systray.MenuItem
+	openAdminItem *systray.MenuItem
+	startItem     *systray.MenuItem
+	stopItem      *systray.MenuItem
+	restartItem   *systray.MenuItem
 }
 
 func main() {
@@ -139,22 +140,22 @@ func (a *app) onReady() {
 	a.updateServerInfo()
 	systray.AddSeparator()
 
-	openAdmin := systray.AddMenuItem("Open Admin", "Open the pi-server admin page")
+	a.openAdminItem = systray.AddMenuItem("Open Admin", "Open the pi-server admin page")
 	openLogs := systray.AddMenuItem("Open Logs", "Open the pi-server log file")
 	openServerFolder := systray.AddMenuItem("Open Server Folder", "Open the downloaded server location")
 	a.downloadItem = systray.AddMenuItem("Download / Update Server", "Download and install the latest stable pi-server release")
 	systray.AddSeparator()
 
-	a.startItem = systray.AddMenuItem("Start Server", "Download if needed, then start pi-server")
+	a.startItem = systray.AddMenuItem("Start Server", "Start the installed pi-server")
 	a.stopItem = systray.AddMenuItem("Stop Server", "Stop the pi-server process started by this tray")
 	a.restartItem = systray.AddMenuItem("Restart Server", "Restart the pi-server process")
 	systray.AddSeparator()
 	quit := systray.AddMenuItem("Quit", "Stop the managed server and exit")
 
-	go a.handleMenu(openAdmin, openLogs, openServerFolder, quit)
+	go a.handleMenu(openLogs, openServerFolder, quit)
 	go a.monitor()
 	go func() {
-		if !a.healthy() {
+		if fileExists(a.cfg.serverPath) && !a.healthy() {
 			if err := a.start(); err != nil {
 				a.setStatus("Start failed: " + err.Error())
 			}
@@ -162,10 +163,10 @@ func (a *app) onReady() {
 	}()
 }
 
-func (a *app) handleMenu(openAdmin, openLogs, openServerFolder, quit *systray.MenuItem) {
+func (a *app) handleMenu(openLogs, openServerFolder, quit *systray.MenuItem) {
 	for {
 		select {
-		case <-openAdmin.ClickedCh:
+		case <-a.openAdminItem.ClickedCh:
 			_ = openTarget(a.cfg.serverURL + "/admin")
 		case <-openLogs.ClickedCh:
 			_ = ensureFile(a.cfg.logPath)
@@ -213,20 +214,10 @@ func (a *app) start() error {
 		return nil
 	}
 
-	if a.cfg.autoDownload {
-		version, err := a.ensureServerDownloaded()
-		if err != nil && !fileExists(a.cfg.serverPath) {
-			return fmt.Errorf("download latest stable server: %w", err)
-		}
-		if err == nil {
-			a.setStatus("Starting server " + version + "…")
-		} else {
-			a.setDownloadInfo("update unavailable; using installed server")
-			a.setStatus("Update unavailable; starting downloaded server…")
-		}
-	} else {
-		a.setStatus("Starting server…")
+	if !fileExists(a.cfg.serverPath) {
+		return errors.New("server is not installed; use Download / Update Server first")
 	}
+	a.setStatus("Starting server…")
 	if a.exiting.Load() {
 		return errors.New("tray is exiting")
 	}
@@ -392,24 +383,32 @@ func (a *app) updateStatus() {
 	switch {
 	case healthy && managed:
 		a.setStatus("Running (managed)")
+		a.openAdminItem.Enable()
 		a.downloadItem.Disable()
 		a.startItem.Disable()
 		a.stopItem.Enable()
 		a.restartItem.Enable()
 	case healthy:
 		a.setStatus("Running (external)")
+		a.openAdminItem.Enable()
 		a.downloadItem.Disable()
 		a.startItem.Disable()
 		a.stopItem.Disable()
 		a.restartItem.Disable()
 	default:
-		a.setStatus("Stopped")
+		a.openAdminItem.Disable()
 		if a.cfg.autoDownload {
 			a.downloadItem.Enable()
 		} else {
 			a.downloadItem.Disable()
 		}
-		a.startItem.Enable()
+		if fileExists(a.cfg.serverPath) {
+			a.setStatus("Stopped")
+			a.startItem.Enable()
+		} else {
+			a.setStatus("Server not installed")
+			a.startItem.Disable()
+		}
 		a.stopItem.Disable()
 		a.restartItem.Disable()
 	}
