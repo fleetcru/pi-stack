@@ -43,12 +43,14 @@ type app struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 
-	statusItem  *systray.MenuItem
-	versionItem *systray.MenuItem
-	pathItem    *systray.MenuItem
-	startItem   *systray.MenuItem
-	stopItem    *systray.MenuItem
-	restartItem *systray.MenuItem
+	statusItem   *systray.MenuItem
+	versionItem  *systray.MenuItem
+	pathItem     *systray.MenuItem
+	downloadInfo *systray.MenuItem
+	downloadItem *systray.MenuItem
+	startItem    *systray.MenuItem
+	stopItem     *systray.MenuItem
+	restartItem  *systray.MenuItem
 }
 
 func main() {
@@ -132,15 +134,18 @@ func (a *app) onReady() {
 	a.pathItem.Disable()
 	updateSource := systray.AddMenuItem("Updates: latest stable release", "Source: github.com/"+a.cfg.releaseRepo)
 	updateSource.Disable()
+	a.downloadInfo = systray.AddMenuItem("Download: ready", "Server download result")
+	a.downloadInfo.Disable()
 	a.updateServerInfo()
 	systray.AddSeparator()
 
 	openAdmin := systray.AddMenuItem("Open Admin", "Open the pi-server admin page")
 	openLogs := systray.AddMenuItem("Open Logs", "Open the pi-server log file")
 	openServerFolder := systray.AddMenuItem("Open Server Folder", "Open the downloaded server location")
+	a.downloadItem = systray.AddMenuItem("Download / Update Server", "Download and install the latest stable pi-server release")
 	systray.AddSeparator()
 
-	a.startItem = systray.AddMenuItem("Start Server", "Start pi-server")
+	a.startItem = systray.AddMenuItem("Start Server", "Download if needed, then start pi-server")
 	a.stopItem = systray.AddMenuItem("Stop Server", "Stop the pi-server process started by this tray")
 	a.restartItem = systray.AddMenuItem("Restart Server", "Restart the pi-server process")
 	systray.AddSeparator()
@@ -168,6 +173,13 @@ func (a *app) handleMenu(openAdmin, openLogs, openServerFolder, quit *systray.Me
 		case <-openServerFolder.ClickedCh:
 			_ = os.MkdirAll(filepath.Dir(a.cfg.serverPath), 0o755)
 			_ = openTarget(filepath.Dir(a.cfg.serverPath))
+		case <-a.downloadItem.ClickedCh:
+			go func() {
+				if err := a.downloadServer(); err != nil {
+					a.setDownloadInfo("failed: " + err.Error())
+					a.setStatus("Server download failed")
+				}
+			}()
 		case <-a.startItem.ClickedCh:
 			if err := a.start(); err != nil {
 				a.setStatus("Start failed: " + err.Error())
@@ -202,19 +214,16 @@ func (a *app) start() error {
 	}
 
 	if a.cfg.autoDownload {
-		a.setStatus("Checking latest stable server release…")
-		ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
-		version, err := newServerDownloader(a.cfg.releaseRepo).ensureLatest(ctx, a.cfg.serverPath)
-		cancel()
+		version, err := a.ensureServerDownloaded()
 		if err != nil && !fileExists(a.cfg.serverPath) {
 			return fmt.Errorf("download latest stable server: %w", err)
 		}
 		if err == nil {
 			a.setStatus("Starting server " + version + "…")
 		} else {
+			a.setDownloadInfo("update unavailable; using installed server")
 			a.setStatus("Update unavailable; starting downloaded server…")
 		}
-		a.updateServerInfo()
 	} else {
 		a.setStatus("Starting server…")
 	}
@@ -253,6 +262,44 @@ func (a *app) start() error {
 	a.stopping = false
 	go a.wait(cmd, logFile, done)
 	return nil
+}
+
+func (a *app) downloadServer() error {
+	a.startMu.Lock()
+	defer a.startMu.Unlock()
+	a.busy.Store(true)
+	defer a.busy.Store(false)
+
+	a.mu.Lock()
+	running := a.cmd != nil
+	a.mu.Unlock()
+	if running || a.healthy() {
+		return errors.New("stop the server before downloading an update")
+	}
+	if !a.cfg.autoDownload {
+		return errors.New("automatic downloads are disabled by the tray configuration")
+	}
+	version, err := a.ensureServerDownloaded()
+	if err != nil {
+		return err
+	}
+	a.setDownloadInfo("installed " + version)
+	a.setStatus("Server " + version + " downloaded")
+	return nil
+}
+
+func (a *app) ensureServerDownloaded() (string, error) {
+	a.setStatus("Downloading latest stable server release…")
+	a.setDownloadInfo("checking GitHub releases…")
+	ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
+	version, err := newServerDownloader(a.cfg.releaseRepo).ensureLatest(ctx, a.cfg.serverPath)
+	cancel()
+	if err != nil {
+		return "", err
+	}
+	a.updateServerInfo()
+	a.setDownloadInfo("installed " + version)
+	return version, nil
 }
 
 func (a *app) wait(cmd *exec.Cmd, logFile *os.File, done chan struct{}) {
@@ -345,16 +392,23 @@ func (a *app) updateStatus() {
 	switch {
 	case healthy && managed:
 		a.setStatus("Running (managed)")
+		a.downloadItem.Disable()
 		a.startItem.Disable()
 		a.stopItem.Enable()
 		a.restartItem.Enable()
 	case healthy:
 		a.setStatus("Running (external)")
+		a.downloadItem.Disable()
 		a.startItem.Disable()
 		a.stopItem.Disable()
 		a.restartItem.Disable()
 	default:
 		a.setStatus("Stopped")
+		if a.cfg.autoDownload {
+			a.downloadItem.Enable()
+		} else {
+			a.downloadItem.Disable()
+		}
 		a.startItem.Enable()
 		a.stopItem.Disable()
 		a.restartItem.Disable()
@@ -372,6 +426,13 @@ func (a *app) updateServerInfo() {
 		version = "custom or unknown"
 	}
 	a.versionItem.SetTitle("Server version: " + version)
+}
+
+func (a *app) setDownloadInfo(info string) {
+	if a.exiting.Load() || a.downloadInfo == nil {
+		return
+	}
+	a.downloadInfo.SetTitle("Download: " + info)
 }
 
 func (a *app) setStatus(status string) {

@@ -10,6 +10,8 @@ At startup, the tray checks the latest stable GitHub release from `fleetcru/pi-s
 - **Open Admin** opens the server's `/admin` page.
 - **Open Logs** opens the combined server log.
 - **Open Server Folder** opens `~/.pi/server/bin/`.
+- **Download / Update Server** explicitly downloads and installs the latest stable server while it is stopped, with success or failure shown in the menu.
+- **Start Server** also downloads or updates the server when needed before launching it.
 - **Start / Stop / Restart Server** controls the process started by this tray.
 - **Quit** stops the managed server and closes the tray.
 
