@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,16 +18,20 @@ import (
 )
 
 type config struct {
-	serverPath string
-	serverURL  string
-	logPath    string
-	serverArgs []string
+	serverPath   string
+	serverURL    string
+	logPath      string
+	workDir      string
+	releaseRepo  string
+	autoDownload bool
+	serverArgs   []string
 }
 
 type app struct {
 	cfg config
 
 	mu       sync.Mutex
+	startMu  sync.Mutex
 	cmd      *exec.Cmd
 	cmdDone  chan struct{}
 	logFile  *os.File
@@ -36,6 +39,8 @@ type app struct {
 	done     chan struct{}
 	doneOnce sync.Once
 	exiting  atomic.Bool
+	ctx      context.Context
+	cancel   context.CancelFunc
 
 	statusItem  *systray.MenuItem
 	startItem   *systray.MenuItem
@@ -50,7 +55,8 @@ func main() {
 		os.Exit(2)
 	}
 
-	a := &app{cfg: cfg, done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	a := &app{cfg: cfg, done: make(chan struct{}), ctx: ctx, cancel: cancel}
 	systray.Run(a.onReady, a.onExit)
 }
 
@@ -62,10 +68,22 @@ func parseConfig(args []string) (config, error) {
 	if err != nil {
 		return config{}, err
 	}
-	cfg := config{}
-	fs.StringVar(&cfg.serverPath, "server", defaultServerPath(), "path or command name for the pi-server executable")
+	defaultServer, err := managedServerPath()
+	if err != nil {
+		return config{}, err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return config{}, fmt.Errorf("find home directory: %w", err)
+	}
+	cfg := config{autoDownload: true}
+	noDownload := false
+	fs.StringVar(&cfg.serverPath, "server", defaultServer, "custom pi-server executable path (disables automatic downloads)")
 	fs.StringVar(&cfg.serverURL, "url", "http://127.0.0.1:3141", "pi-server base URL")
 	fs.StringVar(&cfg.logPath, "log-file", defaultLog, "combined pi-server stdout/stderr log")
+	fs.StringVar(&cfg.workDir, "cwd", home, "working directory used to run pi-server")
+	fs.StringVar(&cfg.releaseRepo, "release-repo", defaultReleaseRepo, "GitHub owner/repository used for stable server releases")
+	fs.BoolVar(&noDownload, "no-download", false, "disable automatic server downloads")
 	if err := fs.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -73,22 +91,18 @@ func parseConfig(args []string) (config, error) {
 	if cfg.serverURL == "" {
 		return config{}, errors.New("--url cannot be empty")
 	}
+	if cfg.workDir == "" {
+		return config{}, errors.New("--cwd cannot be empty")
+	}
+	serverOverridden := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "server" {
+			serverOverridden = true
+		}
+	})
+	cfg.autoDownload = !noDownload && !serverOverridden
 	cfg.serverArgs = fs.Args()
 	return cfg, nil
-}
-
-func defaultServerPath() string {
-	name := "pi-server"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	if exe, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(exe), name)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-	return name
 }
 
 func defaultLogPath() (string, error) {
@@ -161,6 +175,29 @@ func (a *app) handleMenu(openAdmin, openLogs, quit *systray.MenuItem) {
 }
 
 func (a *app) start() error {
+	a.startMu.Lock()
+	defer a.startMu.Unlock()
+
+	a.mu.Lock()
+	alreadyRunning := a.cmd != nil
+	a.mu.Unlock()
+	if alreadyRunning {
+		return nil
+	}
+
+	if a.cfg.autoDownload {
+		a.setStatus("Checking for server updates…")
+		ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
+		_, err := newServerDownloader(a.cfg.releaseRepo).ensureLatest(ctx, a.cfg.serverPath)
+		cancel()
+		if err != nil && !fileExists(a.cfg.serverPath) {
+			return fmt.Errorf("download latest stable server: %w", err)
+		}
+	}
+	if a.exiting.Load() {
+		return errors.New("tray is exiting")
+	}
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.cmd != nil {
@@ -177,6 +214,7 @@ func (a *app) start() error {
 		return fmt.Errorf("open log: %w", err)
 	}
 	cmd := exec.Command(a.cfg.serverPath, a.cfg.serverArgs...)
+	cmd.Dir = a.cfg.workDir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	configureProcess(cmd)
@@ -308,12 +346,16 @@ func (a *app) setStatus(status string) {
 
 func (a *app) onExit() {
 	a.exiting.Store(true)
+	a.cancel()
 	a.doneOnce.Do(func() { close(a.done) })
 	ctx, cancel := context.WithTimeout(context.Background(), 11*time.Second)
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
+		// Wait for any canceled download/start attempt before checking for a child.
+		a.startMu.Lock()
 		_ = a.stop()
+		a.startMu.Unlock()
 		close(done)
 	}()
 	select {

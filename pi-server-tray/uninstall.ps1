@@ -36,7 +36,7 @@ function Stop-InstalledProcess {
 
 if ($PSCmdlet.ShouldProcess($InstallDir, "Uninstall Pi Server Tray")) {
     Stop-InstalledProcess -ExecutablePath (Join-Path $InstallDir "pi-server-tray.exe")
-    Stop-InstalledProcess -ExecutablePath (Join-Path $InstallDir "pi-server.exe")
+    Stop-InstalledProcess -ExecutablePath (Join-Path $DataDir "bin\pi-server.exe")
     Start-Sleep -Milliseconds 300
 
     if (Test-Path $ShortcutPath) {

@@ -1,6 +1,8 @@
 # Pi Server Tray
 
-A small cross-platform system-tray wrapper that starts and manages `pi-server`.
+A small cross-platform system-tray wrapper that downloads, starts, and manages `pi-server`.
+
+At startup, the tray checks the latest stable GitHub release from `fleetcru/pi-stack`, downloads the matching server binary to `~/.pi/server/bin/`, and runs it with the user's home directory as its working directory. If the update check fails, an already-downloaded server remains usable.
 
 ## Menu
 
@@ -14,7 +16,7 @@ If another server is already healthy at the configured URL, the tray reports it 
 ## Prerequisites
 
 - Go 1.23+
-- A built `pi-server` executable
+- Internet access on first launch so the latest stable `pi-server` can be downloaded
 - Linux only: the AppIndicator/GTK development libraries required by `fyne.io/systray`
 
 Typical Debian/Ubuntu prerequisites:
@@ -39,7 +41,7 @@ From PowerShell in this directory:
 .\install.ps1
 ```
 
-The script builds both `pi-server.exe` and `pi-server-tray.exe`, installs them to `%LOCALAPPDATA%\PiServer`, creates a startup shortcut, and launches the tray.
+The script builds and installs `pi-server-tray.exe` to `%LOCALAPPDATA%\PiServer`, creates a startup shortcut, and launches it. On first launch, the tray downloads the latest stable `pi-server.exe` to `%USERPROFILE%\.pi\server\bin`.
 
 If script execution is restricted, run:
 
@@ -69,6 +71,10 @@ To also remove the server data directory:
 
 A custom `-InstallDir` used during installation must also be supplied during uninstall.
 
+## GitHub releases
+
+The `Build Pi Server Tray` GitHub Actions workflow publishes Windows and Linux amd64 binaries plus `SHA256SUMS`. It can be started manually from the Actions tab or by pushing a `tray-v*` tag.
+
 ## Manual build
 
 ```bash
@@ -81,7 +87,7 @@ On Windows, suppress the console window:
 go build -ldflags="-H=windowsgui -s -w" -o dist/pi-server-tray.exe .
 ```
 
-Place the tray executable beside `pi-server`/`pi-server.exe`. It will discover the adjacent server automatically. Otherwise provide its path explicitly.
+By default, no server executable needs to be placed beside the tray. The latest stable server is downloaded automatically.
 
 ## Run
 
@@ -92,16 +98,18 @@ Place the tray executable beside `pi-server`/`pi-server.exe`. It will discover t
 Options:
 
 ```text
---server PATH    pi-server executable path or command name
---url URL        server base URL (default http://127.0.0.1:3141)
---log-file PATH  combined server output log
+--server PATH         custom pi-server path; disables automatic downloads
+--no-download         disable automatic server downloads
+--release-repo REPO   stable release repository (default fleetcru/pi-stack)
+--cwd PATH            server working directory (default: user home)
+--url URL             server base URL (default http://127.0.0.1:3141)
+--log-file PATH       combined server output log
 ```
 
 Arguments after the tray options are passed directly to `pi-server`:
 
 ```bash
 ./pi-server-tray \
-  --server ./pi-server \
   --url http://127.0.0.1:4141 \
   -- \
   --addr 127.0.0.1:4141 \
@@ -112,6 +120,8 @@ Environment variables such as `PI_SERVER_AUTH_TOKEN`, `PI_SERVER_DATA_DIR`, and 
 
 ## Platform notes
 
+- **Windows amd64 and Linux amd64:** automatic downloads select the matching release asset.
+- **macOS and ARM systems:** automatic server downloads are not available until matching assets are added to the release workflow; use `--server PATH` with a locally-built server.
 - **Windows:** the server is launched without a console window. Windows cannot deliver Unix-style `SIGTERM` to the hidden child, so Stop/Quit terminates it directly.
 - **macOS/Linux:** Stop/Quit sends `SIGTERM` to the server process group, allowing graceful shutdown.
 - Tray icons are embedded at build time: `assets/icon.ico` on Windows and `assets/icon.png` on macOS/Linux. No asset file is required beside the executable.

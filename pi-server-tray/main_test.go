@@ -22,12 +22,43 @@ func TestParseConfig(t *testing.T) {
 	if cfg.serverPath != "/opt/pi-server" {
 		t.Fatalf("serverPath = %q", cfg.serverPath)
 	}
+	if cfg.autoDownload {
+		t.Fatal("autoDownload = true with an explicit --server path")
+	}
 	if cfg.serverURL != "http://127.0.0.1:4141" {
 		t.Fatalf("serverURL = %q", cfg.serverURL)
 	}
 	wantArgs := []string{"--addr", "127.0.0.1:4141"}
 	if !reflect.DeepEqual(cfg.serverArgs, wantArgs) {
 		t.Fatalf("serverArgs = %#v, want %#v", cfg.serverArgs, wantArgs)
+	}
+}
+
+func TestParseConfigDefaultsToAutoDownload(t *testing.T) {
+	t.Setenv("PI_SERVER_DATA_DIR", t.TempDir())
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatalf("parseConfig() error = %v", err)
+	}
+	if !cfg.autoDownload {
+		t.Fatal("autoDownload = false by default")
+	}
+	if cfg.serverPath == "" {
+		t.Fatal("serverPath is empty")
+	}
+}
+
+func TestParseConfigNoDownload(t *testing.T) {
+	t.Setenv("PI_SERVER_DATA_DIR", t.TempDir())
+	cfg, err := parseConfig([]string{"--no-download", "--release-repo", "example/project"})
+	if err != nil {
+		t.Fatalf("parseConfig() error = %v", err)
+	}
+	if cfg.autoDownload {
+		t.Fatal("autoDownload = true with --no-download")
+	}
+	if cfg.releaseRepo != "example/project" {
+		t.Fatalf("releaseRepo = %q", cfg.releaseRepo)
 	}
 }
 

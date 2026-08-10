@@ -9,10 +9,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $TrayDir = $PSScriptRoot
-$RepoRoot = Split-Path -Parent $TrayDir
-$ServerDir = Join-Path $RepoRoot "pi-server-exp"
 $DistDir = Join-Path $TrayDir "dist"
-$ServerOutput = Join-Path $DistDir "pi-server.exe"
 $TrayOutput = Join-Path $DistDir "pi-server-tray.exe"
 $ShortcutPath = Join-Path ([Environment]::GetFolderPath("Startup")) "Pi Server Tray.lnk"
 
@@ -56,21 +53,8 @@ function Stop-InstalledProcess {
 if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
     throw "Go was not found on PATH. Install Go 1.23 or newer and try again."
 }
-if (-not (Test-Path (Join-Path $ServerDir "go.mod"))) {
-    throw "Could not find the pi-server project at '$ServerDir'. Run this script from the repository checkout."
-}
-
-Write-Host "Building pi-server..."
-New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
-Invoke-GoBuild -WorkingDirectory $ServerDir -Arguments @(
-    "build",
-    "-trimpath",
-    "-ldflags=-s -w",
-    "-o", $ServerOutput,
-    "./cmd/pi-server"
-)
-
 Write-Host "Building pi-server tray..."
+New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 Invoke-GoBuild -WorkingDirectory $TrayDir -Arguments @(
     "build",
     "-trimpath",
@@ -80,14 +64,13 @@ Invoke-GoBuild -WorkingDirectory $TrayDir -Arguments @(
 )
 
 $InstalledTray = Join-Path $InstallDir "pi-server-tray.exe"
-$InstalledServer = Join-Path $InstallDir "pi-server.exe"
+$ManagedServer = Join-Path $HOME ".pi\server\bin\pi-server.exe"
 Stop-InstalledProcess -ExecutablePath $InstalledTray
-Stop-InstalledProcess -ExecutablePath $InstalledServer
+Stop-InstalledProcess -ExecutablePath $ManagedServer
 Start-Sleep -Milliseconds 300
 
 Write-Host "Installing to '$InstallDir'..."
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-Copy-Item -Force $ServerOutput $InstalledServer
 Copy-Item -Force $TrayOutput $InstalledTray
 
 if (-not $NoStartup) {
