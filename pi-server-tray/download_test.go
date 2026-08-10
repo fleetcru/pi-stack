@@ -40,8 +40,8 @@ func TestEnsureLatestDownloadsAndCachesRelease(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/repos/fleetcru/pi-stack/releases/latest":
-			fmt.Fprintf(w, `{"tag_name":"server-v1.2.3","assets":[{"name":"pi-server-windows-amd64.exe","browser_download_url":%q,"size":%d}]}`,
+		case "/repos/fleetcru/pi-stack/releases":
+			fmt.Fprintf(w, `[{"tag_name":"tray-v9.0.0","assets":[]},{"tag_name":"server-v1.2.3","assets":[{"name":"pi-server-windows-amd64.exe","browser_download_url":%q,"size":%d}]}]`,
 				server.URL+"/download/server.exe", len(binary))
 		case "/download/server.exe":
 			downloads++
@@ -90,7 +90,7 @@ func TestEnsureLatestDownloadsAndCachesRelease(t *testing.T) {
 
 func TestEnsureLatestRejectsMissingPlatformAsset(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"tag_name":"server-v1.2.3","assets":[]}`))
+		_, _ = w.Write([]byte(`[{"tag_name":"server-v1.2.3","assets":[]}]`))
 	}))
 	defer server.Close()
 	d := &serverDownloader{

@@ -26,8 +26,10 @@ type releaseAsset struct {
 }
 
 type githubRelease struct {
-	TagName string         `json:"tag_name"`
-	Assets  []releaseAsset `json:"assets"`
+	TagName    string         `json:"tag_name"`
+	Draft      bool           `json:"draft"`
+	Prerelease bool           `json:"prerelease"`
+	Assets     []releaseAsset `json:"assets"`
 }
 
 type serverDownloader struct {
@@ -97,30 +99,43 @@ func (d *serverDownloader) ensureLatest(ctx context.Context, destination string)
 }
 
 func (d *serverDownloader) latestRelease(ctx context.Context) (githubRelease, error) {
-	url := strings.TrimRight(d.apiBase, "/") + "/repos/" + d.repo + "/releases/latest"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return githubRelease{}, err
+	// This repository also publishes Android and tray releases. GitHub's
+	// /releases/latest endpoint may therefore return a non-server release, so
+	// scan stable releases and select the newest server-v* tag explicitly.
+	const maxPages = 5
+	for page := 1; page <= maxPages; page++ {
+		url := fmt.Sprintf("%s/repos/%s/releases?per_page=100&page=%d", strings.TrimRight(d.apiBase, "/"), d.repo, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return githubRelease{}, err
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("User-Agent", "pi-server-tray")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		resp, err := d.client.Do(req)
+		if err != nil {
+			return githubRelease{}, fmt.Errorf("check server releases: %w", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			return githubRelease{}, fmt.Errorf("check server releases: GitHub returned %s", resp.Status)
+		}
+		var releases []githubRelease
+		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&releases)
+		_ = resp.Body.Close()
+		if decodeErr != nil {
+			return githubRelease{}, fmt.Errorf("decode server releases: %w", decodeErr)
+		}
+		for _, release := range releases {
+			if !release.Draft && !release.Prerelease && strings.HasPrefix(release.TagName, "server-v") {
+				return release, nil
+			}
+		}
+		if len(releases) < 100 {
+			break
+		}
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "pi-server-tray")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return githubRelease{}, fmt.Errorf("check latest server release: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return githubRelease{}, fmt.Errorf("check latest server release: GitHub returned %s", resp.Status)
-	}
-	var release githubRelease
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&release); err != nil {
-		return githubRelease{}, fmt.Errorf("decode latest server release: %w", err)
-	}
-	if release.TagName == "" {
-		return githubRelease{}, errors.New("latest server release has no tag")
-	}
-	return release, nil
+	return githubRelease{}, errors.New("no stable server-v* GitHub release was found")
 }
 
 func (d *serverDownloader) downloadAsset(ctx context.Context, asset releaseAsset, destination string) error {
