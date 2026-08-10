@@ -14,6 +14,7 @@ pi-webby-shared/dist/
 # ── Go ────────────────────────────────────────────────────
 pi-server-exp/pi-server
 pi-server-exp/*.exe
+pi-server-tray/dist/
 
 # ── Node / Web ────────────────────────────────────────────
 pi-webby-exp/node_modules/

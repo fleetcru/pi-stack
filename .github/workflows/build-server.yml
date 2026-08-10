@@ -14,6 +14,11 @@ on:
       - 'pi-server-exp/**'
       - '.github/workflows/build-server.yml'
   workflow_dispatch:
+    inputs:
+      version_name:
+        description: 'Version name (e.g. 1.0.0)'
+        required: false
+        default: '1.0.0-dev'
 
 permissions:
   contents: read
@@ -73,7 +78,7 @@ jobs:
 
   release:
     name: Create GitHub release
-    if: startsWith(github.ref, 'refs/tags/server-v')
+    if: startsWith(github.ref, 'refs/tags/server-v') || github.event_name == 'workflow_dispatch'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -96,10 +101,21 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION_NAME: ${{ github.event.inputs.version_name }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "pi-server ${GITHUB_REF_NAME#server-}" \
-            --generate-notes \
-            release/pi-server-linux-amd64 \
-            release/pi-server-windows-amd64.exe
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "pi-server ${GITHUB_REF_NAME#server-v}" \
+              --generate-notes \
+              release/pi-server-linux-amd64 \
+              release/pi-server-windows-amd64.exe
+          else
+            gh release create "server-v${VERSION_NAME}-${{ github.run_number }}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "pi-server ${VERSION_NAME} (build ${{ github.run_number }})" \
+              --notes "Manual build from ${{ github.sha }}" \
+              --prerelease \
+              release/pi-server-linux-amd64 \
+              release/pi-server-windows-amd64.exe
+          fi
