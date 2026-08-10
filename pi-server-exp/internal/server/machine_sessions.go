@@ -16,12 +16,13 @@ import (
 // store. Discovery is intentionally independent from AllowedRoots: it reads
 // only ~/.pi/agent/sessions, never arbitrary workspace files.
 type MachineSession struct {
-	ID        string    `json:"id"`
-	Path      string    `json:"path"`
-	CWD       string    `json:"cwd"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
-	Size      int64     `json:"size"`
+	ID              string    `json:"id"`
+	Path            string    `json:"path"`
+	CWD             string    `json:"cwd"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+	Size            int64     `json:"size"`
+	ServerSessionID string    `json:"serverSessionId,omitempty"`
 }
 
 type machineSessionHeader struct {
@@ -138,7 +139,51 @@ func (s *Server) listMachineSessions(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	specs := s.sessions.ListSpecs()
+	for i := range items {
+		if spec := matchingServerSession(items[i], specs); spec != nil {
+			items[i].ServerSessionID = spec.ID
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"root": root, "managedRoot": managedRoot, "sessions": items})
+}
+
+func canonicalPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	return filepath.Clean(path)
+}
+
+func matchingServerSession(machine MachineSession, specs []SessionSpec) *SessionSpec {
+	machinePath := canonicalPath(machine.Path)
+	machineDir := filepath.Dir(machinePath)
+	for i := range specs {
+		spec := &specs[i]
+		if spec.Transport == "relay" {
+			continue
+		}
+		if spec.SessionPath != "" && canonicalPath(spec.SessionPath) == machinePath {
+			return spec
+		}
+		if spec.ManagedSessionDir != "" && canonicalPath(spec.ManagedSessionDir) == machineDir {
+			return spec
+		}
+	}
+	return nil
+}
+
+func duplicateRelaySpec(spec SessionSpec, specs []SessionSpec) bool {
+	if spec.Transport != "relay" || spec.SessionPath == "" {
+		return false
+	}
+	return matchingServerSession(MachineSession{Path: spec.SessionPath}, specs) != nil
 }
 
 func (s *Server) openMachineSession(w http.ResponseWriter, r *http.Request, machineID string) {
@@ -184,21 +229,10 @@ func (s *Server) openMachineSession(w http.ResponseWriter, r *http.Request, mach
 		return
 	}
 	// Reopening from Webby or Companion must not start another Pi process for
-	// the same persisted JSONL session. Return the existing server session
-	// instead — even when stopped. The client connects via WS and the Pi
-	// process auto-starts lazily on the first RPC request.
-	for _, spec := range s.sessions.ListSpecs() {
-		// Match by explicit --session path or by managed session directory.
-		// Managed sessions use --session-dir instead of --session, so check both.
-		matched := spec.SessionPath == found.Path
-		if !matched && spec.ManagedSessionDir != "" {
-			// The found.Path is a JSONL file inside the managed directory.
-			managedDir := filepath.Dir(found.Path)
-			matched = spec.ManagedSessionDir == managedDir || spec.ManagedSessionDir == found.Path
-		}
-		if !matched {
-			continue
-		}
+	// the same persisted JSONL session. Resolve bridge symlinks before matching:
+	// native discovery prefers the symlink while managed specs store its target
+	// directory, and comparing the unresolved paths created duplicate processes.
+	if spec := matchingServerSession(*found, s.sessions.ListSpecs()); spec != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"id": spec.ID, "machineSessionId": found.ID, "cwd": spec.CWD, "ws": "/v1/sessions/" + spec.ID + "/ws"})
 		return
 	}

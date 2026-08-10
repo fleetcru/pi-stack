@@ -24,7 +24,11 @@ func globalSessionID(workerID, sessionID string) string { return workerID + ":" 
 
 func (s *Server) listGlobalSessions(w http.ResponseWriter, r *http.Request) {
 	items := make([]GlobalSessionSummary, 0)
-	for _, spec := range s.sessions.ListSpecs() {
+	specs := s.sessions.ListSpecs()
+	for _, spec := range specs {
+		if duplicateRelaySpec(spec, specs) {
+			continue
+		}
 		sum := localSummaryFromSpec(spec)
 		items = append(items, GlobalSessionSummary{ID: globalSessionID("local", spec.ID), OriginID: spec.ID, WorkerID: "local", Session: sum, Reachable: true})
 	}

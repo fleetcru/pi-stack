@@ -80,6 +80,7 @@ data class MachineSession(
   val id: String,
   val path: String,
   val cwd: String,
+  val serverSessionId: String? = null,
   val createdAt: String? = null,
   val updatedAt: String? = null,
   val size: Long = 0,

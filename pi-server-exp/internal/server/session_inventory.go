@@ -60,8 +60,13 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 
 	if scope == "local" {
 		specs := s.sessions.ListSpecs()
-		// Preserve today's list semantics: raw local specs.
-		writeJSON(w, http.StatusOK, map[string]any{"sessions": specs})
+		filtered := make([]SessionSpec, 0, len(specs))
+		for _, spec := range specs {
+			if !duplicateRelaySpec(spec, specs) {
+				filtered = append(filtered, spec)
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"sessions": filtered})
 		return
 	}
 
@@ -76,8 +81,8 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	// Collect specs and identify running local sessions for parallel state fetch.
 	specs := s.sessions.ListSpecs()
 	type stateResult struct {
-		id    string
-		data  map[string]any
+		id      string
+		data    map[string]any
 		runtime map[string]any
 		running bool
 		status  string
@@ -137,6 +142,9 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	// Build summaries, merging parallel state results.
 	for _, spec := range specs {
+		if duplicateRelaySpec(spec, specs) {
+			continue
+		}
 		sum := localSummaryFromSpec(spec)
 		if includeState {
 			if spec.Transport == "relay" {

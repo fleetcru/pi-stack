@@ -9,6 +9,8 @@ import com.example.picompanion.data.model.ServerSession
 import com.example.picompanion.data.model.ServerWorker
 import com.example.picompanion.data.model.GlobalSession
 import com.example.picompanion.data.model.MachineSession
+import com.example.picompanion.data.model.visibleGlobalSessions
+import com.example.picompanion.data.model.visibleMachineSessions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -116,14 +118,22 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         .sortedByDescending { it.updatedAt ?: it.createdAt ?: "" }
       val workerList = (workers as? HttpResult.Success)?.value?.workers ?: emptyList()
       val capacity = (health as? HttpResult.Success)?.value?.capacity
+      val machineSessions = visibleMachineSessions(
+        sessionList,
+        (machine as? HttpResult.Success)?.value?.sessions ?: emptyList(),
+      )
+      val globalSessions = visibleGlobalSessions(
+        sessionList,
+        (global as? HttpResult.Success)?.value?.sessions ?: emptyList(),
+      )
 
       _uiState.value = HomeUiState.Content(
         connected = connected,
         serverName = server.name.ifBlank { server.url },
         sessions = sessionList,
         workers = workerList,
-        globalSessions = (global as? HttpResult.Success)?.value?.sessions ?: emptyList(),
-        machineSessions = (machine as? HttpResult.Success)?.value?.sessions ?: emptyList(),
+        globalSessions = globalSessions,
+        machineSessions = machineSessions,
         activeSessions = capacity?.activeSessions ?: sessionList.size,
         maxSessions = capacity?.maxSessions ?: 0,
       )

@@ -7,6 +7,8 @@ import com.example.picompanion.data.api.HttpResult
 import com.example.picompanion.di.AppModule
 import com.example.picompanion.data.model.CreateSessionRequest
 import com.example.picompanion.data.model.ServerSession
+import com.example.picompanion.data.model.visibleGlobalSessions
+import com.example.picompanion.data.model.visibleMachineSessions
 import com.example.picompanion.data.repository.SessionsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -61,8 +63,14 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
       val activeSessions = (activeResult as? HttpResult.Success)?.value?.sessions
         ?.sortedByDescending { it.updatedAt ?: it.createdAt ?: "" }
         ?: emptyList()
-      val machineSessions = (machineResult as? HttpResult.Success)?.value?.sessions ?: emptyList()
-      val globalSessions = (globalResult as? HttpResult.Success)?.value?.sessions ?: emptyList()
+      val machineSessions = visibleMachineSessions(
+        activeSessions,
+        (machineResult as? HttpResult.Success)?.value?.sessions ?: emptyList(),
+      )
+      val globalSessions = visibleGlobalSessions(
+        activeSessions,
+        (globalResult as? HttpResult.Success)?.value?.sessions ?: emptyList(),
+      )
 
       if (activeResult is HttpResult.Failure && machineResult is HttpResult.Failure) {
         _uiState.value = SessionsUiState.Error((activeResult as? HttpResult.Failure)?.userMessage ?: "Failed to load sessions")
