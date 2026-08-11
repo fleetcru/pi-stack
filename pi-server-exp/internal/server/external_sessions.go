@@ -22,33 +22,44 @@ type ExternalCommand struct {
 	ModelID  string `json:"modelId,omitempty"`
 	// For set_thinking_level commands
 	Level string `json:"level,omitempty"`
+	// For extension_ui_response commands (mobile ask_user relay). requestId is
+	// the ask request id echoed back to the bridge; ID is the command id used
+	// for acknowledgement.
+	RequestID    string   `json:"requestId,omitempty"`
+	Value        string   `json:"value,omitempty"`
+	Cancelled    *bool    `json:"cancelled,omitempty"`
+	Confirmed    *bool    `json:"confirmed,omitempty"`
+	Selections   []string `json:"selections,omitempty"`
+	Comment      string   `json:"comment,omitempty"`
+	ResponseKind string   `json:"responseKind,omitempty"`
 }
 
 type ExternalSession struct {
-	ID              string
-	CWD             string
-	Title           string
-	SessionPath     string
-	Model           map[string]any
-	AvailableModels []any
-	ThinkingLevel   string
-	LastUsage       map[string]any
-	TotalCost       float64
-	MessageCount    int
-	Status          string
-	UpdatedAt       time.Time
-	next            uint64
-	eventBytes      int
-	events          []EventRecord
-	subs            map[chan RPCEvent]struct{}
-	commands        []ExternalCommand
-	relay           chan ExternalCommand
-	relayStop       chan struct{}
-	relayGeneration uint64
-	RelayConnected  bool
-	RelayLatencyMS  int64
-	TaskID          string
-	RunID           string
+	ID               string
+	CWD              string
+	Title            string
+	SessionPath      string
+	Model            map[string]any
+	AvailableModels  []any
+	ThinkingLevel    string
+	LastUsage        map[string]any
+	TotalCost        float64
+	MessageCount     int
+	Status           string
+	PendingUIRequest RPCEvent
+	UpdatedAt        time.Time
+	next             uint64
+	eventBytes       int
+	events           []EventRecord
+	subs             map[chan RPCEvent]struct{}
+	commands         []ExternalCommand
+	relay            chan ExternalCommand
+	relayStop        chan struct{}
+	relayGeneration  uint64
+	RelayConnected   bool
+	RelayLatencyMS   int64
+	TaskID           string
+	RunID            string
 	// leaseID identifies the bridge instance that owns this session; leaseToken
 	// must be presented on HTTP command polling and ack. A different bridge
 	// re-registering rotates the lease and detaches any stale relay.
@@ -191,16 +202,17 @@ func (r *ExternalRegistry) stateSnapshot(id string) map[string]any {
 	}
 	running := s.Status != "stale" && s.Status != "stopped"
 	return map[string]any{
-		"external":       true,
-		"running":        running,
-		"status":         s.Status,
-		"model":          s.Model,
-		"thinkingLevel":  s.ThinkingLevel,
-		"transport":      "relay",
-		"relayConnected": s.RelayConnected,
-		"relayLatencyMs": s.RelayLatencyMS,
-		"taskId":         s.TaskID,
-		"runId":          s.RunID,
+		"external":                  true,
+		"running":                   running,
+		"status":                    s.Status,
+		"model":                     s.Model,
+		"thinkingLevel":             s.ThinkingLevel,
+		"transport":                 "relay",
+		"relayConnected":            s.RelayConnected,
+		"relayLatencyMs":            s.RelayLatencyMS,
+		"taskId":                    s.TaskID,
+		"runId":                     s.RunID,
+		"pendingExtensionUiRequest": cloneEvent(s.PendingUIRequest),
 	}
 }
 
@@ -213,6 +225,15 @@ func (r *ExternalRegistry) publish(id string, ev RPCEvent) bool {
 	}
 	if ev["type"] == "agent_start" {
 		s.RunID = newRequestID()
+	}
+	if ev["type"] == "extension_ui_request" && extensionUIRequiresResponse(ev) {
+		requestID, _ := ev["id"].(string)
+		pendingID, _ := s.PendingUIRequest["id"].(string)
+		if requestID == "" || (pendingID != "" && requestID != pendingID) {
+			slog.Warn("ignored invalid or overlapping relay UI request", "session", id, "requestId", requestID)
+			r.mu.Unlock()
+			return true
+		}
 	}
 	s.next++
 	encoded, err := json.Marshal(ev)
@@ -247,8 +268,26 @@ func (r *ExternalRegistry) publish(id string, ev RPCEvent) bool {
 	case "message_start", "message_update", "tool_execution_start", "tool_execution_update":
 		s.Status = "working"
 	case "extension_ui_request":
-		if extensionUIRequiresResponse(ev) {
+		// Stamp relayed extension events with the same daemon classification the
+		// local PiProcess dispatch applies, so clients treat relayed dialogs
+		// (including ask_user) identically to local ones.
+		if requires := extensionUIRequiresResponse(ev); requires {
+			ev["_daemonExtensionUiRequiresResponse"] = true
+			s.PendingUIRequest = cloneEvent(ev)
 			s.Status = "waiting_for_input"
+		} else {
+			ev["_daemonExtensionUiRequiresResponse"] = false
+		}
+	case "extension_ui_closed":
+		requestID, _ := ev["id"].(string)
+		pendingID, _ := s.PendingUIRequest["id"].(string)
+		matched := requestID != "" && (pendingID == "" || requestID == pendingID)
+		if matched {
+			s.PendingUIRequest = nil
+			// The tool still has to finalize and feed its answer back to the model.
+			if s.Status == "waiting_for_input" {
+				s.Status = "working"
+			}
 		}
 	case "message_end":
 		if message, _ := ev["message"].(map[string]any); message != nil {
@@ -317,6 +356,18 @@ func (r *ExternalRegistry) subscribe(id string, since uint64) (chan RPCEvent, []
 }
 
 func (r *ExternalRegistry) enqueue(id string, command ExternalCommand) bool {
+	accepted, _ := r.enqueueCommand(id, command, "")
+	return accepted
+}
+
+// enqueueUIResponse atomically binds a one-shot answer to the currently
+// pending dialog. conflict is true when the relay exists but the request id is
+// stale or already answered.
+func (r *ExternalRegistry) enqueueUIResponse(id, requestID string, command ExternalCommand) (accepted, conflict bool) {
+	return r.enqueueCommand(id, command, requestID)
+}
+
+func (r *ExternalRegistry) enqueueCommand(id string, command ExternalCommand, expectedRequestID string) (accepted, conflict bool) {
 	// Acquire persistence serialization before the state lock. The subsequent
 	// disk write happens after releasing mu, so publish() stays responsive.
 	r.persistMu.Lock()
@@ -325,14 +376,21 @@ func (r *ExternalRegistry) enqueue(id string, command ExternalCommand) bool {
 	s := r.sessions[id]
 	if s == nil || s.Status == "stale" || s.Status == "stopped" {
 		r.mu.Unlock()
-		return false
+		return false, false
+	}
+	if expectedRequestID != "" {
+		pendingID, _ := s.PendingUIRequest["id"].(string)
+		if pendingID == "" || pendingID != expectedRequestID {
+			r.mu.Unlock()
+			return false, true
+		}
 	}
 	if len(s.commands) >= 100 {
 		if command.Type != "abort" {
 			// Non-abort commands are rejected when the queue is full so the
 			// caller can surface the failure.
 			r.mu.Unlock()
-			return false
+			return false, false
 		}
 		// Abort always succeeds: evict the oldest command regardless of type.
 		// An abort is idempotent — delivering a duplicate is harmless, but
@@ -340,6 +398,12 @@ func (r *ExternalRegistry) enqueue(id string, command ExternalCommand) bool {
 		s.commands = s.commands[1:]
 	}
 	s.commands = append(s.commands, command)
+	if expectedRequestID != "" {
+		s.PendingUIRequest = nil
+		if s.Status == "waiting_for_input" {
+			s.Status = "working"
+		}
+	}
 	s.UpdatedAt = time.Now().UTC()
 	snapshot := r.snapshotCommandsLocked()
 	relay := s.relay
@@ -351,7 +415,7 @@ func (r *ExternalRegistry) enqueue(id string, command ExternalCommand) bool {
 		default:
 		}
 	}
-	return true
+	return true, false
 }
 
 // commandsFor serves the pending queue to the current leaseholder only. The

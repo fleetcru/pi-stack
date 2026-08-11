@@ -107,7 +107,8 @@ fun SessionDetailScreen(
   val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
   val gitOutput by viewModel.gitOutput.collectAsStateWithLifecycle()
   val gitChanges by viewModel.gitChanges.collectAsStateWithLifecycle()
-  var extensionValue by remember { mutableStateOf("") }
+  val extensionSubmitError by viewModel.extensionSubmitError.collectAsStateWithLifecycle()
+  val extensionSubmitting by viewModel.extensionSubmitting.collectAsStateWithLifecycle()
 
   // Follow a streaming reply only while the reader is already at the end.
   val lastItem = items.lastOrNull()
@@ -197,42 +198,23 @@ fun SessionDetailScreen(
       )
     }
 
-    // Extension request dialog
+    // Extension request dialog (structured per method; see ExtensionUiDialog)
     extensionRequest?.let { request ->
-      androidx.compose.material3.AlertDialog(
-        onDismissRequest = { viewModel.respondToExtension(cancelled = true) },
-        title = { Text("Pi extension request") },
-        text = {
-          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(request.message)
-            Text(
-              "Request ID: ${request.id}. Only respond if you expected this extension prompt.",
-              style = MaterialTheme.typography.bodySmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            androidx.compose.material3.OutlinedTextField(
-              value = extensionValue,
-              onValueChange = { extensionValue = it },
-              label = { Text(request.placeholder ?: "Response") },
-              modifier = Modifier.fillMaxWidth(),
-            )
-          }
+      ExtensionUiDialog(
+        request = request,
+        submitError = extensionSubmitError,
+        submitting = extensionSubmitting,
+        onConfirm = { answer ->
+          viewModel.submitExtensionResponse(
+            value = answer.value,
+            confirmed = answer.confirmed,
+            selections = answer.selections,
+            comment = answer.comment,
+            responseKind = answer.responseKind,
+          )
         },
-        confirmButton = {
-          androidx.compose.material3.TextButton(onClick = {
-            viewModel.respondToExtension(value = extensionValue.ifBlank { null }, confirmed = true)
-            extensionValue = ""
-          }) { Text("Confirm") }
-        },
-        dismissButton = {
-          Row {
-            androidx.compose.material3.TextButton(onClick = { viewModel.ignoreExtensionRequest(); extensionValue = "" }) { Text("Ignore") }
-            androidx.compose.material3.TextButton(onClick = {
-              viewModel.respondToExtension(cancelled = true)
-              extensionValue = ""
-            }) { Text("Cancel") }
-          }
-        },
+        onCancel = { viewModel.submitExtensionResponse(cancelled = true) },
+        onDismissLocal = viewModel::dismissExtensionRequest,
       )
     }
 

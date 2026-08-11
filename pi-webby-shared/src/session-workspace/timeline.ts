@@ -319,29 +319,34 @@ export function groupModelsByProvider(models: AvailableModel[]) {
 export function findExtensionRequest(
   events: Array<Record<string, unknown>>
 ): ExtensionRequest | undefined {
-  let event: Record<string, unknown> | undefined
+  const closedIds = new Set<string>()
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const candidate = events[index]
+    if (candidate.type === "extension_ui_closed" && typeof candidate.id === "string") {
+      closedIds.add(candidate.id)
+      continue
+    }
     if (
-      candidate.type === "extension_ui_request" &&
-      candidate._daemonExtensionUiRequiresResponse === true
-    ) {
-      event = candidate
-      break
+      candidate.type !== "extension_ui_request" ||
+      candidate._daemonExtensionUiRequiresResponse !== true ||
+      typeof candidate.id !== "string" ||
+      closedIds.has(candidate.id)
+    ) continue
+    return {
+      id: candidate.id,
+      message:
+        typeof candidate.question === "string"
+          ? candidate.question
+          : typeof candidate.message === "string"
+            ? candidate.message
+            : typeof candidate.text === "string"
+              ? candidate.text
+              : "Extension input requested",
+      placeholder:
+        typeof candidate.placeholder === "string" ? candidate.placeholder : undefined,
     }
   }
-  if (!event || typeof event.id !== "string") return undefined
-  return {
-    id: event.id,
-    message:
-      typeof event.message === "string"
-        ? event.message
-        : typeof event.text === "string"
-          ? event.text
-          : "Extension input requested",
-    placeholder:
-      typeof event.placeholder === "string" ? event.placeholder : undefined,
-  }
+  return undefined
 }
 
 /**

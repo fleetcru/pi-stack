@@ -78,7 +78,7 @@ func schemas() map[string]any {
 		"FileContent":           obj(map[string]any{"path": str(), "mimeType": str(), "encoding": str(), "truncated": schemaBool(), "content": str(), "size": map[string]string{"type": "integer"}, "binary": schemaBool()}, "path"),
 		"ImageContent":          obj(map[string]any{"type": map[string]any{"type": "string", "const": "image"}, "data": str(), "mimeType": str()}, "type", "data", "mimeType"),
 		"PromptRequest":         obj(map[string]any{"message": str(), "streamingBehavior": map[string]any{"type": "string", "enum": []string{"steer", "followUp"}}, "images": arr(ref("ImageContent"))}, "message"),
-		"ExtensionUIResponse":   obj(map[string]any{"id": str(), "value": map[string]any{}, "confirmed": schemaBool(), "cancelled": schemaBool()}, "id"),
+		"ExtensionUIResponse":   obj(map[string]any{"id": str(), "cancelled": schemaBool(), "value": str(), "confirmed": schemaBool(), "selections": arr(str()), "comment": str(), "responseKind": map[string]any{"type": "string", "enum": []string{"selection", "freeform"}}}, "id"),
 		"SessionMetadataUpdate": obj(map[string]any{"project": str(), "title": str(), "taskType": str(), "owner": str(), "labels": arr(str()), "metadata": map[string]any{"type": "object", "additionalProperties": str()}}),
 		"GitFileChange":         obj(map[string]any{"path": str(), "status": str(), "additions": map[string]string{"type": "integer"}, "deletions": map[string]string{"type": "integer"}}, "path", "status"),
 		"GitFileDiff":           obj(map[string]any{"path": str(), "diff": str()}, "path", "diff"),

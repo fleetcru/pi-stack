@@ -66,10 +66,59 @@ func (t relayTransport) Send(command RPCCommand) error {
 			return fmt.Errorf("relay is unavailable: session may be stale or stopped")
 		}
 		return nil
+	case "extension_ui_response":
+		if err := validateExtensionUIResponseCommand(command); err != nil {
+			return err
+		}
+		requestID, _ := command["id"].(string)
+		if requestID == "" {
+			return fmt.Errorf("id is required")
+		}
+		queued := ExternalCommand{
+			ID:           NewSessionID(),
+			Type:         "extension_ui_response",
+			RequestID:    requestID,
+			Value:        stringField(command, "value"),
+			Selections:   relayStringSlice(command["selections"]),
+			Comment:      stringField(command, "comment"),
+			ResponseKind: stringField(command, "responseKind"),
+		}
+		if value, ok := command["cancelled"].(bool); ok {
+			queued.Cancelled = &value
+		}
+		if value, ok := command["confirmed"].(bool); ok {
+			queued.Confirmed = &value
+		}
+		accepted, conflict := t.external.enqueueUIResponse(t.id, requestID, queued)
+		if !accepted {
+			if conflict {
+				return fmt.Errorf("%w: request %q is no longer pending", errExtensionUIRequestMismatch, requestID)
+			}
+			return fmt.Errorf("relay is unavailable: session may be stale or stopped")
+		}
+		t.external.publish(t.id, RPCEvent{"type": "extension_ui_closed", "id": requestID})
+		return nil
 	default:
-		return fmt.Errorf("relay transport does not support %q; supported commands: prompt, steer, follow-up, abort, set_model, set_thinking_level", command["type"])
+		return fmt.Errorf("relay transport does not support %q; supported commands: prompt, steer, follow-up, abort, set_model, set_thinking_level, extension_ui_response", command["type"])
 	}
 }
+func relayStringSlice(value any) []string {
+	switch values := value.(type) {
+	case []string:
+		return append([]string(nil), values...)
+	case []any:
+		out := make([]string, 0, len(values))
+		for _, value := range values {
+			if text, ok := value.(string); ok && text != "" {
+				out = append(out, text)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 func (t relayTransport) Request(_ context.Context, command RPCCommand) (RPCEvent, error) {
 	switch command["type"] {
 	case "get_state":

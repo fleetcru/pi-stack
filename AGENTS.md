@@ -271,6 +271,14 @@ External Pi TUI sessions bridge into pi-server via the `external-session-bridge.
 - **Event ring:** Dual-bound (200 count + 8MB bytes). Matches PiProcess semantics.
 - **Detach/close ordering:** LIFO — close then detach to prevent stale relay from clobbering new one.
 
+### Interactive Extension UI / `ask_user`
+
+- **Local RPC:** Pi emits blocking `extension_ui_request` events for `select`, `confirm`, `input`, and `editor`; clients answer with `extension_ui_response` through `POST /v1/sessions/{id}/ui-response`.
+- **Relayed TUI:** The patched `ask_user` extension emits `ask:requested` / `ask:closed` on Pi's shared event bus. `external-session-bridge.ts` forwards these as `extension_ui_request(method=ask_user)` / `extension_ui_closed` events.
+- **Mobile response:** Companion posts `id`, `cancelled`, `value`, `confirmed`, `selections`, `comment`, and `responseKind`. The server persists an `extension_ui_response` relay command; its command `id` is for acknowledgement and `requestId` identifies the waiting question.
+- **Bridge completion:** The bridge emits `ask:remote-response` back onto Pi's event bus, allowing `ask_user` to close its local overlay and complete the tool call.
+- **Late viewers:** Both local and relay state expose `pendingExtensionUiRequest`, because fresh Companion views intentionally skip old event replay.
+
 ### Event Deduplication
 
 - **Server:** Monotonic uint64 event IDs per session. `events_lost` sentinel when cursor predates the ring.

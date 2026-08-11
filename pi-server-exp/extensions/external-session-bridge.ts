@@ -64,6 +64,8 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   const backoffCeiling = 30_000;
   const pendingEvents: unknown[] = [];
   const handledCommands = new Set<string>();
+  let pendingAskRequest: ({ id: string } & Record<string, unknown>) | undefined;
+  let pendingAskLease = "";
 
   /** Reload URL/token configuration so /bridge-reconnect can apply changes
    * without restarting Pi. The config file is canonical for the relay URL;
@@ -138,6 +140,12 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       registered = true;
       resetBackoff();
       ui?.setStatus("external-session-bridge", "Bridge: connected");
+      // A daemon restart loses its in-memory event ring and pending dialog
+      // state. Re-announce a still-blocking ask once for each new lease.
+      if (pendingAskRequest && pendingAskLease !== lease) {
+        pendingAskLease = lease;
+        emit({ ...pendingAskRequest, type: "extension_ui_request", method: "ask_user" });
+      }
       return true;
     } catch (err) {
       registered = false;
@@ -221,7 +229,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     try { await request(`/v1/external-sessions/${id}/ack`, "POST", { ids: [commandId], lease }); } catch { registered = false; /* server retries delivery after lease renewal */ }
   };
 
-  const deliverCommand = async (command: { id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt"; provider?: string; modelId?: string; level?: string }) => {
+  const deliverCommand = async (command: { id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt"; provider?: string; modelId?: string; level?: string; requestId?: string; value?: string; cancelled?: boolean; confirmed?: boolean; selections?: string[]; comment?: string; responseKind?: string }) => {
     if (handledCommands.has(command.id)) { await acknowledge(command.id); return; }
     if (command.type === "abort") {
       abortCurrent?.();
@@ -251,6 +259,31 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
         ui?.notify(`Thinking level changed to ${level}`, "info");
       }
       handledCommands.add(command.id);
+      await acknowledge(command.id);
+      return;
+    }
+    if (command.type === "extension_ui_response") {
+      // Route the mobile answer back into Pi on the shared extension bus so
+      // the ask_user extension can resume the pending dialog.
+      if (command.requestId) {
+        pi.events.emit("ask:remote-response", {
+          id: command.requestId,
+          cancelled: command.cancelled,
+          value: command.value,
+          confirmed: command.confirmed,
+          selections: command.selections,
+          comment: command.comment,
+          responseKind: command.responseKind,
+        });
+        emit({ type: "bridge_receipt", commandId: command.id, status: "delivered" });
+      } else {
+        emit({ type: "bridge_receipt", commandId: command.id, status: "failed" });
+      }
+      handledCommands.add(command.id);
+      if (handledCommands.size > 500) {
+        const first = handledCommands.values().next().value;
+        if (first !== undefined) handledCommands.delete(first);
+      }
       await acknowledge(command.id);
       return;
     }
@@ -356,7 +389,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       socket.onmessage = async (message) => {
         if (gen !== socketGen) return; // stale socket — ignore
         try {
-          const envelope = JSON.parse(String(message.data)) as { type?: string; command?: { id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt"; provider?: string; modelId?: string; level?: string } };
+          const envelope = JSON.parse(String(message.data)) as { type?: string; command?: { id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt"; provider?: string; modelId?: string; level?: string; requestId?: string; value?: string; cancelled?: boolean; confirmed?: boolean; selections?: string[]; comment?: string; responseKind?: string } };
           if (envelope.type === "command" && envelope.command) await deliverCommand(envelope.command);
         } catch (error) { ui?.notify(`Bridge command failed: ${error instanceof Error ? error.message : "unknown error"}`, "error"); }
       };
@@ -397,7 +430,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
         if (!registered && !(await register())) throw new Error("not registered");
         if (registered && !relaySocket) connectRelay();
         const response = await request(`/v1/external-sessions/${id}/commands?lease=${encodeURIComponent(lease)}`);
-        const data = await response.json() as { commands?: Array<{ id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt"; provider?: string; modelId?: string; level?: string }> };
+        const data = await response.json() as { commands?: Array<{ id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt"; provider?: string; modelId?: string; level?: string; requestId?: string; value?: string; cancelled?: boolean; confirmed?: boolean; selections?: string[]; comment?: string; responseKind?: string }> };
         for (const command of data.commands ?? []) await deliverCommand(command);
       } catch {
         registered = false;
@@ -502,6 +535,12 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     ui = ctx.ui;
     sessionCtx = ctx;
     abortCurrent = () => ctx.abort();
+    // This bridge represents an existing interactive TUI. Server-started RPC
+    // sessions already have a native transport and extension UI protocol.
+    if (ctx.mode !== "tui") {
+      stopped = true;
+      return;
+    }
     refreshConfig();
     if (!baseUrl) {
       ui.setStatus("external-session-bridge", "Bridge: disabled (set PI_EXTERNAL_RELAY_URL)");
@@ -618,4 +657,26 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   pi.on("tool_execution_start", async (event) => emit({ type: "tool_execution_start", toolName: event.toolName, toolCallId: event.toolCallId, args: event.args }));
   pi.on("tool_execution_update", async (event) => emit({ type: "tool_execution_update", toolName: event.toolName, toolCallId: event.toolCallId, partialResult: event.partialResult }));
   pi.on("tool_execution_end", async (event) => emit({ type: "tool_execution_end", toolName: event.toolName, toolCallId: event.toolCallId, result: event.result }));
+
+  // Mobile ask_user relay: the ask-user extension publishes dialogs on the
+  // shared extension bus; forward them as extension UI requests/close events so
+  // companion apps render and answer them, and the daemon tracks the session
+  // as waiting_for_input until ask:closed arrives.
+  pi.events.on("ask:requested", (event) => {
+    if (!event || typeof event !== "object") return;
+    const request = event as { id?: string } & Record<string, unknown>;
+    if (!request.id) return;
+    pendingAskRequest = request as { id: string } & Record<string, unknown>;
+    pendingAskLease = registered ? lease : "";
+    emit({ ...request, type: "extension_ui_request", method: "ask_user" });
+  });
+  pi.events.on("ask:closed", (event) => {
+    const requestId = (event as { id?: string } | undefined)?.id;
+    if (!requestId) return;
+    if (pendingAskRequest?.id === requestId) {
+      pendingAskRequest = undefined;
+      pendingAskLease = "";
+    }
+    emit({ type: "extension_ui_closed", id: requestId });
+  });
 }

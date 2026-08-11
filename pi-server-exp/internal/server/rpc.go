@@ -17,6 +17,8 @@ import (
 type RPCCommand map[string]any
 type RPCEvent map[string]any
 
+var errExtensionUIRequestMismatch = errors.New("extension UI request mismatch")
+
 type EventRecord struct {
 	ID        uint64    `json:"id"`
 	Timestamp time.Time `json:"timestamp"`
@@ -42,22 +44,23 @@ type PiProcess struct {
 	closed  bool
 	done    chan struct{}
 
-	seq           uint64
-	waiters       map[string]responseWaiter
-	subs          map[chan RPCEvent]struct{}
-	events        []EventRecord
-	eventMax      int
-	eventMaxBytes int
-	eventBytes    int
-	eventSeq      uint64
-	restarts      int
-	runtimeState  string
-	runtimeReason string
-	runtimeDetail string
-	runtimeSince  time.Time
-	runtimeError  string
-	lastEventAt   time.Time
-	droppedEvents uint64
+	seq              uint64
+	waiters          map[string]responseWaiter
+	subs             map[chan RPCEvent]struct{}
+	events           []EventRecord
+	eventMax         int
+	eventMaxBytes    int
+	eventBytes       int
+	eventSeq         uint64
+	restarts         int
+	runtimeState     string
+	runtimeReason    string
+	runtimeDetail    string
+	runtimeSince     time.Time
+	runtimeError     string
+	pendingUIRequest RPCEvent
+	lastEventAt      time.Time
+	droppedEvents    uint64
 	// taskID is stable for the session; runID changes for each agent turn.
 	taskID string
 	runID  string
@@ -165,6 +168,11 @@ func (p *PiProcess) Request(ctx context.Context, command RPCCommand) (RPCEvent, 
 }
 
 func (p *PiProcess) Send(command RPCCommand) error {
+	if command["type"] == "extension_ui_response" {
+		if err := validateExtensionUIResponseCommand(command); err != nil {
+			return err
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), p.cfg.RequestTimeout)
 	defer cancel()
 	if err := p.Start(ctx); err != nil {
@@ -175,11 +183,33 @@ func (p *PiProcess) Send(command RPCCommand) error {
 		return err
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.closed || p.stdin == nil {
+		p.mu.Unlock()
 		return errors.New("pi process closed")
 	}
+	requestID, _ := command["id"].(string)
+	isUIResponse := command["type"] == "extension_ui_response"
+	if isUIResponse {
+		pendingID, _ := p.pendingUIRequest["id"].(string)
+		if requestID == "" {
+			p.mu.Unlock()
+			return fmt.Errorf("%w: id is required", errExtensionUIRequestMismatch)
+		}
+		if pendingID == "" || requestID != pendingID {
+			p.mu.Unlock()
+			return fmt.Errorf("%w: request %q is no longer pending", errExtensionUIRequestMismatch, requestID)
+		}
+	}
 	_, err = p.stdin.Write(append(b, '\n'))
+	if err == nil && isUIResponse {
+		p.pendingUIRequest = nil
+	}
+	p.mu.Unlock()
+	if err == nil && isUIResponse {
+		// Pi's RPC protocol does not emit a close event after a response. Emit a
+		// daemon-side close so every connected client dismisses the same dialog.
+		p.dispatch(RPCEvent{"type": "extension_ui_closed", "id": requestID})
+	}
 	return err
 }
 
@@ -393,6 +423,18 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 		}
 	}
 	p.mu.Lock()
+	if ev["type"] == "extension_ui_request" && extensionUIRequiresResponse(ev) {
+		p.pendingUIRequest = cloneEvent(ev)
+	}
+	if ev["type"] == "extension_ui_closed" {
+		requestID, _ := ev["id"].(string)
+		pendingID, _ := p.pendingUIRequest["id"].(string)
+		matched := requestID != "" && (pendingID == "" || requestID == pendingID)
+		ev["_daemonExtensionUiCloseMatched"] = matched
+		if matched {
+			p.pendingUIRequest = nil
+		}
+	}
 	if ev["type"] == "agent_start" {
 		p.runID = newRequestID()
 	}
@@ -557,7 +599,11 @@ func (p *PiProcess) updateRuntimeFromEventLocked(ev RPCEvent) {
 		p.setRuntimeLocked("working", "assistant", "Processing tool result")
 	case "extension_ui_request":
 		if extensionUIRequiresResponse(ev) {
-			p.setRuntimeLocked("waiting_for_input", "extension", stringValue(ev["message"], "Waiting for input"))
+			p.setRuntimeLocked("waiting_for_input", "extension", stringValue(ev["question"], stringValue(ev["message"], "Waiting for input")))
+		}
+	case "extension_ui_closed":
+		if matched, _ := ev["_daemonExtensionUiCloseMatched"].(bool); matched && p.runtimeState == "waiting_for_input" {
+			p.setRuntimeLocked("working", "extension", "Processing response")
 		}
 	case "message_end":
 		if p.runtimeState != "waiting_for_input" {
@@ -615,7 +661,7 @@ func (p *PiProcess) Status() map[string]any {
 	if p.running {
 		status = "running"
 	}
-	return map[string]any{"id": p.id, "cwd": p.spec.CWD, "args": p.spec.Args, "sessionPath": p.spec.SessionPath, "running": p.running, "status": status, "taskId": p.taskID, "runId": p.runID, "runtimeStatus": map[string]any{"state": p.runtimeState, "reason": p.runtimeReason, "detail": p.runtimeDetail, "since": p.runtimeSince, "lastError": p.runtimeError}, "restart": p.spec.Restart, "pid": pid, "wsSubscribers": len(p.subs), "eventCount": len(p.events), "latestEventId": p.eventSeq, "lastEventAt": p.lastEventAt, "droppedEvents": atomic.LoadUint64(&p.droppedEvents)}
+	return map[string]any{"id": p.id, "cwd": p.spec.CWD, "args": p.spec.Args, "sessionPath": p.spec.SessionPath, "running": p.running, "status": status, "taskId": p.taskID, "runId": p.runID, "runtimeStatus": map[string]any{"state": p.runtimeState, "reason": p.runtimeReason, "detail": p.runtimeDetail, "since": p.runtimeSince, "lastError": p.runtimeError}, "pendingExtensionUiRequest": cloneEvent(p.pendingUIRequest), "restart": p.spec.Restart, "pid": pid, "wsSubscribers": len(p.subs), "eventCount": len(p.events), "latestEventId": p.eventSeq, "lastEventAt": p.lastEventAt, "droppedEvents": atomic.LoadUint64(&p.droppedEvents)}
 }
 
 func (p *PiProcess) Emit(event RPCEvent) { p.dispatch(event) }
@@ -653,7 +699,7 @@ func cloneEvent(event RPCEvent) RPCEvent {
 func extensionUIRequiresResponse(event RPCEvent) bool {
 	method, _ := event["method"].(string)
 	switch method {
-	case "select", "confirm", "input", "editor":
+	case "select", "confirm", "input", "editor", "ask_user":
 		return true
 	default:
 		return false

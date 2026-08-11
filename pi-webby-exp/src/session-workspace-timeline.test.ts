@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { IncrementalTimeline } from "@pi-stack/webby-shared/session-workspace"
+import { findExtensionRequest, IncrementalTimeline } from "@pi-stack/webby-shared/session-workspace"
 
 describe("IncrementalTimeline", () => {
   it("applies only new deltas and survives a shifted event window", () => {
@@ -18,5 +18,23 @@ describe("IncrementalTimeline", () => {
       { type: "tool_execution_end", _daemonEventId: 2, toolCallId: "call", result: { content: [{ text: "done" }] } },
     ]
     expect(reducer.update(events)).toMatchObject([{ kind: "tool", done: true, output: "done" }])
+  })
+
+  it("shows ask_user questions and clears them after a close event", () => {
+    const request = {
+      type: "extension_ui_request",
+      id: "ask-1",
+      method: "ask_user",
+      question: "Choose a release channel",
+      _daemonExtensionUiRequiresResponse: true,
+    }
+    expect(findExtensionRequest([request])).toMatchObject({
+      id: "ask-1",
+      message: "Choose a release channel",
+    })
+    expect(findExtensionRequest([
+      request,
+      { type: "extension_ui_closed", id: "ask-1" },
+    ])).toBeUndefined()
   })
 })

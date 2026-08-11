@@ -14,6 +14,7 @@ import com.example.picompanion.data.model.WorkerListResponse
 import com.example.picompanion.data.model.ServerWorker
 import com.example.picompanion.data.model.WorkerWriteRequest
 import com.example.picompanion.data.model.WebSocketTicketResponse
+import com.example.picompanion.data.model.ExtensionUiResponse
 import com.example.picompanion.data.settings.ServerEntry
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
@@ -43,14 +44,6 @@ private data class SetThinkingLevelRequest(val level: String)
 
 @Serializable
 private data class IssueTicketRequest(val sessionId: String)
-
-@Serializable
-private data class ExtensionUiResponse(
-  val id: String,
-  val cancelled: Boolean = false,
-  val value: String? = null,
-  val confirmed: Boolean? = null,
-)
 
 @Serializable
 private data class UpdateMetadataRequest(val title: String, val project: String)
@@ -183,8 +176,33 @@ class PiServerClient(
     body: String = "{}",
   ): HttpResult<Unit> = doPostUnit(server, "/v1/sessions/$sessionId/$action", body)
 
-  fun respondToExtensionUi(server: ServerEntry, sessionId: String, id: String, value: String? = null, confirmed: Boolean? = null, cancelled: Boolean = false): HttpResult<Unit> {
-    val body = json.encodeToString(ExtensionUiResponse(id, cancelled, value, confirmed))
+  /**
+   * Posts a structured answer to an extension UI request. Nullable fields are
+   * omitted from the body unless set, so only the fields the answer needs
+   * travel (cancelled / value / confirmed / selections / comment / responseKind).
+   */
+  fun respondToExtensionUi(
+    server: ServerEntry,
+    sessionId: String,
+    id: String,
+    cancelled: Boolean = false,
+    value: String? = null,
+    confirmed: Boolean? = null,
+    selections: List<String>? = null,
+    comment: String? = null,
+    responseKind: String? = null,
+  ): HttpResult<Unit> {
+    val body = json.encodeToString(
+      ExtensionUiResponse(
+        id = id,
+        cancelled = cancelled,
+        value = value,
+        confirmed = confirmed,
+        selections = selections,
+        comment = comment,
+        responseKind = responseKind,
+      )
+    )
     return doPostUnit(server, "/v1/sessions/$sessionId/ui-response", body)
   }
 

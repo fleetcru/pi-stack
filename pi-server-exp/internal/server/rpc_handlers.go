@@ -2,12 +2,18 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 )
 
 func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 	id, action := splitSessionPath(r.URL.Path)
+	if action == "ui-response" {
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	} else if action == "send" || action == "command" {
+		r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
+	}
 	if s.proxyRemoteSession(w, r, id, action) {
 		return
 	}
@@ -68,6 +74,50 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "delivery": "queued"})
+			return
+		}
+		if action == "ui-response" {
+			var body struct {
+				ID           string   `json:"id"`
+				Cancelled    *bool    `json:"cancelled"`
+				Value        string   `json:"value"`
+				Confirmed    *bool    `json:"confirmed"`
+				Selections   []string `json:"selections"`
+				Comment      string   `json:"comment"`
+				ResponseKind string   `json:"responseKind"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			if err := validateExtensionUIResponseFields(body.ID, body.Value, body.Comment, body.Selections, body.ResponseKind); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			command := ExternalCommand{
+				ID:           NewSessionID(),
+				Type:         "extension_ui_response",
+				RequestID:    body.ID,
+				Cancelled:    body.Cancelled,
+				Value:        body.Value,
+				Confirmed:    body.Confirmed,
+				Selections:   body.Selections,
+				Comment:      body.Comment,
+				ResponseKind: body.ResponseKind,
+			}
+			accepted, conflict := s.external.enqueueUIResponse(id, body.ID, command)
+			if !accepted {
+				if conflict {
+					writeErrorText(w, http.StatusConflict, "extension UI request is no longer pending")
+				} else {
+					writeErrorText(w, http.StatusBadGateway, "relay is unavailable")
+				}
+				return
+			}
+			// Close all client dialogs as soon as the durable response command is
+			// accepted. The bridge emits the same close after tool completion.
+			s.external.publish(id, RPCEvent{"type": "extension_ui_closed", "id": body.ID})
+			writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "commandId": command.ID, "delivery": "queued"})
 			return
 		}
 		writeErrorText(w, http.StatusBadRequest, "external session control not supported")
@@ -215,6 +265,18 @@ func (s *Server) handleRawCommand(w http.ResponseWriter, r *http.Request, p *PiP
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if cmd["type"] == "extension_ui_response" {
+		if err := validateExtensionUIResponseCommand(cmd); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := p.Send(cmd); err != nil {
+			writeRPCSendError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true})
+		return
+	}
 	if cmd["type"] == "prompt" {
 		ctx, cancel := requestContext(r.Context(), s.cfg.RequestTimeout)
 		defer cancel()
@@ -240,6 +302,12 @@ func (s *Server) handleRawSend(w http.ResponseWriter, r *http.Request, p *PiProc
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if cmd["type"] == "extension_ui_response" {
+		if err := validateExtensionUIResponseCommand(cmd); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
 	if cmd["type"] == "prompt" && !s.admitLocalRun(r.Context(), p) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "run capacity is busy or this session already has an active run", "scheduler": s.admission.Snapshot()})
 		return
@@ -248,10 +316,18 @@ func (s *Server) handleRawSend(w http.ResponseWriter, r *http.Request, p *PiProc
 		if cmd["type"] == "prompt" {
 			p.releaseAdmission()
 		}
-		writeError(w, http.StatusBadGateway, err)
+		writeRPCSendError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true})
+}
+
+func writeRPCSendError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errExtensionUIRequestMismatch) {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
+	writeError(w, http.StatusBadGateway, err)
 }
 
 func (s *Server) requestAndWrite(w http.ResponseWriter, r *http.Request, p *PiProcess, cmd RPCCommand) {
@@ -261,6 +337,11 @@ func (s *Server) requestAndWrite(w http.ResponseWriter, r *http.Request, p *PiPr
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
+	}
+	if cmd["type"] == "get_state" {
+		if data, ok := resp["data"].(map[string]any); ok {
+			data["pendingExtensionUiRequest"] = p.Status()["pendingExtensionUiRequest"]
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

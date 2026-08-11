@@ -43,7 +43,7 @@ func (s *Server) handleConvenienceCommand(w http.ResponseWriter, r *http.Request
 	}
 	if fireAndForget {
 		if err := p.Send(cmd); err != nil {
-			writeError(w, http.StatusBadGateway, err)
+			writeRPCSendError(w, err)
 			return
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true})
@@ -123,6 +123,9 @@ func commandFromBody(action string, r *http.Request) (RPCCommand, bool, error) {
 		}
 		return RPCCommand{"type": "bash", "command": stringField(body, "command")}, false, nil
 	case "ui-response":
+		if err := validateExtensionUIResponseCommand(body); err != nil {
+			return nil, false, err
+		}
 		body["type"] = "extension_ui_response"
 		return RPCCommand(body), true, nil
 	case "model":
@@ -173,6 +176,43 @@ func commandFromBody(action string, r *http.Request) (RPCCommand, bool, error) {
 		return RPCCommand{"type": "abort_bash"}, true, nil
 	}
 	return nil, false, nil
+}
+
+func validateExtensionUIResponseCommand(command map[string]any) error {
+	return validateExtensionUIResponseFields(
+		stringField(command, "id"),
+		stringField(command, "value"),
+		stringField(command, "comment"),
+		relayStringSlice(command["selections"]),
+		stringField(command, "responseKind"),
+	)
+}
+
+func validateExtensionUIResponseFields(id, value, comment string, selections []string, responseKind string) error {
+	if id == "" {
+		return fmt.Errorf("id is required")
+	}
+	if len(id) > 512 {
+		return fmt.Errorf("id is too long")
+	}
+	if len(value) > 32<<10 {
+		return fmt.Errorf("value exceeds 32KB")
+	}
+	if len(comment) > 8<<10 {
+		return fmt.Errorf("comment exceeds 8KB")
+	}
+	if len(selections) > 50 {
+		return fmt.Errorf("too many selections")
+	}
+	for _, selection := range selections {
+		if len(selection) > 1024 {
+			return fmt.Errorf("selection exceeds 1KB")
+		}
+	}
+	if responseKind != "" && responseKind != "selection" && responseKind != "freeform" {
+		return fmt.Errorf("responseKind must be selection or freeform")
+	}
+	return nil
 }
 
 func stringField(m map[string]any, key string) string {

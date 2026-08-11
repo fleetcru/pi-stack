@@ -17,6 +17,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.picompanion.di.AppModule
 import com.example.picompanion.data.repository.SessionsRepository
 import com.example.picompanion.data.websocket.SocketEvent
+import com.example.picompanion.data.model.ExtensionUiRequest
+import com.example.picompanion.data.model.parseExtensionUiRequest
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -76,6 +78,17 @@ class SessionDetailViewModel(
 
   private val _extensionRequest = MutableStateFlow<ExtensionUiRequest?>(null)
   val extensionRequest: StateFlow<ExtensionUiRequest?> = _extensionRequest.asStateFlow()
+  // Submit state for the current extension request. The request itself stays
+  // visible on HTTP failure so the user can retry; only a successful post (or
+  // an extension_ui_closed) clears it.
+  private val _extensionSubmitting = MutableStateFlow(false)
+  val extensionSubmitting: StateFlow<Boolean> = _extensionSubmitting.asStateFlow()
+  private val _extensionSubmitError = MutableStateFlow<String?>(null)
+  val extensionSubmitError: StateFlow<String?> = _extensionSubmitError.asStateFlow()
+  private var lastSubmittedExtensionRequestId: String? = null
+  private var lastClosedExtensionRequestId: String? = null
+  private val dismissedExtensionRequestIds = LinkedHashSet<String>()
+  private var pendingExtensionAbsentPolls = 0
   private val _gitOutput = MutableStateFlow<Pair<String, String>?>(null)
   val gitOutput: StateFlow<Pair<String, String>?> = _gitOutput.asStateFlow()
   private val _gitChanges = MutableStateFlow<List<GitFileChange>>(emptyList())
@@ -265,6 +278,8 @@ class SessionDetailViewModel(
     historyGeneration++
     // Clear stale extension requests from the previous connection.
     _extensionRequest.value = null
+    _extensionSubmitError.value = null
+    _extensionSubmitting.value = false
 
     viewModelScope.launch {
       _connectionState.value = ConnectionState.Connecting
@@ -445,12 +460,38 @@ class SessionDetailViewModel(
     val server = activeServer ?: return
     when (val result = withContext(Dispatchers.IO) { client.getSessionState(server, sessionId) }) {
       is com.example.picompanion.data.api.HttpResult.Success -> {
-        val state = result.value["data"]?.jsonObject
-        val external = state?.get("external")?.jsonPrimitive?.booleanOrNull == true
+        val state = result.value["data"] as? JsonObject ?: return
+        val external = state["external"]?.jsonPrimitive?.booleanOrNull == true
         _relayHealth.value = if (external) RelayHealth(
-          connected = state?.get("relayConnected")?.jsonPrimitive?.booleanOrNull == true,
-          latencyMs = state?.get("relayLatencyMs")?.jsonPrimitive?.longOrNull,
+          connected = state["relayConnected"]?.jsonPrimitive?.booleanOrNull == true,
+          latencyMs = state["relayLatencyMs"]?.jsonPrimitive?.longOrNull,
         ) else null
+        // Fresh session views intentionally skip old event replay because
+        // durable history loads separately. Recover a currently blocking UI
+        // request from state so ask_user still appears when mobile opens late.
+        val pendingRequest = (state["pendingExtensionUiRequest"] as? JsonObject)
+          ?.let(::parseExtensionUiRequest)
+        if (pendingRequest != null) {
+          pendingExtensionAbsentPolls = 0
+          if (
+            _extensionRequest.value == null &&
+            pendingRequest.id != lastSubmittedExtensionRequestId &&
+            pendingRequest.id != lastClosedExtensionRequestId &&
+            pendingRequest.id !in dismissedExtensionRequestIds
+          ) {
+            _extensionRequest.value = pendingRequest
+            _extensionSubmitError.value = null
+          }
+        } else if (external && _extensionRequest.value != null) {
+          // Require two absent polls so an older in-flight state response cannot
+          // erase a newer socket event. This also heals a missed close event.
+          pendingExtensionAbsentPolls++
+          if (pendingExtensionAbsentPolls >= 2) {
+            _extensionRequest.value = null
+            _extensionSubmitError.value = null
+            pendingExtensionAbsentPolls = 0
+          }
+        }
       }
       is com.example.picompanion.data.api.HttpResult.Failure -> Unit
     }
@@ -654,11 +695,38 @@ class SessionDetailViewModel(
         SessionTimelineItem.FileChange(path = path, operation = op)
       }
       "extension_ui_request" -> {
-        // Only Pi dialog methods need a client response. Status, widget, and
+        // Only Pi dialog methods need a client response. The server stamps
+        // `_daemonExtensionUiRequiresResponse` for those; status, widget, and
         // notification events share this RPC type but are verbose output.
-        if (raw["_daemonExtensionUiRequiresResponse"]?.toString() != "true") return
+        val request = parseExtensionUiRequest(raw) ?: return
+        if (
+          request.id in dismissedExtensionRequestIds ||
+          request.id == lastSubmittedExtensionRequestId ||
+          request.id == lastClosedExtensionRequestId
+        ) return
+        if (lastSubmittedExtensionRequestId != null && lastSubmittedExtensionRequestId != request.id) {
+          lastSubmittedExtensionRequestId = null
+        }
+        if (lastClosedExtensionRequestId != null && lastClosedExtensionRequestId != request.id) {
+          lastClosedExtensionRequestId = null
+        }
+        pendingExtensionAbsentPolls = 0
+        _extensionRequest.value = request
+        _extensionSubmitError.value = null
+        return
+      }
+      "extension_ui_closed" -> {
+        // The extension resolved the request on its own (timeout, TUI answer,
+        // or another client); dismiss the matching dialog without responding.
         val id = raw.getString("id") ?: return
-        _extensionRequest.value = ExtensionUiRequest(id, raw.getString("message") ?: raw.getString("title") ?: "Extension input requested", raw.getString("placeholder"))
+        pendingExtensionAbsentPolls = 0
+        lastClosedExtensionRequestId = id
+        dismissedExtensionRequestIds.remove(id)
+        if (lastSubmittedExtensionRequestId == id) lastSubmittedExtensionRequestId = null
+        if (_extensionRequest.value?.id == id) {
+          _extensionRequest.value = null
+          _extensionSubmitError.value = null
+        }
         return
       }
       "bridge_receipt" -> {
@@ -1258,17 +1326,65 @@ class SessionDetailViewModel(
     }
   }
 
-  /** Hides a replayed/stale extension request without sending an approval. */
-  fun ignoreExtensionRequest() {
+  /** Locally dismisses an undeliverable request without claiming an answer. */
+  fun dismissExtensionRequest() {
+    val request = _extensionRequest.value ?: return
+    dismissedExtensionRequestIds.add(request.id)
+    while (dismissedExtensionRequestIds.size > 20) {
+      dismissedExtensionRequestIds.remove(dismissedExtensionRequestIds.first())
+    }
     _extensionRequest.value = null
+    _extensionSubmitError.value = null
   }
 
-  fun respondToExtension(value: String? = null, confirmed: Boolean? = null, cancelled: Boolean = false) {
+  /**
+   * Submits a structured answer to the current extension UI request.
+   *
+   * On HTTP failure the request is kept visible and the error is exposed so
+   * the user can retry; only a successful post clears the request.
+   */
+  fun submitExtensionResponse(
+    cancelled: Boolean = false,
+    value: String? = null,
+    confirmed: Boolean? = null,
+    selections: List<String>? = null,
+    comment: String? = null,
+    responseKind: String? = null,
+  ) {
     val request = _extensionRequest.value ?: return
     val server = activeServer ?: return
     viewModelScope.launch {
-      withContext(Dispatchers.IO) { client.respondToExtensionUi(server, sessionId, request.id, value, confirmed, cancelled) }
-      _extensionRequest.value = null
+      _extensionSubmitting.value = true
+      _extensionSubmitError.value = null
+      val result = withContext(Dispatchers.IO) {
+        client.respondToExtensionUi(
+          server = server,
+          sessionId = sessionId,
+          id = request.id,
+          cancelled = cancelled,
+          value = value,
+          confirmed = confirmed,
+          selections = selections,
+          comment = comment,
+          responseKind = responseKind,
+        )
+      }
+      _extensionSubmitting.value = false
+      when (result) {
+        is com.example.picompanion.data.api.HttpResult.Success -> {
+          // Suppress stale state snapshots until the server/bridge close event
+          // confirms this exact request has finished.
+          lastSubmittedExtensionRequestId = request.id
+          if (_extensionRequest.value?.id == request.id) _extensionRequest.value = null
+          _extensionSubmitError.value = null
+        }
+        is com.example.picompanion.data.api.HttpResult.Failure -> {
+          if (_extensionRequest.value?.id == request.id) {
+            _extensionSubmitError.value =
+              "Could not send response: ${result.userMessage}"
+          }
+        }
+      }
     }
   }
 
@@ -1328,8 +1444,6 @@ data class ModelControls(
   val selectedModelId: String? = null,
   val thinkingLevel: String? = null,
 )
-
-data class ExtensionUiRequest(val id: String, val message: String, val placeholder: String?)
 
 sealed interface ConnectionState {
   data object Connecting : ConnectionState
