@@ -59,4 +59,83 @@ class SessionHistoryStateTest {
     assertEquals(1, merged.size)
     assertEquals("2026-08-11T08:29:23Z", (merged.single() as SessionTimelineItem.Chat).time)
   }
+
+  @Test
+  fun durableHistoryReplacesLiveAssistantResponse() {
+    val state = SessionHistoryState()
+    val live = SessionTimelineItem.Chat(
+      author = "Pi Agent",
+      text = "The task is complete.\n",
+      time = "",
+      isUser = false,
+      order = 11,
+    )
+    val durable = live.copy(
+      text = "The task is complete.",
+      time = "2026-08-11T08:30:10Z",
+      order = 0,
+    )
+
+    val merged = state.applyPage(
+      page = listOf(durable),
+      appendOld = false,
+      nextOffset = 1,
+      hasOlder = false,
+      liveItems = listOf(live),
+      stamp = { it },
+    )
+
+    assertEquals(1, merged.size)
+    assertEquals("2026-08-11T08:30:10Z", (merged.single() as SessionTimelineItem.Chat).time)
+  }
+
+  @Test
+  fun partialLiveAssistantResponseSurvivesHistoryRefresh() {
+    val state = SessionHistoryState()
+    val durable = SessionTimelineItem.Chat(
+      author = "Pi Agent",
+      text = "An earlier response",
+      time = "2026-08-11T08:30:10Z",
+      isUser = false,
+      order = 10,
+    )
+    val partial = durable.copy(text = "The current response is stream", time = "", order = 11)
+
+    val merged = state.applyPage(
+      page = listOf(durable),
+      appendOld = false,
+      nextOffset = 1,
+      hasOlder = false,
+      liveItems = listOf(durable, partial),
+      stamp = { it },
+    )
+
+    assertEquals(2, merged.size)
+    assertEquals("The current response is stream", (merged.last() as SessionTimelineItem.Chat).text)
+  }
+
+  @Test
+  fun olderIdenticalResponseDoesNotReplaceCurrentLiveResponse() {
+    val state = SessionHistoryState()
+    val older = SessionTimelineItem.Chat(
+      author = "Pi Agent",
+      text = "Done.",
+      time = "2026-08-11T08:30:10Z",
+      isUser = false,
+      order = 10,
+    )
+    val current = older.copy(time = "", order = 11)
+
+    val merged = state.applyPage(
+      page = listOf(older),
+      appendOld = false,
+      nextOffset = 1,
+      hasOlder = false,
+      liveItems = listOf(older, current),
+      stamp = { it },
+    )
+
+    assertEquals(2, merged.size)
+    assertEquals("", (merged.last() as SessionTimelineItem.Chat).time)
+  }
 }

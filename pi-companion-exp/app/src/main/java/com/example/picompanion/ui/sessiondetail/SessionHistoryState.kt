@@ -34,16 +34,24 @@ internal class SessionHistoryState {
 
     val merged = LinkedHashMap<String, SessionTimelineItem>()
     historicalItems.forEach { merged[historyItemId(it)] = it }
+    val liveItemIds = liveItems.mapTo(mutableSetOf(), ::historyItemId)
     val durableChatSignatures = historicalItems
+      .asSequence()
       .filterIsInstance<SessionTimelineItem.Chat>()
-      .mapTo(mutableSetOf()) { Triple(it.isUser, it.text, it.imageUris.isNotEmpty()) }
+      // Only newly durable rows can replace ephemeral rows. Existing history
+      // may contain an older, identical response from a different turn.
+      .filter { !appendOld && historyItemId(it) !in liveItemIds }
+      .map { Triple(it.isUser, it.text.trim(), it.imageUris.isNotEmpty()) }
+      .toSet()
     liveItems.filter { it is SessionTimelineItem.Chat && it.time == "now" && it.imageUris.isNotEmpty() }
       .forEach { merged[historyItemId(it)] = it }
     liveItems.forEach { item ->
-      val optimisticImage = item is SessionTimelineItem.Chat && item.time == "now" && item.imageUris.isNotEmpty()
-      val reconciledOptimisticText = item is SessionTimelineItem.Chat && item.time == "now" && item.imageUris.isEmpty() &&
-        Triple(item.isUser, item.text, false) in durableChatSignatures
-      if (!optimisticImage && !reconciledOptimisticText) {
+      val chat = item as? SessionTimelineItem.Chat
+      val optimisticImage = chat?.time == "now" && chat.imageUris.isNotEmpty()
+      val ephemeralText = chat != null && (chat.time.isEmpty() || chat.time == "now")
+      val reconciledLiveText = chat != null && ephemeralText && chat.imageUris.isEmpty() &&
+        Triple(chat.isUser, chat.text.trim(), false) in durableChatSignatures
+      if (!optimisticImage && !reconciledLiveText) {
         val id = historyItemId(item)
         if (item is SessionTimelineItem.Tool || merged[id] == null) merged[id] = item
       }
