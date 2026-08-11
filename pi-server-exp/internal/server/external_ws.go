@@ -52,19 +52,14 @@ func (s *Server) externalSessionWebSocket(w http.ResponseWriter, r *http.Request
 			switch command["type"] {
 			case "abort":
 				queued = ExternalCommand{ID: NewSessionID(), Type: "abort"}
-			case "prompt", "steer":
-				startsRun = command["type"] == "prompt"
+			case "prompt", "steer", "follow_up":
+				commandType, _ := command["type"].(string)
+				startsRun = commandType == "prompt"
 				message, _ := command["message"].(string)
 				if message == "" {
 					continue
 				}
-				queued = ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: message, Delivery: "steer"}
-			case "follow_up":
-				message, _ := command["message"].(string)
-				if message == "" {
-					continue
-				}
-				queued = ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: message, Delivery: "followUp"}
+				queued = ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: message, Delivery: externalPromptDelivery(commandType)}
 			default:
 				continue
 			}

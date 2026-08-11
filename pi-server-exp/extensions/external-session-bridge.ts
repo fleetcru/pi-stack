@@ -49,7 +49,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   let pollRunning = false;
   let flushRunning = false;
   let ui: { setStatus: (key: string, text?: string) => void; notify: (message: string, level?: "info" | "warning" | "error") => void } | undefined;
-  let sessionCtx: { model?: unknown; abort: () => void } | undefined;
+  let sessionCtx: { model?: unknown; abort: () => void; isIdle?: () => boolean } | undefined;
   let relaySocket: WebSocket | undefined;
   let relayReconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let abortCurrent: (() => void) | undefined;
@@ -255,10 +255,24 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       return;
     }
     if (command.type !== "prompt" || !command.message) return;
-    const delivery = command.delivery === "steer" ? "steer" : "followUp";
-    pi.sendUserMessage(command.message, { deliverAs: delivery });
+    const requestedDelivery = command.delivery ?? "prompt";
+    const idle = sessionCtx?.isIdle?.() ?? false;
+    if (requestedDelivery === "prompt" && idle) {
+      // A normal mobile prompt must start a fresh turn when Pi is idle. Passing
+      // deliverAs is intended for streaming turns and can leave an idle prompt
+      // queued without ever appearing in the TUI. If a turn starts between the
+      // idle check and injection, fall back to steering that active turn.
+      try {
+        pi.sendUserMessage(command.message);
+      } catch {
+        pi.sendUserMessage(command.message, { deliverAs: "steer" });
+      }
+    } else {
+      const delivery = requestedDelivery === "followUp" ? "followUp" : "steer";
+      pi.sendUserMessage(command.message, { deliverAs: delivery });
+    }
     emit({ type: "bridge_receipt", commandId: command.id, status: "delivered" });
-    ui?.notify(`Remote ${delivery === "steer" ? "steer" : "message"} received`, "info");
+    ui?.notify(`Remote ${requestedDelivery === "steer" ? "steer" : "message"} received`, "info");
     handledCommands.add(command.id);
     if (handledCommands.size > 500) {
       const first = handledCommands.values().next().value;

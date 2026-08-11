@@ -34,4 +34,29 @@ class SessionHistoryStateTest {
     assertEquals(17, merged.single().order)
     assertEquals(17, state.historicalItems.single().order)
   }
+
+  @Test
+  fun durableHistoryReplacesOptimisticTextMessage() {
+    val state = SessionHistoryState()
+    val optimistic = SessionTimelineItem.Chat(
+      author = "You",
+      text = "hello from mobile",
+      time = "now",
+      isUser = true,
+      order = 10,
+    )
+    val durable = optimistic.copy(time = "2026-08-11T08:29:23Z", order = 0)
+
+    val merged = state.applyPage(
+      page = listOf(durable),
+      appendOld = false,
+      nextOffset = 1,
+      hasOlder = false,
+      liveItems = listOf(optimistic),
+      stamp = { it },
+    )
+
+    assertEquals(1, merged.size)
+    assertEquals("2026-08-11T08:29:23Z", (merged.single() as SessionTimelineItem.Chat).time)
+  }
 }

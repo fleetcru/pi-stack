@@ -34,11 +34,16 @@ internal class SessionHistoryState {
 
     val merged = LinkedHashMap<String, SessionTimelineItem>()
     historicalItems.forEach { merged[historyItemId(it)] = it }
+    val durableChatSignatures = historicalItems
+      .filterIsInstance<SessionTimelineItem.Chat>()
+      .mapTo(mutableSetOf()) { Triple(it.isUser, it.text, it.imageUris.isNotEmpty()) }
     liveItems.filter { it is SessionTimelineItem.Chat && it.time == "now" && it.imageUris.isNotEmpty() }
       .forEach { merged[historyItemId(it)] = it }
     liveItems.forEach { item ->
       val optimisticImage = item is SessionTimelineItem.Chat && item.time == "now" && item.imageUris.isNotEmpty()
-      if (!optimisticImage) {
+      val reconciledOptimisticText = item is SessionTimelineItem.Chat && item.time == "now" && item.imageUris.isEmpty() &&
+        Triple(item.isUser, item.text, false) in durableChatSignatures
+      if (!optimisticImage && !reconciledOptimisticText) {
         val id = historyItemId(item)
         if (item is SessionTimelineItem.Tool || merged[id] == null) merged[id] = item
       }

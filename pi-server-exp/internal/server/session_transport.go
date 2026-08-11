@@ -42,11 +42,8 @@ func (t relayTransport) Send(command RPCCommand) error {
 		if message == "" {
 			return fmt.Errorf("message is required")
 		}
-		delivery := "steer"
-		if command["type"] == "follow_up" {
-			delivery = "followUp"
-		}
-		if !t.external.enqueue(t.id, ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: message, Delivery: delivery}) {
+		commandType, _ := command["type"].(string)
+		if !t.external.enqueue(t.id, ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: message, Delivery: externalPromptDelivery(commandType)}) {
 			return fmt.Errorf("relay is unavailable: session may be stale or stopped")
 		}
 		return nil

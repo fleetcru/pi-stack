@@ -45,14 +45,7 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 				writeErrorText(w, http.StatusBadRequest, "message is required")
 				return
 			}
-			// External TUI sessions should feel interactive. Pi still injects only
-			// at a safe boundary, but steer arrives before another LLM/tool turn;
-			// followUp can otherwise wait through an entire tool chain.
-			delivery := "steer"
-			if action == "follow-up" {
-				delivery = "followUp"
-			}
-			command := ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: body.Message, Delivery: delivery}
+			command := ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: body.Message, Delivery: externalPromptDelivery(action)}
 			if !s.external.enqueue(id, command) {
 				if admitted {
 					s.releaseDistributedRun(id)
@@ -113,6 +106,19 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 		s.handleConvenienceCommand(w, r, p, action)
 	default:
 		http.NotFound(w, r)
+	}
+}
+
+func externalPromptDelivery(action string) string {
+	switch action {
+	case "steer":
+		return "steer"
+	case "follow-up", "follow_up":
+		return "followUp"
+	default:
+		// A normal prompt should start a turn immediately when the TUI is idle.
+		// The bridge selects steer only when Pi reports an active turn.
+		return "prompt"
 	}
 }
 

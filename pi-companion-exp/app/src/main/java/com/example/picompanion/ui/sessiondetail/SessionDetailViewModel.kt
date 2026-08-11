@@ -128,6 +128,7 @@ class SessionDetailViewModel(
   })
   private var activeServer: com.example.picompanion.data.settings.ServerEntry? = null
   private var reconnectJob: Job? = null
+  private var promptReconcileJob: Job? = null
   private var relayHealthJob: Job? = null
   private var reconnectAttempt = 0
   @Volatile private var closed = false
@@ -671,6 +672,8 @@ class SessionDetailViewModel(
         }
         if (type == "agent_settled" || type == "agent_end") {
           pendingPromptIds.clear()
+          promptReconcileJob?.cancel()
+          promptReconcileJob = null
           _sendState.value = SendState.Idle
           _agentWorking.value = false
           turnCompleteGeneration++
@@ -1003,13 +1006,49 @@ class SessionDetailViewModel(
     // some reconnect paths, making Companion prompts appear to disappear.
     viewModelScope.launch {
       when (val result = repository.sendPrompt(sessionId, message, idempotencyKey = requestId)) {
-        is com.example.picompanion.data.api.HttpResult.Success -> _sendState.value = SendState.Accepted
+        is com.example.picompanion.data.api.HttpResult.Success -> {
+          _sendState.value = SendState.Accepted
+          schedulePromptReconciliation()
+        }
         is com.example.picompanion.data.api.HttpResult.Failure -> {
           pendingPromptIds.remove(requestId)
           _sendState.value = SendState.Idle
           appendItem(SessionTimelineItem.System("Could not send prompt: ${result.message}"))
         }
       }
+    }
+  }
+
+  private fun schedulePromptReconciliation() {
+    promptReconcileJob?.cancel()
+    val reconciledIds = synchronized(pendingPromptIds) { pendingPromptIds.toSet() }
+    val promptText = lastSentPrompt ?: return
+    promptReconcileJob = viewModelScope.launch {
+      // Relay commands can be accepted just as a mobile WebSocket reconnects.
+      // Periodic durable-history refresh prevents the accepted user message and
+      // response from disappearing when those live events land in that gap.
+      repeat(30) {
+        delay(2_000)
+        if (reconciledIds.none { it in pendingPromptIds }) return@launch
+        loadHistory()
+        if (durableHistoryHasResponseAfter(promptText)) {
+          pendingPromptIds.removeAll(reconciledIds)
+          if (pendingPromptIds.isEmpty()) _sendState.value = SendState.Idle
+          return@launch
+        }
+      }
+      pendingPromptIds.removeAll(reconciledIds)
+      if (pendingPromptIds.isEmpty()) _sendState.value = SendState.Idle
+    }
+  }
+
+  private fun durableHistoryHasResponseAfter(promptText: String): Boolean {
+    val history = historyState.historicalItems
+    val userIndex = history.indexOfLast {
+      it is SessionTimelineItem.Chat && it.isUser && it.text == promptText
+    }
+    return userIndex >= 0 && history.drop(userIndex + 1).any {
+      it is SessionTimelineItem.Chat && !it.isUser
     }
   }
 

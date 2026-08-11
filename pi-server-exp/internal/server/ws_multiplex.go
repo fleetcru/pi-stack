@@ -142,10 +142,9 @@ func (s *Server) routeMultiplexCommand(ctx context.Context, sessionID string, cm
 		switch cmd["type"] {
 		case "abort":
 			queued = ExternalCommand{ID: NewSessionID(), Type: "abort"}
-		case "prompt", "steer":
-			queued = ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: cmd["message"].(string), Delivery: "steer"}
-		case "follow_up":
-			queued = ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: cmd["message"].(string), Delivery: "followUp"}
+		case "prompt", "steer", "follow_up":
+			commandType, _ := cmd["type"].(string)
+			queued = ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: cmd["message"].(string), Delivery: externalPromptDelivery(commandType)}
 		}
 		if !s.external.enqueue(sessionID, queued) {
 			select {
