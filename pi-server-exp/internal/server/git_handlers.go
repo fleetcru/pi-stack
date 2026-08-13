@@ -490,36 +490,30 @@ func (s *Server) gitWorktrees(ctx context.Context, cwd string) ([]GitWorktree, e
 
 // isGitWorktree reports whether cwd is (or is inside) a linked git worktree,
 // as opposed to the repository's primary working tree.
+// isGitWorktree reports whether cwd lives in a linked (secondary) worktree.
+// Linked worktrees store their git metadata in a regular FILE named `.git`
+// (content like `gitdir: <repo>/.git/worktrees/<name>`), whereas the main
+// repository stores it as a DIRECTORY. That file-vs-directory distinction is
+// canonical and platform-independent, unlike relying on `git worktree list --
+// porcelain` ordering or path-prefix heuristics (which break because linked
+// worktrees here are created under <repoRoot>/.pi-worktrees/ and thus are
+// always a subdirectory of the main checkout).
 func isGitWorktree(ctx context.Context, s *Server, cwd string) bool {
-	out, err := s.runGit(ctx, cwd, "worktree", "list", "--porcelain")
+	// Resolve the actual worktree top-level so this works even when cwd is a
+	// subdirectory of the worktree, not its root.
+	out, err := s.runGit(ctx, cwd, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return false
 	}
-	primary := ""
-	ext := map[string]bool{}
-	var current string
-	for _, line := range strings.Split(out, "\n") {
-		switch {
-		case strings.HasPrefix(line, "worktree "):
-			current = strings.TrimPrefix(line, "worktree ")
-			if primary == "" {
-				primary = current
-			}
-		case current != "" && strings.HasPrefix(line, "branch refs/heads/"):
-			ext[current] = true
-		}
-	}
-	if primary == "" {
+	toplevel := strings.TrimSpace(out)
+	if toplevel == "" || toplevel == "." {
 		return false
 	}
-	absCwd, err := filepath.Abs(cwd)
+	fi, err := os.Stat(filepath.Join(toplevel, ".git"))
 	if err != nil {
 		return false
 	}
-	if absCwd == primary || strings.HasPrefix(absCwd, primary+string(filepath.Separator)) {
-		return false
-	}
-	return true
+	return !fi.IsDir()
 }
 
 // currentWorktreePath returns the linked worktree path whose branch matches the
