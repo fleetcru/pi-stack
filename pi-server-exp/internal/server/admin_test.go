@@ -12,12 +12,30 @@ import (
 	"testing"
 )
 
+// chdir changes the process working directory and restores it when the test
+// completes. (Avoids t.Chdir, which requires Go 1.24; the module targets 1.23.)
+func chdir(t *testing.T, dir string) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir %q: %v", dir, err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(orig); err != nil {
+			t.Errorf("restore cwd: %v", err)
+		}
+	})
+}
+
 func TestAdminEmptyCWDFallsBackToLaunchDir(t *testing.T) {
 	dataDir := t.TempDir()
 	launchDir := t.TempDir()
 	t.Setenv("PI_SERVER_DATA_DIR", dataDir)
 	// Simulate launching from a specific directory (os.Getwd() fallback).
-	t.Chdir(launchDir)
+	chdir(t, launchDir)
 	base := ConfigFromEnv()
 	settings := settingsFromConfig(base)
 	if settings.CWD != launchDir {
@@ -31,7 +49,7 @@ func TestAdminEmptyCWDFallsBackToLaunchDir(t *testing.T) {
 
 	// Reload: now launch from a DIFFERENT directory.
 	other := t.TempDir()
-	t.Chdir(other)
+	chdir(t, other)
 	cfg := ConfigFromEnv()
 	if cfg.CWD != other {
 		t.Fatalf("empty persisted cwd should fall back to launch dir %q, got %q", other, cfg.CWD)
