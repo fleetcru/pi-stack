@@ -56,7 +56,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val newServer = ServerEntry(
       id = UUID.randomUUID().toString().take(8),
       name = "New Server",
-      url = "http://192.168.1.x:3141",
+      url = "",
     )
     viewModelScope.launch { dataStore.updateServers(current + newServer) }
   }

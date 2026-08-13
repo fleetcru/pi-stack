@@ -9,15 +9,26 @@ const statusMeta: Record<string, { label: string; className: string; icon: typeo
 }
 
 export function ChangedFilesList({ changes, sessionId }: { changes: GitFileChange[]; sessionId: string }) {
+  // Whole-card collapse, default collapsed. The header is a button that toggles
+  // the file list open/closed; each file keeps its own diff-expand chevron.
   const [expanded, setExpanded] = useState<string | undefined>()
+  const [open, setOpen] = useState(false)
   if (changes.length === 0) return null
   return (
     <section aria-label="Changed files" className="mx-auto w-full max-w-3xl overflow-hidden rounded-lg border border-border/60 bg-background/70 text-xs shadow-sm">
-      <div className="flex items-center justify-between border-b border-border/50 px-3 py-2">
-        <span className="font-medium text-muted-foreground">Changed files</span>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-2 border-b border-border/50 px-3 py-2 text-left hover:bg-muted/40"
+      >
+        <span className="flex items-center gap-1.5 font-medium text-muted-foreground">
+          <ChevronDown className={`size-3.5 text-muted-foreground transition-transform ${open ? "rotate-0" : "-rotate-90"}`} />
+          Changed files
+        </span>
         <span className="text-muted-foreground">{changes.length} {changes.length === 1 ? "file" : "files"}</span>
-      </div>
-      <div role="list">
+      </button>
+      {open && (<div role="list">
         {changes.map((change) => {
           const meta = statusMeta[change.status] ?? { label: "Modified", className: "border-amber-500/30 bg-amber-500/10 text-amber-300", icon: FileText }
           const Icon = meta.icon
@@ -35,7 +46,7 @@ export function ChangedFilesList({ changes, sessionId }: { changes: GitFileChang
             </div>
           )
         })}
-      </div>
+      </div>)}
     </section>
   )
 }

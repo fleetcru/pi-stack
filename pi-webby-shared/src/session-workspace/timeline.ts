@@ -95,19 +95,32 @@ export class IncrementalTimeline {
         const text = contentText(message.content)
         if (text) this.items.push({ id, kind: "user", text, taskId, runId })
       } else if (message?.role === "assistant") {
-        this.activeAssistant = { id, kind: "assistant", text: "", taskId, runId }
+        this.activeAssistant = { id, kind: "assistant", text: "", streaming: true, taskId, runId }
         this.items.push(this.activeAssistant)
       }
     } else if (event.type === "message_update") {
       const delta = event.assistantMessageEvent as { type?: string; delta?: string } | undefined
       if (delta?.type === "text_delta") {
         if (!this.activeAssistant) {
-          this.activeAssistant = { id: `assistant-${event._daemonEventId ?? index}`, kind: "assistant", text: "", taskId, runId }
+          this.activeAssistant = { id: `assistant-${event._daemonEventId ?? index}`, kind: "assistant", text: "", streaming: true, taskId, runId }
           this.items.push(this.activeAssistant)
+        } else {
+          // Replace the object (new reference) so memoized row components
+          // re-render on each delta instead of bailing out on the same ref.
+          const updated = { ...this.activeAssistant, text: this.activeAssistant.text + (delta.delta ?? "") }
+          const at = this.items.indexOf(this.activeAssistant)
+          this.activeAssistant = updated
+          if (at >= 0) this.items[at] = updated
         }
-        this.activeAssistant.text += delta.delta ?? ""
       }
-    } else if (event.type === "message_end") this.activeAssistant = undefined
+    } else if (event.type === "message_end") {
+      if (this.activeAssistant) {
+        const at = this.items.indexOf(this.activeAssistant)
+        const settled = { ...this.activeAssistant, streaming: false }
+        this.activeAssistant = undefined
+        if (at >= 0) this.items[at] = settled
+      }
+    }
 
     if (event.type === "file_change" && event.path) this.items.push({ id: `file-${String(event._daemonEventId ?? index)}`, kind: "system", text: `File ${event.change ?? "changed"}: ${event.path}`, taskId, runId })
     if (event.type === "tool_execution_start") {
@@ -122,12 +135,17 @@ export class IncrementalTimeline {
       const result = (event.partialResult ?? event.result) as { content?: Array<{ text?: string }> } | undefined
       const output = result?.content?.map((part) => part.text ?? "").join("")
       if (tool) {
-        tool.output = output ?? tool.output
-        tool.done = event.type === "tool_execution_end"
-        if (tool.done) {
-          tool.endedAt = typeof event.timestamp === "string" || typeof event.timestamp === "number" ? event.timestamp : undefined
-          tool.failed = event.status === "failed" || event.status === "error"
+        const updated: ToolItem = {
+          ...tool,
+          output: output ?? tool.output,
+          done: event.type === "tool_execution_end",
         }
+        if (updated.done) {
+          updated.endedAt = typeof event.timestamp === "string" || typeof event.timestamp === "number" ? event.timestamp : undefined
+          updated.failed = event.status === "failed" || event.status === "error"
+        }
+        // Replace with a new reference so memoized rows re-render on stream.
+        this.items[at] = updated
       } else {
         this.items.push({ id, kind: "tool", name: String(event.toolName ?? "tool"), output, done: event.type === "tool_execution_end", taskId, runId })
         this.toolIndexes.set(id, this.items.length - 1)

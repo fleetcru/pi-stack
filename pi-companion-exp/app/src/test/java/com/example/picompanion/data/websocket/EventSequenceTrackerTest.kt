@@ -66,6 +66,31 @@ class EventSequenceTrackerTest {
   }
 
   @Test
+  fun zeroIdLossSentinelPreservesReplayDeduplication() {
+    val tracker = EventSequenceTracker()
+    tracker.beginConnection(null)
+    tracker.process(event(5))
+    val sentinel = Json.parseToJsonElement(
+      """{"_daemonEventId":0,"type":"events_lost","expectedAfter":5,"received":8}""",
+    ) as kotlinx.serialization.json.JsonObject
+
+    assertEquals(listOf(SocketEvent.EventsLost(5, 8)), tracker.process(sentinel))
+    assertTrue("retained replay should remain deduplicated", tracker.process(event(5)).isEmpty())
+    assertEquals(1, tracker.process(event(8)).size)
+  }
+
+  @Test
+  fun forgottenDroppedEventCanBeRecoveredByReplay() {
+    val tracker = EventSequenceTracker()
+    tracker.beginConnection(null)
+    assertEquals(1, tracker.process(event(7)).size)
+    tracker.forget(7)
+    tracker.beginConnection(6)
+
+    assertEquals(1, tracker.process(event(7)).size)
+  }
+
+  @Test
   fun explicitDisconnectClearsDuplicateWindow() {
     val tracker = EventSequenceTracker()
     tracker.beginConnection(null)

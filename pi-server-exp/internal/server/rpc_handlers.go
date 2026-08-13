@@ -32,6 +32,22 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if action == "prompt" || action == "steer" || action == "follow-up" {
+			var body struct {
+				Message string `json:"message"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body.Message == "" {
+				writeErrorText(w, http.StatusBadRequest, "message is required")
+				return
+			}
+			idemKey := ""
+			if headerKey := r.Header.Get("X-Idempotency-Key"); headerKey != "" {
+				idemKey = id + ":" + headerKey
+				if s.idempotencySeen(idemKey) {
+					writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "idempotent": true})
+					return
+				}
+			}
 			admitted := action == "prompt"
 			if admitted && !s.acquireDistributedRun(r.Context(), id, "relay:"+id) {
 				writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": "hub run capacity is busy or this relay already has an active run", "scheduler": s.admission.Snapshot()})
@@ -40,17 +56,6 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 			if admitted {
 				s.setDistributedRunMetadata(id, "relay", "")
 			}
-			var body struct {
-				Message string `json:"message"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			if body.Message == "" {
-				if admitted {
-					s.releaseDistributedRun(id)
-				}
-				writeErrorText(w, http.StatusBadRequest, "message is required")
-				return
-			}
 			command := ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: body.Message, Delivery: externalPromptDelivery(action)}
 			if !s.external.enqueue(id, command) {
 				if admitted {
@@ -58,6 +63,9 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 				}
 				writeErrorText(w, http.StatusBadGateway, "relay is unavailable")
 				return
+			}
+			if idemKey != "" {
+				s.recordIdempotency(idemKey)
 			}
 			writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "commandId": command.ID, "delivery": "queued"})
 			return

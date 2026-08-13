@@ -88,7 +88,9 @@ func (s *Server) externalRelayWebSocket(w http.ResponseWriter, r *http.Request) 
 			case "event":
 				s.external.publish(id, envelope.Event)
 			case "ack":
-				s.external.acknowledge(id, envelope.IDs)
+				if !s.external.acknowledgeForRelay(id, generation, envelope.IDs) {
+					return
+				}
 			case "heartbeat":
 				s.external.heartbeatRelay(id, generation)
 			}

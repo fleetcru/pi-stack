@@ -27,6 +27,7 @@ export interface CreateSessionRequest {
   env?: Record<string, string>
   sessionPath?: string
   worktreePath?: string
+  createWorktree?: { enabled: boolean }
   start?: boolean
   restart?: boolean
   project?: string
@@ -101,6 +102,14 @@ export interface GitStatusResponse {
     untracked: string[]
     conflicts: string[]
     changes: GitFileChange[]
+    hasUpstream: boolean
+    hasRemote: boolean
+    isDefault: boolean
+    isWorktree: boolean
+    worktreePath?: string
+    defaultBranch?: string
+    remoteUrl?: string
+    githubRepo?: string
   }
 }
 
@@ -108,6 +117,7 @@ export interface GitBranch {
   name: string
   current: boolean
   remote?: string
+  isDefault?: boolean
 }
 
 export interface GitBranchesResponse {
@@ -402,8 +412,13 @@ export class PiServerClient {
     return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/pull`, { method: "POST", body: { remote, branch } })
   }
 
-  pushSessionGit(id: string, remote = "origin", branch?: string): Promise<GitWriteResponse> {
-    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/push`, { method: "POST", body: { remote, branch } })
+  pushSessionGit(id: string, remote = "origin", branch?: string, setUpstream = false): Promise<GitWriteResponse> {
+    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/push`, { method: "POST", body: { remote, branch, setUpstream } })
+  }
+
+  /** Push a fresh feature branch and set its upstream in one step. */
+  pushSessionBranchWithUpstream(id: string, remote = "origin", branch?: string): Promise<GitWriteResponse> {
+    return this.pushSessionGit(id, remote, branch, true)
   }
 
   listDirectories(path?: string): Promise<DirectoryListResponse> {

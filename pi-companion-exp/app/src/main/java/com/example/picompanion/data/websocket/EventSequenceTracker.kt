@@ -34,10 +34,22 @@ internal class EventSequenceTracker {
   }
 
   @Synchronized
+  fun forget(eventId: Long?) {
+    if (eventId != null) seenEventIds.remove(eventId)
+  }
+
+  @Synchronized
   fun process(jsonObj: JsonObject): List<SocketEvent> {
     val output = mutableListOf<SocketEvent>()
+    val type = jsonObj["type"]?.jsonPrimitive?.content ?: "unknown"
     val eventId = jsonObj["_daemonEventId"]?.jsonPrimitive?.longOrNull
-    if (eventId != null) {
+    // The server deliberately stamps the synthetic events_lost sentinel with
+    // ID 0. It is control metadata, not a restarted event sequence, so it must
+    // not clear the duplicate window needed for the retained-ring replay.
+    if (eventId != null && !(type == "events_lost" && eventId == 0L)) {
+      // A retained-ring replay may begin with events already delivered before
+      // the gap. Ignore those without consuming the resynchronization baseline.
+      if (seenEventIds.containsKey(eventId)) return output
       val previous = lastEventId
       if (resynchronizing) {
         lastEventId = eventId
@@ -55,11 +67,9 @@ internal class EventSequenceTracker {
         lastEventId = eventId
       }
 
-      val isDuplicate = seenEventIds.put(eventId, true) != null
-      if (isDuplicate) return output
+      seenEventIds[eventId] = true
     }
 
-    val type = jsonObj["type"]?.jsonPrimitive?.content ?: "unknown"
     if (type == "events_lost") {
       val expectedAfter = jsonObj["expectedAfter"]?.jsonPrimitive?.longOrNull ?: lastEventId ?: 0
       val received = jsonObj["received"]?.jsonPrimitive?.longOrNull ?: expectedAfter + 1

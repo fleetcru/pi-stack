@@ -203,7 +203,7 @@ private fun ServerCard(
   onRemove: (() -> Unit)?,
   modifier: Modifier = Modifier,
 ) {
-  var expanded by remember(server.id) { mutableStateOf(server.name.isBlank() || server.url.isBlank()) }
+  var expanded by remember(server.id) { mutableStateOf(server.name.isBlank() && server.url.isBlank()) }
   var editName by remember(server.id) { mutableStateOf(server.name) }
   var editUrl by remember(server.id) { mutableStateOf(server.url) }
   var editToken by remember(server.id) { mutableStateOf(server.authToken) }
@@ -319,11 +319,35 @@ private fun ServerCard(
             label = "URL",
             value = editUrl,
             onValueChange = { editUrl = it },
-            placeholder = "http://127.0.0.1:3141",
+            placeholder = "127.0.0.1:3141",
             imeAction = ImeAction.Next,
             keyboardType = KeyboardType.Uri,
             error = urlError,
           )
+
+          // Quick protocol buttons
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+          ) {
+            val protocols = listOf("http://" to "HTTP", "https://" to "HTTPS")
+            protocols.forEach { (prefix, label) ->
+              OutlinedButton(
+                onClick = {
+                  val stripped = editUrl.removePrefix("http://").removePrefix("https://")
+                  editUrl = prefix + stripped
+                },
+                shape = RoundedCornerShape(8.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                  containerColor = if (editUrl.startsWith(prefix))
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                  else MaterialTheme.colorScheme.surface,
+                ),
+              ) {
+                Text(label, style = MaterialTheme.typography.labelSmall)
+              }
+            }
+          }
 
           // HTTP warning for non-localhost
           val showHttpWarning = remember(editUrl) {

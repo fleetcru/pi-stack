@@ -7,8 +7,12 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +32,8 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terminal
@@ -62,6 +68,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun ChangedFilesCard(changes: List<GitFileChange>, modifier: Modifier = Modifier) {
   if (changes.isEmpty()) return
+  var expanded by rememberSaveable { mutableStateOf(false) }
   Surface(
     modifier = modifier.fillMaxWidth(),
     shape = RoundedCornerShape(10.dp),
@@ -69,23 +76,49 @@ fun ChangedFilesCard(changes: List<GitFileChange>, modifier: Modifier = Modifier
     tonalElevation = 1.dp,
   ) {
     Column {
-      Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .clickable(
+            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+            indication = null,
+            onClick = { expanded = !expanded },
+          )
+          .padding(horizontal = 12.dp, vertical = 9.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+      ) {
         Text("Changed files", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-        Text("${changes.size} ${if (changes.size == 1) "file" else "files"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-      }
-      HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-      changes.forEach { change ->
-        val status = change.status.firstOrNull() ?: 'M'
-        val statusColor = when (status) {
-          'A' -> Color(0xFF4ADE80)
-          'D' -> MaterialTheme.colorScheme.error
-          else -> Color(0xFFFBBF24)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+          Text("${changes.size} ${if (changes.size == 1) "file" else "files"}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          Icon(
+            imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            contentDescription = if (expanded) "Collapse" else "Expand",
+            modifier = Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
         }
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          Text(status.toString(), color = statusColor, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(16.dp))
-          Text(change.path, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall)
-          if (change.additions > 0) Text("+${change.additions}", color = Color(0xFF4ADE80), style = MaterialTheme.typography.labelSmall)
-          if (change.deletions > 0) Text("-${change.deletions}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+      }
+      AnimatedVisibility(
+        visible = expanded,
+        enter = expandVertically(),
+        exit = shrinkVertically(),
+      ) {
+        Column {
+          HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+          changes.forEach { change ->
+            val status = change.status.firstOrNull() ?: 'M'
+            val statusColor = when (status) {
+              'A' -> Color(0xFF4ADE80)
+              'D' -> MaterialTheme.colorScheme.error
+              else -> Color(0xFFFBBF24)
+            }
+            Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              Text(status.toString(), color = statusColor, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(16.dp))
+              Text(change.path, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall)
+              if (change.additions > 0) Text("+${change.additions}", color = Color(0xFF4ADE80), style = MaterialTheme.typography.labelSmall)
+              if (change.deletions > 0) Text("-${change.deletions}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+            }
+          }
         }
       }
     }

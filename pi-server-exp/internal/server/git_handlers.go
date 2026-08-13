@@ -8,7 +8,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"net/url"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -21,20 +24,29 @@ type GitFileChange struct {
 }
 
 type GitStatus struct {
-	Branch    string          `json:"branch"`
-	Ahead     int             `json:"ahead"`
-	Behind    int             `json:"behind"`
-	Staged    []string        `json:"staged"`
-	Modified  []string        `json:"modified"`
-	Untracked []string        `json:"untracked"`
-	Conflicts []string        `json:"conflicts"`
-	Changes   []GitFileChange `json:"changes"`
+	Branch       string          `json:"branch"`
+	Ahead        int             `json:"ahead"`
+	Behind       int             `json:"behind"`
+	Staged       []string        `json:"staged"`
+	Modified     []string        `json:"modified"`
+	Untracked    []string        `json:"untracked"`
+	Conflicts    []string        `json:"conflicts"`
+	Changes      []GitFileChange `json:"changes"`
+	HasUpstream  bool            `json:"hasUpstream"`
+	HasRemote    bool            `json:"hasRemote"`
+	IsDefault    bool            `json:"isDefault"`
+	IsWorktree   bool            `json:"isWorktree"`
+	WorktreePath string          `json:"worktreePath,omitempty"`
+	DefaultBranch string         `json:"defaultBranch,omitempty"`
+	RemoteURL    string          `json:"remoteUrl,omitempty"`
+	GitHubRepo   string          `json:"githubRepo,omitempty"`
 }
 
 type GitBranch struct {
-	Name    string `json:"name"`
-	Current bool   `json:"current"`
-	Remote  string `json:"remote,omitempty"`
+	Name      string `json:"name"`
+	Current   bool   `json:"current"`
+	Remote    string `json:"remote,omitempty"`
+	IsDefault bool   `json:"isDefault"`
 }
 
 type GitWorktree struct {
@@ -63,6 +75,9 @@ type gitMergeRequest struct {
 type gitRemoteRequest struct {
 	Remote string `json:"remote"`
 	Branch string `json:"branch"`
+	// SetUpstream pushes with -u so a freshly created (upstream-less) branch
+	// records its tracking remote in one step.
+	SetUpstream bool `json:"setUpstream"`
 }
 
 func (s *Server) gitHandler(w http.ResponseWriter, r *http.Request) {
@@ -90,12 +105,15 @@ func (s *Server) gitHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch resource {
-	case "status":
+		case "status":
 		if r.URL.Query().Get("format") == "json" {
 			status, err := s.gitStatus(r.Context(), spec.CWD)
 			if err != nil {
 				writeGitError(w, err)
 				return
+			}
+			if status.WorktreePath == "" {
+				status.WorktreePath = s.currentWorktreePath(r.Context(), spec.CWD, status.Branch)
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"cwd": spec.CWD, "status": status})
 			return
@@ -209,12 +227,90 @@ func (s *Server) gitFileDiff(w http.ResponseWriter, r *http.Request, cwd string)
 	writeJSON(w, http.StatusOK, map[string]any{"path": filepath.ToSlash(rel), "diff": diff})
 }
 
+// resolveDefaultBranch returns the repository's primary branch name (origin/HEAD
+// if available, otherwise `main`, then `master`). Empty string when the repo has
+// no recognizable default.
+func (s *Server) resolveDefaultBranch(ctx context.Context, cwd string) string {
+	if out, err := s.runGit(ctx, cwd, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"); err == nil {
+		name := strings.TrimSpace(out)
+		if strings.HasPrefix(name, "origin/") {
+			return strings.TrimPrefix(name, "origin/")
+		}
+		return name
+	}
+	for _, candidate := range []string{"main", "master"} {
+		if _, err := s.runGit(ctx, cwd, "rev-parse", "--verify", "--quiet", "refs/heads/"+candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// normalizeGitRemoteURL returns a stable comparison key for a git remote URL,
+// stripping protocol/scheme and trailing .git. Ported from T3 Code (MIT).
+func normalizeGitRemoteURL(value string) string {
+	normalized := strings.TrimSpace(value)
+	normalized = strings.TrimRight(normalized, "/")
+	normalized = strings.TrimSuffix(normalized, ".git")
+	normalized = strings.ToLower(normalized)
+
+	re := regexp.MustCompile(`^(?:ssh|https?|git)://`)
+	if re.MatchString(normalized) {
+		if u, err := url.Parse(normalized); err == nil {
+			var repoPath []string
+			for _, seg := range strings.Split(u.Path, "/") {
+				if seg != "" {
+					repoPath = append(repoPath, seg)
+				}
+			}
+			joined := strings.Join(repoPath, "/")
+			if u.Hostname() != "" && strings.Contains(joined, "/") {
+				return u.Hostname() + "/" + joined
+			}
+		}
+		return normalized
+	}
+
+	scp := regexp.MustCompile(`^git@([^:/\s]+)[:/]([^/\s]+(?:/[^/\s]+)+)$`)
+	if m := scp.FindStringSubmatch(normalized); m != nil {
+		return m[1] + "/" + m[2]
+	}
+	return normalized
+}
+
+// parseGitHubRepositoryNameWithOwner returns a best-effort "owner/repo"
+// identifier from common GitHub remote URL shapes, or empty string.
+// Ported from T3 Code (MIT).
+func parseGitHubRepositoryNameWithOwner(remoteURL string) string {
+	trimmed := strings.TrimSpace(remoteURL)
+	if trimmed == "" {
+		return ""
+	}
+	re := regexp.MustCompile(`(?i)^(?:git@github\.com:|ssh://git@github\.com/|https://github\.com/|git://github\.com/)([^/\s]+/[^/\s]+?)(?:\.git)?/?$`)
+	m := re.FindStringSubmatch(trimmed)
+	if m == nil {
+		return ""
+	}
+	return strings.TrimSpace(m[1])
+}
+
 func (s *Server) gitStatus(ctx context.Context, cwd string) (GitStatus, error) {
 	output, err := s.runGit(ctx, cwd, "status", "--porcelain=v1", "--branch", "--ahead-behind")
 	if err != nil {
 		return GitStatus{}, err
 	}
 	status := GitStatus{Staged: []string{}, Modified: []string{}, Untracked: []string{}, Conflicts: []string{}, Changes: []GitFileChange{}}
+	status.DefaultBranch = s.resolveDefaultBranch(ctx, cwd)
+	status.IsWorktree = isGitWorktree(ctx, s, cwd)
+	// hasRemote: session repo has at least one remote configured.
+	if out, err := s.runGit(ctx, cwd, "remote"); err == nil {
+		status.HasRemote = len(strings.TrimSpace(out)) > 0
+	}
+	// Resolve the origin remote URL for client-side "open PR/compare" links.
+	if out, err := s.runGit(ctx, cwd, "remote", "get-url", "origin"); err == nil {
+		status.RemoteURL = strings.TrimSpace(out)
+		status.GitHubRepo = parseGitHubRepositoryNameWithOwner(status.RemoteURL)
+	}
 	changeIndex := make(map[string]int)
 	for _, line := range strings.Split(output, "\n") {
 		if line == "" {
@@ -227,6 +323,9 @@ func (s *Server) gitStatus(ctx context.Context, cwd string) (GitStatus, error) {
 				branch = branch[:i]
 			}
 			status.Branch = branch
+			// Upstream present means the branch has a configured tracking remote.
+			status.HasUpstream = strings.Contains(line, "...")
+			status.IsDefault = status.DefaultBranch != "" && branch == status.DefaultBranch
 			if i := strings.Index(line, "[ahead "); i >= 0 {
 				fields := strings.Fields(line[i+7:])
 				if len(fields) > 0 {
@@ -311,25 +410,46 @@ func (s *Server) gitStatus(ctx context.Context, cwd string) (GitStatus, error) {
 }
 
 func (s *Server) gitBranches(ctx context.Context, cwd string) ([]GitBranch, error) {
-	output, err := s.runGit(ctx, cwd, "for-each-ref", "--format=%(HEAD)\t%(refname:short)\t%(upstream:short)", "refs/heads")
+	// Use %09 (not \t) as the field separator: git's --format treats %09 as an
+	// unambiguous tab and passes a literal backslash-t or raw tab through in a
+	// way that shifts the %(HEAD) padding when a branch is not current.
+	output, err := s.runGit(ctx, cwd, "for-each-ref", "--format=%(HEAD)%09%(refname:short)%09%(upstream:short)", "refs/heads")
 	if err != nil {
 		return nil, err
 	}
 	branches := make([]GitBranch, 0)
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
-		if line == "" {
+	defaultBranch := s.resolveDefaultBranch(ctx, cwd)
+	// Split on newlines WITHOUT trimming leading whitespace: %(HEAD) pads non-current
+	// branches with a leading SPACE, and any whole-line TrimSpace would strip that
+	// space + following tab, silently losing that branch's name. Only trim the
+	// trailing newline/CR (Windows) and trailing empty fields.
+	for _, rawLine := range strings.Split(output, "\n") {
+		rawLine = strings.TrimSuffix(rawLine, "\r")
+		if strings.TrimSpace(rawLine) == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 3)
-		if len(parts) < 2 {
+		parts := strings.SplitN(rawLine, "\t", 3)
+		if len(parts) < 2 || strings.TrimSpace(parts[1]) == "" {
 			continue
 		}
-		branch := GitBranch{Name: parts[1], Current: parts[0] == "*"}
-		if len(parts) == 3 {
+		branch := GitBranch{Name: parts[1], Current: strings.HasPrefix(parts[0], "*")}
+		if len(parts) >= 3 && parts[2] != "" {
 			branch.Remote = parts[2]
 		}
+		branch.IsDefault = defaultBranch != "" && parts[1] == defaultBranch
 		branches = append(branches, branch)
 	}
+	// Sort current branch first, then default, then alphabetically.
+	sort.SliceStable(branches, func(i, j int) bool {
+		bi, bj := branches[i], branches[j]
+		if bi.Current != bj.Current {
+			return bi.Current
+		}
+		if bi.IsDefault != bj.IsDefault {
+			return bi.IsDefault
+		}
+		return bi.Name < bj.Name
+	})
 	return branches, nil
 }
 
@@ -366,6 +486,205 @@ func (s *Server) gitWorktrees(ctx context.Context, cwd string) ([]GitWorktree, e
 		return nil, err
 	}
 	return worktrees, nil
+}
+
+// isGitWorktree reports whether cwd is (or is inside) a linked git worktree,
+// as opposed to the repository's primary working tree.
+func isGitWorktree(ctx context.Context, s *Server, cwd string) bool {
+	out, err := s.runGit(ctx, cwd, "worktree", "list", "--porcelain")
+	if err != nil {
+		return false
+	}
+	primary := ""
+	ext := map[string]bool{}
+	var current string
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			current = strings.TrimPrefix(line, "worktree ")
+			if primary == "" {
+				primary = current
+			}
+		case current != "" && strings.HasPrefix(line, "branch refs/heads/"):
+			ext[current] = true
+		}
+	}
+	if primary == "" {
+		return false
+	}
+	absCwd, err := filepath.Abs(cwd)
+	if err != nil {
+		return false
+	}
+	if absCwd == primary || strings.HasPrefix(absCwd, primary+string(filepath.Separator)) {
+		return false
+	}
+	return true
+}
+
+// currentWorktreePath returns the linked worktree path whose branch matches the
+// session's checked-out branch, or "" when cwd is the primary working tree.
+func (s *Server) currentWorktreePath(ctx context.Context, cwd, branch string) string {
+	if branch == "" {
+		return ""
+	}
+	worktrees, err := s.gitWorktrees(ctx, cwd)
+	if err != nil {
+		return ""
+	}
+	for _, item := range worktrees {
+		if item.Branch == branch {
+			return item.Path
+		}
+	}
+	return ""
+}
+
+// sanitizeBranchFragment converts an arbitrary string into a valid, lowercase,
+// slash-propagating git refName fragment (max 64 chars). Falls back to "update".
+func sanitizeBranchFragment(raw string) string {
+	normalized := strings.TrimSpace(raw)
+	normalized = strings.ToLower(normalized)
+	replacer := strings.NewReplacer(`'`, "", `"`, "", "`", "")
+	normalized = replacer.Replace(normalized)
+	normalized = strings.TrimLeft(normalized, "./\t-_")
+	normalized = strings.TrimRight(normalized, " .\t-_")
+
+	re := regexp.MustCompile(`[^a-z0-9/_-]+`)
+	fragment := re.ReplaceAllString(normalized, "-")
+	fragment = regexp.MustCompile(`/+/`).ReplaceAllString(fragment, "/")
+	fragment = regexp.MustCompile(`-+`).ReplaceAllString(fragment, "-")
+	fragment = strings.TrimLeft(fragment, "./_-")
+	fragment = strings.TrimRight(fragment, "./_- ")
+	if len(fragment) > 64 {
+		fragment = fragment[:64]
+	}
+	fragment = strings.TrimRight(fragment, "./_- ")
+	if fragment == "" {
+		return "update"
+	}
+	return fragment
+}
+
+// sanitizeFeatureBranchName converts an arbitrary string into a feature-or-
+// namespaced git refName, mirroring T3 Code's contract:
+//   - a title that already carries a `feature/…` prefix is preserved verbatim
+//     (no double `feature/feature/…`);
+//   - any other slash-namespace is preserved inside the feature prefix, e.g.
+//     `docs/readme` → `feature/docs/readme`;
+//   - a bare label becomes `feature/<label>`.
+func sanitizeFeatureBranchName(raw string) string {
+	sanitized := sanitizeBranchFragment(raw)
+	if strings.Contains(sanitized, "/") {
+		if strings.HasPrefix(sanitized, "feature/") {
+			return sanitized
+		}
+		return "feature/" + sanitized
+	}
+	return "feature/" + sanitized
+}
+
+// resolveAutoFeatureBranchName returns a unique feature/<sanitized> name that
+// does not collide with any existing branch, appending a numeric suffix as
+// needed. Mirrors T3 Code's auto-branch naming to keep agent branches warm.
+func (s *Server) resolveAutoFeatureBranchName(ctx context.Context, cwd, preferred string) (string, error) {
+	base := sanitizeFeatureBranchName(preferred)
+	if base == "feature/update" {
+		base = "feature/agent"
+	}
+	branches, err := s.gitBranches(ctx, cwd)
+	if err != nil {
+		return "", err
+	}
+	existing := make(map[string]bool, len(branches))
+	for _, b := range branches {
+		existing[b.Name] = true
+	}
+	candidate := base
+	if !existing[candidate] {
+		return candidate, nil
+	}
+	for suffix := 2; suffix < 1000; suffix++ {
+		candidate = fmt.Sprintf("%s-%d", base, suffix)
+		if !existing[candidate] {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("unable to allocate a unique feature branch")
+}
+
+// createAutoWorktree creates a linked worktree under <repoRoot>/.pi-worktrees/
+// on a freshly created feature branch (based on the repo default branch). It
+// returns the created path and branch name. The caller is responsible for
+// recording these on the SessionSpec.
+func (s *Server) createAutoWorktree(ctx context.Context, cwd, title string) (string, string, error) {
+	rootOutput, err := s.runGit(ctx, cwd, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", "", err
+	}
+	repoRoot, err := filepath.Abs(strings.TrimSpace(rootOutput))
+	if err != nil {
+		return "", "", err
+	}
+	defaultBranch := s.resolveDefaultBranch(ctx, cwd)
+	if defaultBranch == "" {
+		return "", "", fmt.Errorf("cannot create worktree: no default branch (main/master) found")
+	}
+	branch, err := s.resolveAutoFeatureBranchName(ctx, cwd, title)
+	if err != nil {
+		return "", "", err
+	}
+	dirName := sanitizeBranchFragment(title)
+	if dirName == "update" {
+		dirName = "agent"
+	}
+	path := filepath.Join(repoRoot, ".pi-worktrees", dirName)
+	// De-conflict the directory name if it already exists.
+	for suffix := 2; ; suffix++ {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			break
+		}
+		path = filepath.Join(repoRoot, ".pi-worktrees", fmt.Sprintf("%s-%d", dirName, suffix))
+		if suffix > 1000 {
+			return "", "", fmt.Errorf("unable to allocate a unique worktree directory")
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return "", "", err
+	}
+	if _, err := s.runGit(ctx, cwd, "worktree", "add", "-b", branch, path, defaultBranch); err != nil {
+		return "", "", err
+	}
+	// Ensure the parent repo ignores the linked worktrees directory so it
+	// doesn't show up as untracked. Best-effort: never block creation on it.
+	s.ensureWorktreesGitignored(repoRoot)
+	return path, branch, nil
+}
+
+// ensureWorktreesGitignored makes sure <repoRoot>/.gitignore ignores the
+// .pi-worktrees/ directory created by createAutoWorktree, in any repo the user
+// runs a session in (not just ones that already ignore it). Best-effort:
+// errors are swallowed because they must never block worktree creation.
+func (s *Server) ensureWorktreesGitignored(repoRoot string) {
+	const entry = ".pi-worktrees/"
+	gitignore := filepath.Join(repoRoot, ".gitignore")
+	existing, rerr := os.ReadFile(gitignore)
+	if rerr == nil && strings.Contains(string(existing), entry) {
+		return
+	}
+	content := string(existing)
+	if len(content) > 0 && !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	content += "# pi-server auto-created per-session worktrees\n" + entry + "\n"
+	// Atomic-ish write via temp file + rename so a crash can't truncate it.
+	tmp := gitignore + ".pi-worktree.tmp"
+	if werr := os.WriteFile(tmp, []byte(content), 0644); werr != nil {
+		return
+	}
+	if rerr := os.Rename(tmp, gitignore); rerr != nil {
+		_ = os.Remove(tmp)
+	}
 }
 
 func (s *Server) gitWriteOperation(w http.ResponseWriter, r *http.Request, spec SessionSpec, sessionID, resource string) {
@@ -433,7 +752,11 @@ func (s *Server) gitWriteOperation(w http.ResponseWriter, r *http.Request, spec 
 		if resource == "pull" {
 			args = []string{"pull", "--ff-only", remote, branch}
 		} else {
-			args = []string{"push", remote, branch}
+			args = []string{"push"}
+			if req.SetUpstream {
+				args = append(args, "-u")
+			}
+			args = append(args, remote, branch)
 		}
 		output, err := s.runGit(r.Context(), spec.CWD, args...)
 		if err != nil {

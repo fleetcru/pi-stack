@@ -23,6 +23,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import android.util.Log
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 class SessionEventSocket(
@@ -84,7 +85,14 @@ class SessionEventSocket(
     }
 
     // The ticket is deliberately the only credential sent during the upgrade.
+    val disconnectedEmitted = AtomicBoolean(false)
     webSocket = okHttpClient.newWebSocket(Request.Builder().url(wsUrl).build(), object : WebSocketListener() {
+      private fun emitDisconnectedOnce(reason: String) {
+        if (disconnectedEmitted.compareAndSet(false, true)) {
+          emitEvent(SocketEvent.Disconnected(reason))
+        }
+      }
+
       override fun onOpen(webSocket: WebSocket, response: Response) {
         if (generation.get() != connectionId) return
         connected = true
@@ -123,13 +131,13 @@ class SessionEventSocket(
         if (generation.get() != connectionId) return
         webSocket.close(1000, null)
         connected = false
-        emitEvent(SocketEvent.Disconnected("Closing: $reason"))
+        emitDisconnectedOnce("Closing: $reason")
       }
 
       override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
         if (generation.get() != connectionId) return
         connected = false
-        emitEvent(SocketEvent.Disconnected("Closed: $reason"))
+        emitDisconnectedOnce("Closed: $reason")
       }
 
       override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -165,6 +173,9 @@ class SessionEventSocket(
       Log.w("SessionEventSocket", "Channel closed — event dropped: ${event::class.simpleName}")
       return
     }
+    // The tracker saw this ID before channel delivery. Forget dropped messages
+    // so a retained-ring replay can recover them after the consumer catches up.
+    if (event is SocketEvent.Message) eventSequence.forget(event.eventId)
     // Keep the data buffer bounded while independently signaling durable
     // history reconciliation. CONFLATED prevents reconnect storms.
     _control.trySend(SocketEvent.EventsLost(expectedAfter = 0, received = 0))

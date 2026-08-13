@@ -30,14 +30,15 @@ Webby/Companion can send:
 - a steer message;
 - a follow-up message.
 
-The extension polls the server every 750 ms and injects the command with Pi's `sendUserMessage` API. Commands remain queued until the extension acknowledges injection, preventing loss when pi-server or the bridge restarts. It emits the resulting user message and assistant/tool stream back to the clients.
+The extension receives commands over WebSocket (with HTTP polling fallback) and injects them through Pi's `sendUserMessage` API. Commands remain queued until the extension confirms that an idle prompt actually appeared in Pi or safely queued it into an active turn. It forwards user, assistant, tool, and agent lifecycle events back to clients.
 
 ## Important limitations
 
 - The terminal Pi TUI remains the process owner. pi-server does not restart it.
 - The bridge retries registration/events after pi-server restarts and marks a relay stale after 20 seconds without a heartbeat.
-- Do not also resume the same session through Machine Session Discovery while the bridged TUI is running.
-- Abort, compact, model changes, and extension UI responses are intentionally not bridged yet; they require explicit matching Pi extension APIs and will be added after prompt flow is proven.
+- One Pi process must own a JSONL session. Machine Session Discovery now returns the live relay instead of starting a second RPC process when a bridged TUI already owns that history file.
+- If an old server already started an RPC process for the same JSONL file, stop that managed session and use the relay entry before continuing; concurrent Pi processes do not synchronize live state and can corrupt or overwrite history.
+- Prompt, steer, follow-up, abort, model/thinking changes, and structured extension UI responses are bridged. Compact is not currently bridged.
 - The bridge is authenticated by the normal pi-server bearer middleware. Keep the relay URL on a trusted LAN/Tailscale network.
 
 ## For an already-running TUI

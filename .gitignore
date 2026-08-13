@@ -5,6 +5,9 @@
 *.err
 *.out
 
+# Auto-created per-session git worktrees (pi-server createWorktree.enabled)
+.pi-worktrees/
+
 # ── Root workspace ────────────────────────────────────────
 /node_modules/
 /pnpm-lock.yaml

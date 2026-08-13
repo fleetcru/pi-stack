@@ -64,6 +64,13 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   const backoffCeiling = 30_000;
   const pendingEvents: unknown[] = [];
   const handledCommands = new Set<string>();
+  const promptCommandsInFlight = new Set<string>();
+  const promptDeliveryAttempts = new Map<string, number>();
+  const userMessageWaiters = new Set<{
+    text: string;
+    resolve: (matched: boolean) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
   let pendingAskRequest: ({ id: string } & Record<string, unknown>) | undefined;
   let pendingAskLease = "";
 
@@ -221,6 +228,41 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
 
   // ── command ack / delivery ────────────────────────────────────────────
 
+  const userMessageText = (message: any): string => {
+    if (!message || message.role !== "user") return "";
+    if (typeof message.content === "string") return message.content;
+    if (!Array.isArray(message.content)) return "";
+    return message.content
+      .filter((block: any) => block?.type === "text" && typeof block.text === "string")
+      .map((block: any) => block.text)
+      .join("");
+  };
+
+  const observeUserMessage = (message: any) => {
+    const text = userMessageText(message);
+    if (!text) return;
+    for (const waiter of userMessageWaiters) {
+      if (waiter.text !== text) continue;
+      clearTimeout(waiter.timer);
+      userMessageWaiters.delete(waiter);
+      waiter.resolve(true);
+      break;
+    }
+  };
+
+  const waitForUserMessage = (text: string, timeoutMs = 1_000): Promise<boolean> =>
+    new Promise((resolve) => {
+      const waiter = {
+        text,
+        resolve,
+        timer: setTimeout(() => {
+          userMessageWaiters.delete(waiter);
+          resolve(false);
+        }, timeoutMs),
+      };
+      userMessageWaiters.add(waiter);
+    });
+
   const acknowledge = async (commandId: string) => {
     if (relaySocket?.readyState === WebSocket.OPEN) {
       relaySocket.send(JSON.stringify({ type: "ack", ids: [commandId] }));
@@ -288,30 +330,71 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       return;
     }
     if (command.type !== "prompt" || !command.message) return;
-    const requestedDelivery = command.delivery ?? "prompt";
-    const idle = sessionCtx?.isIdle?.() ?? false;
-    if (requestedDelivery === "prompt" && idle) {
-      // A normal mobile prompt must start a fresh turn when Pi is idle. Passing
-      // deliverAs is intended for streaming turns and can leave an idle prompt
-      // queued without ever appearing in the TUI. If a turn starts between the
-      // idle check and injection, fall back to steering that active turn.
-      try {
-        pi.sendUserMessage(command.message);
-      } catch {
-        pi.sendUserMessage(command.message, { deliverAs: "steer" });
+    if (promptCommandsInFlight.has(command.id)) return;
+    promptCommandsInFlight.add(command.id);
+    try {
+      const requestedDelivery = command.delivery ?? "prompt";
+      const attempt = (promptDeliveryAttempts.get(command.id) ?? 0) + 1;
+      promptDeliveryAttempts.set(command.id, attempt);
+      const idle = sessionCtx?.isIdle?.() ?? false;
+      if (requestedDelivery === "prompt" && idle) {
+        // sendUserMessage() is intentionally fire-and-forget: Pi reports an
+        // idle→working race through its extension error channel rather than by
+        // throwing here. Confirm that the user message actually entered the TUI
+        // before acknowledging the durable server command.
+        const appeared = waitForUserMessage(command.message);
+        if (attempt === 1) {
+          // Never inject the same idle prompt twice solely because its echo was
+          // late. Later attempts only re-check state and either steer an active
+          // turn or fail permanently with a visible receipt.
+          pi.sendUserMessage(command.message);
+        }
+        if (!(await appeared)) {
+          if (!(sessionCtx?.isIdle?.() ?? false)) {
+            // The first attempt made Pi active, but its user-message echo was
+            // late. Treat the active turn as confirmation instead of steering
+            // the same text and risking duplicate execution/tool side effects.
+            promptDeliveryAttempts.delete(command.id);
+            emit({ type: "bridge_receipt", commandId: command.id, status: "delivered" });
+            handledCommands.add(command.id);
+            await acknowledge(command.id);
+            return;
+          } else {
+            // Keep the command durable and force a fresh relay attachment so it
+            // is retried. Never emit a false delivered receipt or ack it away.
+            emit({ type: "bridge_receipt", commandId: command.id, status: "failed" });
+            if (attempt < 3) {
+              ui?.notify(`Remote message was not accepted by Pi; retrying (${attempt}/3)`, "warning");
+              relaySocket?.close();
+              return;
+            }
+            // Avoid an infinite reconnect loop and notification storm. Keep the
+            // failed command visible through its receipt, but acknowledge it so
+            // a message that Pi accepted without a timely echo cannot be
+            // injected repeatedly into the same TUI history.
+            ui?.notify("Remote message could not be confirmed after 3 attempts", "error");
+            promptDeliveryAttempts.delete(command.id);
+            handledCommands.add(command.id);
+            await acknowledge(command.id);
+            return;
+          }
+        }
+      } else {
+        const delivery = requestedDelivery === "followUp" ? "followUp" : "steer";
+        pi.sendUserMessage(command.message, { deliverAs: delivery });
       }
-    } else {
-      const delivery = requestedDelivery === "followUp" ? "followUp" : "steer";
-      pi.sendUserMessage(command.message, { deliverAs: delivery });
+      promptDeliveryAttempts.delete(command.id);
+      emit({ type: "bridge_receipt", commandId: command.id, status: "delivered" });
+      ui?.notify(`Remote ${requestedDelivery === "steer" ? "steer" : "message"} received`, "info");
+      handledCommands.add(command.id);
+      if (handledCommands.size > 500) {
+        const first = handledCommands.values().next().value;
+        if (first !== undefined) handledCommands.delete(first);
+      }
+      await acknowledge(command.id);
+    } finally {
+      promptCommandsInFlight.delete(command.id);
     }
-    emit({ type: "bridge_receipt", commandId: command.id, status: "delivered" });
-    ui?.notify(`Remote ${requestedDelivery === "steer" ? "steer" : "message"} received`, "info");
-    handledCommands.add(command.id);
-    if (handledCommands.size > 500) {
-      const first = handledCommands.values().next().value;
-      if (first !== undefined) handledCommands.delete(first);
-    }
-    await acknowledge(command.id);
   };
 
   // ── WebSocket ─────────────────────────────────────────────────────────
@@ -651,7 +734,15 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   });
   pi.on("model_select", async (event) => emit({ type: "model_select", model: event.model }));
   pi.on("thinking_level_select", async (event) => emit({ type: "thinking_level_select", level: event.level }));
-  pi.on("message_start", async (event) => emit({ type: "message_start", message: event.message }));
+  // Forward real run lifecycle events. The server uses them to release relay
+  // admission slots, while Companion uses them to settle send/spinner state.
+  pi.on("agent_start", async () => emit({ type: "agent_start" }));
+  pi.on("agent_end", async () => emit({ type: "agent_end" }));
+  pi.on("agent_settled", async () => emit({ type: "agent_settled" }));
+  pi.on("message_start", async (event) => {
+    observeUserMessage(event.message);
+    emit({ type: "message_start", message: event.message });
+  });
   pi.on("message_update", async (event) => emit({ type: "message_update", assistantMessageEvent: event.assistantMessageEvent }));
   pi.on("message_end", async (event) => emit({ type: "message_end", message: event.message }));
   pi.on("tool_execution_start", async (event) => emit({ type: "tool_execution_start", toolName: event.toolName, toolCallId: event.toolCallId, args: event.args }));

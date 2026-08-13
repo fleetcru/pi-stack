@@ -4,6 +4,10 @@ export type TextItem = {
   id: string
   kind: "user" | "assistant"
   text: string
+  /** True while this assistant message is still being streamed (updates are
+   * still arriving). Renderers use this to show plain text cheaply during
+   * streaming and only run full Markdown once the message ends. */
+  streaming?: boolean
   taskId?: string
   runId?: string
 }

@@ -101,13 +101,13 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const [selectedProvider, setSelectedProvider] = useState<string | undefined>()
   const extension = useMemo(() => findExtensionRequest(socket.events), [socket.events])
   const visibleExtension = extension && !ignoredExtensionIds.includes(extension.id) ? extension : undefined
-  const timeline = useMemo(() => {
-    const history = historyQuery.data?.pages
+  const historyItems = useMemo(() =>
+    historyQuery.data?.pages
       .slice()
       .reverse()
       .flatMap((page) => buildHistory(page)) ?? []
-    return mergeTimeline(history, liveTimelineItems)
-  }, [historyQuery.data, liveTimelineItems])
+  , [historyQuery.data])
+  const timeline = useMemo(() => mergeTimeline(historyItems, liveTimelineItems), [historyItems, liveTimelineItems])
 
   const deliveryStage = useMemo(() => {
     if (!deliveryCommandId) return deliveryNotice
@@ -512,7 +512,7 @@ function ChatTurn({ item }: { item: TextItem }) {
               {user ? (
                 item.text
               ) : (
-                <DeferredMarkdown text={item.text || "Thinking…"} />
+                <DeferredMarkdown text={item.text || "Thinking…"} streaming={item.streaming} />
               )}
             </BubbleContent>
           </Bubble>
@@ -522,8 +522,15 @@ function ChatTurn({ item }: { item: TextItem }) {
   )
 }
 
-function DeferredMarkdown({ text }: { text: string }) {
-  const [expanded, setExpanded] = useState(text.length <= LARGE_RENDER_THRESHOLD)
+function DeferredMarkdown({ text, streaming }: { text: string; streaming?: boolean }) {
+  // Hooks must run unconditionally before any early return.
+  const [expanded, setExpanded] = useState(() => text.length <= LARGE_RENDER_THRESHOLD)
+  // While a message is still streaming, render plain text (cheap) instead of
+  // running ReactMarkdown + gfm + rehype-sanitize on the whole growing message
+  // every 33ms flush. Markdown is rendered once after message_end.
+  if (streaming) {
+    return <pre className="whitespace-pre-wrap font-sans text-sm leading-6 text-foreground">{text}</pre>
+  }
   if (text.length > MARKDOWN_HARD_CAP) {
     return <pre className="max-h-96 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">{text}</pre>
   }

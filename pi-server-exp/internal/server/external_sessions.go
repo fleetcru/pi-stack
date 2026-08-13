@@ -265,8 +265,12 @@ func (r *ExternalRegistry) publish(id string, ev RPCEvent) bool {
 		if level, ok := ev["level"].(string); ok {
 			s.ThinkingLevel = level
 		}
-	case "message_start", "message_update", "tool_execution_start", "tool_execution_update":
+	case "agent_start", "message_start", "message_update", "tool_execution_start", "tool_execution_update":
 		s.Status = "working"
+	case "agent_settled":
+		if s.Status != "waiting_for_input" {
+			s.Status = "idle"
+		}
 	case "extension_ui_request":
 		// Stamp relayed extension events with the same daemon classification the
 		// local PiProcess dispatch applies, so clients treat relayed dialogs
@@ -455,7 +459,10 @@ func (r *ExternalRegistry) attachRelay(id, lease string) (<-chan ExternalCommand
 		return nil, nil, 0, nil, nil, true, false
 	}
 	staleRelayStop := s.relayStop
-	channel := make(chan ExternalCommand, 32)
+	// The persistent command queue is capped at 100. Matching that capacity
+	// here guarantees a live relay cannot silently miss a newly enqueued command
+	// while its writer is still draining the initial pending snapshot.
+	channel := make(chan ExternalCommand, 100)
 	relayStop := make(chan struct{})
 	s.relayGeneration++
 	generation := s.relayGeneration
@@ -506,10 +513,25 @@ func (r *ExternalRegistry) heartbeatRelay(id string, generation uint64) {
 	}
 }
 
-// acknowledge removes commands after a generation-checked relay WS receipt.
-func (r *ExternalRegistry) acknowledge(id string, ids []string) bool {
-	exists, authorized := r.acknowledgeLocked(id, ids, "", false)
-	return exists && authorized
+// acknowledgeForRelay removes commands only while the acknowledging WebSocket
+// still owns the current relay generation. The generation check and removal
+// are atomic, so a socket rotated between ReadJSON and ack processing cannot
+// remove commands that the replacement relay still needs to deliver.
+func (r *ExternalRegistry) acknowledgeForRelay(id string, generation uint64, ids []string) bool {
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
+	r.mu.Lock()
+	s := r.sessions[id]
+	if s == nil || s.relay == nil || s.relayGeneration != generation {
+		r.mu.Unlock()
+		return false
+	}
+	r.removeAcknowledgedCommandsLocked(s, ids)
+	s.UpdatedAt = time.Now().UTC()
+	snapshot := r.snapshotCommandsLocked()
+	r.mu.Unlock()
+	r.saveCommands(snapshot)
+	return true
 }
 
 // acknowledgeForLease removes commands after an HTTP polling receipt, but only
@@ -531,6 +553,15 @@ func (r *ExternalRegistry) acknowledgeLocked(id string, ids []string, lease stri
 		r.mu.Unlock()
 		return true, false
 	}
+	r.removeAcknowledgedCommandsLocked(s, ids)
+	s.UpdatedAt = time.Now().UTC()
+	snapshot := r.snapshotCommandsLocked()
+	r.mu.Unlock()
+	r.saveCommands(snapshot)
+	return true, true
+}
+
+func (r *ExternalRegistry) removeAcknowledgedCommandsLocked(s *ExternalSession, ids []string) {
 	seen := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
 		seen[id] = struct{}{}
@@ -542,11 +573,6 @@ func (r *ExternalRegistry) acknowledgeLocked(id string, ids []string, lease stri
 		}
 	}
 	s.commands = kept
-	s.UpdatedAt = time.Now().UTC()
-	snapshot := r.snapshotCommandsLocked()
-	r.mu.Unlock()
-	r.saveCommands(snapshot)
-	return true, true
 }
 
 func (s *Server) externalRegister(w http.ResponseWriter, r *http.Request) {

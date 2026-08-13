@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestMatchingServerSessionResolvesBridgeSymlink(t *testing.T) {
@@ -48,6 +49,53 @@ func TestMatchingServerSessionIgnoresRelaySpecs(t *testing.T) {
 	specs := []SessionSpec{{ID: "relay-session", SessionPath: path, Transport: "relay"}}
 	if got := matchingServerSession(MachineSession{Path: path}, specs); got != nil {
 		t.Fatalf("matchingServerSession() = %#v, want nil", got)
+	}
+}
+
+func TestLiveRelayOwnsDuplicateSessionHistory(t *testing.T) {
+	history := filepath.Join(t.TempDir(), "history.jsonl")
+	if err := os.WriteFile(history, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rpc := SessionSpec{ID: "rpc-session", SessionPath: history, Transport: "rpc"}
+	relay := SessionSpec{ID: "relay-session", SessionPath: history, Transport: "relay"}
+	specs := []SessionSpec{rpc, relay}
+	s := newTestServer(t, "")
+	s.external.register(relay.ID, ".", "", history, "bridge")
+
+	preferred := s.preferredServerSession(MachineSession{Path: history}, specs)
+	if preferred == nil || preferred.ID != relay.ID {
+		t.Fatalf("preferred session = %#v, want live relay", preferred)
+	}
+	if !s.hideDuplicateSessionSpec(rpc, specs) {
+		t.Fatal("duplicate RPC session remained visible while relay owns history")
+	}
+	if s.hideDuplicateSessionSpec(relay, specs) {
+		t.Fatal("live relay session was hidden")
+	}
+}
+
+func TestStaleDisconnectedRelayDoesNotHideRPCOwner(t *testing.T) {
+	history := filepath.Join(t.TempDir(), "history.jsonl")
+	if err := os.WriteFile(history, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rpc := SessionSpec{ID: "rpc-session", SessionPath: history, Transport: "rpc"}
+	relay := SessionSpec{ID: "relay-session", SessionPath: history, Transport: "relay"}
+	specs := []SessionSpec{rpc, relay}
+	s := newTestServer(t, "")
+	s.external.register(relay.ID, ".", "", history, "bridge")
+	s.external.mu.Lock()
+	s.external.sessions[relay.ID].RelayConnected = false
+	s.external.sessions[relay.ID].UpdatedAt = time.Now().Add(-2 * time.Minute)
+	s.external.mu.Unlock()
+
+	preferred := s.preferredServerSession(MachineSession{Path: history}, specs)
+	if preferred == nil || preferred.ID != rpc.ID {
+		t.Fatalf("preferred session = %#v, want RPC after relay became stale", preferred)
+	}
+	if s.hideDuplicateSessionSpec(rpc, specs) {
+		t.Fatal("stale disconnected relay hid the RPC owner")
 	}
 }
 

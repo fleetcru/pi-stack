@@ -12,6 +12,35 @@ import (
 	"testing"
 )
 
+func TestAdminEmptyCWDFallsBackToLaunchDir(t *testing.T) {
+	dataDir := t.TempDir()
+	launchDir := t.TempDir()
+	t.Setenv("PI_SERVER_DATA_DIR", dataDir)
+	// Simulate launching from a specific directory (os.Getwd() fallback).
+	t.Chdir(launchDir)
+	base := ConfigFromEnv()
+	settings := settingsFromConfig(base)
+	if settings.CWD != launchDir {
+		t.Fatalf("launch dir should be the cwd default, got %q", settings.CWD)
+	}
+	// Persist with an EMPTY cwd to signal "use the launch directory".
+	settings.CWD = ""
+	if err := writeJSONAtomic(filepath.Join(dataDir, adminConfigFilename), settings); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reload: now launch from a DIFFERENT directory.
+	other := t.TempDir()
+	t.Chdir(other)
+	cfg := ConfigFromEnv()
+	if cfg.CWD != other {
+		t.Fatalf("empty persisted cwd should fall back to launch dir %q, got %q", other, cfg.CWD)
+	}
+	if cfg.AdminConfigError != "" {
+		t.Fatalf("unexpected admin config error: %s", cfg.AdminConfigError)
+	}
+}
+
 func TestAdminSettingsOverrideEnvironment(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("PI_SERVER_DATA_DIR", dataDir)

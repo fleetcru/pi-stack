@@ -85,7 +85,9 @@ func New(cfg Config, logger *slog.Logger) *Server {
 	s.external.onLifecycle = func(sessionID, eventType string) {
 		if eventType == "agent_start" {
 			s.observeDistributedRun(sessionID, "relay:"+sessionID, "relay")
-		} else {
+		} else if eventType == "agent_settled" {
+			// agent_end may be followed by automatic retry, compaction, or a queued
+			// continuation. Only settled means the relay run slot is reusable.
 			s.releaseDistributedRun(sessionID)
 		}
 	}

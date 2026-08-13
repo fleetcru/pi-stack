@@ -1,7 +1,7 @@
 import { useState } from "react"
-import { GitBranch } from "lucide-react"
+import { ChevronDown, GitBranch } from "lucide-react"
 
-import type { ApiSession, RpcResponse } from "@/api/client"
+import type { ApiSession, GitFileChange, RpcResponse } from "@/api/client"
 import {
   useFileTree,
   usePiServerClient,
@@ -252,6 +252,7 @@ function Workspace({ session }: { session: ApiSession }) {
               <Row label="Staged" value={String(status?.staged.length ?? 0)} />
               <Row label="Modified" value={String(status?.modified.length ?? 0)} />
               <Row label="Untracked" value={String(status?.untracked.length ?? 0)} />
+              <ChangedFiles changes={status?.changes} onPick={setSelectedPath} />
               {git.isError && <p className="text-destructive">Git status unavailable.</p>}
               <div className="space-y-1 border-t border-border/60 pt-2">
                 <Input placeholder="commit message" value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} />
@@ -479,6 +480,90 @@ function Settings({ session }: { session: ApiSession }) {
         </Section>
       </div>
     </ScrollArea>
+  )
+}
+
+// Short human labels for the porcelain status letter returned as GitFileChange.status.
+const CHANGE_LABELS: Record<string, string> = {
+  M: "modified", A: "added", D: "deleted", R: "renamed", "?": "untracked",
+  U: "conflict", T: "type change", C: "copied",
+}
+
+function statusLabel(status: string): string {
+  return CHANGE_LABELS[status] ?? status
+}
+
+// statusTone returns a tailwind text color per status for a quick scan.
+function statusTone(status: string): string {
+  switch (status) {
+    case "A": case "C": return "text-emerald-500"
+    case "D": case "U": return "text-red-500"
+    case "?": return "text-amber-500"
+    case "R": case "T": return "text-sky-500"
+    default: return "text-foreground/80"
+  }
+}
+
+function ChangedFiles({
+  changes,
+  onPick,
+}: {
+  changes: GitFileChange[] | undefined
+  onPick: (path: string) => void
+}) {
+  // Deliberately simple + dependency-free: an explicit controlled toggle that
+  // conditionally renders the list. Avoids relying on any collapsible/animation
+  // library so collapse always works regardless of CSS/transition setup.
+  const [open, setOpen] = useState(false)
+  const count = changes?.length ?? 0
+  return (
+    <div className="space-y-1">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between text-xs font-medium text-foreground/90 hover:text-foreground"
+      >
+        <span className="flex items-center gap-1.5">
+          <ChevronDown className={cn("size-3.5 transition-transform", !open && "-rotate-90")} />
+          Changed files
+        </span>
+        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
+          {count}
+        </span>
+      </button>
+      {open && (
+        <div>
+          {count === 0 ? (
+            <p className="py-1 text-muted-foreground">No changes</p>
+          ) : (
+            <ul className="space-y-0.5">
+              {changes?.map((change) => (
+                <li key={change.path}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded px-1 py-1 text-left text-xs hover:bg-muted/40"
+                    title={`${change.path} (${statusLabel(change.status)})`}
+                    onClick={() => onPick(change.path)}
+                  >
+                    <span className={`shrink-0 font-semibold ${statusTone(change.status)}`}>
+                      {change.status}
+                    </span>
+                    {change.additions > 0 || change.deletions > 0 ? (
+                      <span className="shrink-0 tabular-nums text-muted-foreground">
+                        <span className="text-emerald-600">+{change.additions}</span>
+                        <span className="text-red-600">−{change.deletions}</span>
+                      </span>
+                    ) : null}
+                    <span className="min-w-0 flex-1 truncate">{change.path}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 

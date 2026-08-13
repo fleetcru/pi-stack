@@ -26,6 +26,17 @@ type createSessionRequest struct {
 	Labels       []string          `json:"labels"`
 	Metadata     map[string]string `json:"metadata"`
 	WorktreePath string            `json:"worktreePath"`
+	// CreateWorktree auto-creates an isolated git worktree (with its own feature
+	// branch) for this session and sets cwd to it. Cannot be combined with an
+	// explicit WorktreePath.
+	CreateWorktree *createWorktreeOptions `json:"createWorktree"`
+}
+
+// createWorktreeOptions controls automatic per-session worktree isolation. When
+// Enabled, the session runs in a fresh feature branch in an isolated directory,
+// so agent edits never touch the working tree the developer is standing in.
+type createWorktreeOptions struct {
+	Enabled bool `json:"enabled"`
 }
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +126,69 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		// reporting filesystem cleanup failure for operational follow-up.
 		s.logger.Warn("failed to remove managed Pi session directory", "session", id, "error", err)
 	}
+	if spec.WorktreePath != "" {
+		if err := s.removeOwnedWorktree(spec); err != nil {
+			s.logger.Warn("failed to remove session worktree", "session", id, "worktree", spec.WorktreePath, "error", err)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
+}
+
+// removeOwnedWorktree removes a linked worktree recorded on a SessionSpec. It
+// only proceeds when the worktree is genuinely registered with the session's
+// repository, so we never delete a directory the server does not own.
+func (s *Server) removeOwnedWorktree(spec SessionSpec) error {
+	known, err := s.gitWorktrees(context.Background(), spec.CWD)
+	if err != nil {
+		return err
+	}
+	match := ""
+	for _, item := range known {
+		itemAbs, _ := filepath.Abs(filepath.Clean(item.Path))
+		if filepath.Clean(itemAbs) == filepath.Clean(spec.WorktreePath) {
+			match = itemAbs
+			break
+		}
+	}
+	if match == "" {
+		return nil // not registered as a worktree we own; leave it alone
+	}
+	if _, err := os.Stat(match); err != nil {
+		// Directory already gone; just prune the git bookkeeping.
+		_, _ = s.runGit(context.Background(), spec.CWD, "worktree", "prune")
+		return nil
+	}
+	if _, err := s.runGit(context.Background(), spec.CWD, "worktree", "remove", match); err != nil {
+		// On Git for Windows, worktree metadata files carry read-only attributes and
+		// `git worktree remove` can fail with "Permission denied" even on a clean
+		// checkout. Fall back to a forced filesystem cleanup, then prune + delete
+		// the now-orphaned branch.
+		s.clearReadOnlyTree(match)
+		if rmErr := os.RemoveAll(match); rmErr != nil {
+			return rmErr
+		}
+		_, _ = s.runGit(context.Background(), spec.CWD, "worktree", "prune")
+		if branch := spec.Metadata["worktreeBranch"]; branch != "" {
+			_, _ = s.runGit(context.Background(), spec.CWD, "branch", "-D", branch)
+		}
+	}
+	_, _ = s.runGit(context.Background(), spec.CWD, "worktree", "prune")
+	return nil
+}
+
+// clearReadOnlyTree recursively clears the read-only attribute so os.RemoveAll
+// can delete a worktree's metadata on Windows.
+func (s *Server) clearReadOnlyTree(root string) {
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.Type().IsRegular() {
+			_ = os.Chmod(path, 0o644)
+		}
+		return nil
+	})
+	_ = err
 }
 
 func (s *Server) linkManagedSession(spec SessionSpec) {
@@ -151,19 +224,35 @@ func (s *Server) buildSessionSpec(req createSessionRequest) (SessionSpec, error)
 	if err != nil {
 		return SessionSpec{}, err
 	}
-	worktreePath := ""
-	if req.WorktreePath != "" {
-		worktreePath, err = s.validateWorktreePath(cwd, req.WorktreePath, true)
-		if err != nil {
-			return SessionSpec{}, err
-		}
-		cwd = worktreePath
-	}
 	id := req.ID
 	if id == "" {
 		id = NewSessionID()
 	} else if !validSessionID(id) {
 		return SessionSpec{}, fmt.Errorf("session id may contain only letters, numbers, hyphens, and underscores")
+	}
+	worktreePath := ""
+	if req.CreateWorktree != nil && req.CreateWorktree.Enabled {
+		if req.WorktreePath != "" {
+			return SessionSpec{}, fmt.Errorf("createWorktree cannot be combined with an explicit worktreePath")
+		}
+		// Auto-create an isolated worktree + feature branch so agent edits never
+		// touch the primary working tree. Title (or session id) seeds the branch.
+		createdPath, branchName, err := s.createAutoWorktree(context.Background(), cwd, req.Title)
+		if err != nil {
+			return SessionSpec{}, fmt.Errorf("createWorktree: %w", err)
+		}
+		worktreePath = createdPath
+		cwd = createdPath
+		if req.Metadata == nil {
+			req.Metadata = map[string]string{}
+		}
+		req.Metadata["worktreeBranch"] = branchName
+	} else if req.WorktreePath != "" {
+		worktreePath, err = s.validateWorktreePath(cwd, req.WorktreePath, true)
+		if err != nil {
+			return SessionSpec{}, err
+		}
+		cwd = worktreePath
 	}
 	args := append([]string{}, req.Args...)
 	managedSessionDir := ""

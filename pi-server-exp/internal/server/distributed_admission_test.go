@@ -89,6 +89,12 @@ func TestDistributedAdmissionReleasesFromRelayLifecycle(t *testing.T) {
 		t.Fatal("duplicate relay run admitted")
 	}
 	s.external.register("relay-one", t.TempDir(), "", "", "lease")
+	if !s.external.publish("relay-one", RPCEvent{"type": "agent_end"}) {
+		t.Fatal("could not publish agent_end")
+	}
+	if s.admission.Active() != 1 {
+		t.Fatalf("agent_end released admission before the run settled: active=%d", s.admission.Active())
+	}
 	if !s.external.publish("relay-one", RPCEvent{"type": "agent_settled"}) {
 		t.Fatal("could not publish lifecycle")
 	}

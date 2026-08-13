@@ -64,8 +64,8 @@ func (a AdminSettings) apply(cfg *Config) error {
 	if _, _, err := net.SplitHostPort(a.Addr); err != nil {
 		return fmt.Errorf("addr must be host:port: %w", err)
 	}
-	if a.PiBinary == "" || a.CWD == "" || a.DataDir == "" {
-		return errors.New("piBinary, cwd, and dataDir must not be empty")
+	if a.PiBinary == "" || a.DataDir == "" {
+		return errors.New("piBinary and dataDir must not be empty")
 	}
 	for name, value := range map[string]int{
 		"maxSessions": a.MaxSessions, "maxActiveRuns": a.MaxActiveRuns, "maxRunsPerSession": a.MaxRunsPerSession,
@@ -76,7 +76,16 @@ func (a AdminSettings) apply(cfg *Config) error {
 			return fmt.Errorf("%s must be >= 0", name)
 		}
 	}
-	cfg.Addr, cfg.PiBinary, cfg.Extensions, cfg.CWD, cfg.DataDir = a.Addr, a.PiBinary, cloneStrings(a.Extensions), a.CWD, a.DataDir
+	cfg.Addr = a.Addr
+	cfg.PiBinary = a.PiBinary
+	cfg.Extensions = cloneStrings(a.Extensions)
+	if a.CWD != "" {
+		// An empty persisted cwd means "use the launch directory" (whatever
+		// PI_SERVER_CWD or os.Getwd resolved to), so a portable admin config
+		// does not pin the server to a single checkout.
+		cfg.CWD = a.CWD
+	}
+	cfg.DataDir = a.DataDir
 	cfg.AllowedOrigins, cfg.AllowedRoots, cfg.AllowedWorkerHosts = cloneStrings(a.AllowedOrigins), cloneStrings(a.AllowedRoots), cloneStrings(a.AllowedWorkerHosts)
 	cfg.ShutdownTimeout, cfg.RequestTimeout, cfg.ReadTimeout, cfg.WriteTimeout, cfg.IdleTimeout = parsed[0], parsed[1], parsed[2], parsed[3], parsed[4]
 	cfg.MaxSessions, cfg.MaxActiveRuns, cfg.MaxRunsPerSession, cfg.MaxRunsPerWorker, cfg.MaxQueuedRuns = a.MaxSessions, a.MaxActiveRuns, a.MaxRunsPerSession, a.MaxRunsPerWorker, a.MaxQueuedRuns

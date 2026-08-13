@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
-import { GitBranch } from "lucide-react"
+import { ChevronDown, GitBranch, ExternalLink } from "lucide-react"
 
-import type { ApiSession, RpcResponse } from "@/api/client"
+import type { ApiSession, GitFileChange, RpcResponse } from "@/api/client"
 import {
   useFileTree,
   usePiServerClient,
@@ -20,7 +20,228 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { cn } from "@/lib/utils"
 import { useState as useStateInspector } from "react"
+
+type GitStatusShape = NonNullable<
+  ReturnType<typeof useSessionGitStatus>["data"]
+>["status"]
+
+interface GitQuickAction {
+  label: string
+  hint?: string
+  disabled: boolean
+  kind: "commit-push" | "push" | "commit" | "create-pr" | "blocked"
+}
+
+// buildGitHubLink returns a deep link for the session's work on GitHub when a
+// repo is resolvable, or null otherwise. On a feature branch it points at a
+// compare view against the default branch so the user can review diff / open a
+// PR; on the default branch (or when nothing is ahead) it points at the repo.
+function buildGitHubLink(status: GitStatusShape | undefined): string | null {
+  if (!status?.githubRepo) return null
+  const branch = status.branch
+  const hasWork = status.isDefault ? false : (status.ahead > 0 || status.behind > 0)
+  if (!branch || !hasWork) {
+    return `https://github.com/${status.githubRepo}`
+  }
+  const base = status.defaultBranch || "main"
+  return `https://github.com/${status.githubRepo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(branch)}`
+}
+
+// resolveGitQuickAction decides the single most useful next step based on the
+// branch state, mirroring T3 Code's gated stacked workflow. Returns a primary
+// action (and an optional disabled hint explaining why it can't run yet).
+function resolveGitQuickAction(status: GitStatusShape | undefined): GitQuickAction {
+  if (!status) {
+    return { label: "Commit", disabled: true, kind: "blocked", hint: "Git status is unavailable." }
+  }
+  const hasBranch = Boolean(status.branch)
+  const hasChanges =
+    status.staged.length + status.modified.length + status.untracked.length > 0
+  const diverge = status.ahead > 0 && status.behind > 0
+  if (!hasBranch) {
+    return {
+      label: "Commit", disabled: true, kind: "blocked",
+      hint: "Create and checkout a branch before committing.",
+    }
+  }
+  if (diverge) {
+    return {
+      label: "Sync branch", disabled: true, kind: "blocked",
+      hint: "Branch has diverged from upstream. Rebase/merge first.",
+    }
+  }
+  if (status.behind > 0) {
+    return {
+      label: "Pull behind", disabled: true, kind: "blocked",
+      hint: `Branch is ${status.behind} commit(s) behind upstream — pull before pushing.`,
+    }
+  }
+  if (hasChanges) {
+    // On a shared/default branch, avoid auto-push; just commit and let the
+    // user push deliberately. On a feature branch push + offer to create a PR.
+    if (status.isDefault) {
+      return { label: "Commit", disabled: false, kind: "commit" }
+    }
+    return { label: "Commit & push", disabled: false, kind: "commit-push" }
+  }
+  if (status.ahead > 0) {
+    if (!status.hasRemote) {
+      return {
+        label: "Push", disabled: true, kind: "blocked",
+        hint: 'Add an "origin" remote before pushing.',
+      }
+    }
+    if (!status.hasUpstream) {
+      return { label: "Push (+ set upstream)", disabled: false, kind: "push" }
+    }
+    return { label: "Push", disabled: false, kind: "push" }
+  }
+  return { label: "Commit", disabled: true, kind: "blocked", hint: "Working tree is clean." }
+}
+
+// Short human labels for the porcelain status letter returned as GitFileChange.status.
+const CHANGE_LABELS: Record<string, string> = {
+  M: "modified", A: "added", D: "deleted", R: "renamed", "?": "untracked",
+  U: "conflict", T: "type change", C: "copied",
+}
+
+function statusLabel(status: string): string {
+  return CHANGE_LABELS[status] ?? status
+}
+
+// statusTone returns a tailwind text color per status for a quick scan.
+function statusTone(status: string): string {
+  switch (status) {
+    case "A": case "C": return "text-emerald-500"
+    case "D": case "U": return "text-red-500"
+    case "?": return "text-amber-500"
+    case "R": case "T": return "text-sky-500"
+    default: return "text-foreground/80"
+  }
+}
+
+function ChangedFiles({
+  changes,
+  onPick,
+}: {
+  changes: GitFileChange[] | undefined
+  onPick: (path: string) => void
+}) {
+  // Deliberately simple + dependency-free: an explicit controlled toggle that
+  // conditionally renders the list. Avoids relying on any collapsible/animation
+  // library so collapse always works regardless of CSS/transition setup.
+  const [open, setOpen] = useState(false)
+  const count = changes?.length ?? 0
+  return (
+    <div className="space-y-1">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between text-xs font-medium text-foreground/90 hover:text-foreground"
+      >
+        <span className="flex items-center gap-1.5">
+          <ChevronDown className={cn("size-3.5 transition-transform", !open && "-rotate-90")} />
+          Changed files
+        </span>
+        <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
+          {count}
+        </span>
+      </button>
+      {open && (
+        <div>
+          {count === 0 ? (
+            <p className="py-1 text-muted-foreground">No changes</p>
+          ) : (
+            <ul className="space-y-0.5">
+              {changes?.map((change) => (
+                <li key={change.path}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded px-1 py-1 text-left text-xs hover:bg-muted/40"
+                    title={`${change.path} (${statusLabel(change.status)})`}
+                    onClick={() => onPick(change.path)}
+                  >
+                    <span className={`shrink-0 font-semibold ${statusTone(change.status)}`}>
+                      {change.status}
+                    </span>
+                    {change.additions > 0 || change.deletions > 0 ? (
+                      <span className="shrink-0 tabular-nums text-muted-foreground">
+                        <span className="text-emerald-600">+{change.additions}</span>
+                        <span className="text-red-600">−{change.deletions}</span>
+                      </span>
+                    ) : null}
+                    <span className="min-w-0 flex-1 truncate">{change.path}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GitQuickActionButton({
+  sessionId,
+  gitStatus,
+  onDone,
+}: {
+  sessionId: string
+  gitStatus: ReturnType<typeof useSessionGitStatus>
+  onDone: () => void
+}) {
+  const client = usePiServerClient()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+  const status = gitStatus.data?.status
+  const action = resolveGitQuickAction(status)
+
+  async function run() {
+    if (action.disabled) return
+    setBusy(true)
+    setError(undefined)
+    try {
+      const branchHint = `auto commit at ${new Date().toLocaleTimeString()}`
+      for (const step of action.kind === "commit-push"
+        ? (["commit", "push"] as const)
+        : action.kind === "push"
+          ? (["push"] as const)
+          : (["commit"] as const)) {
+        if (step === "commit") {
+          await client.commitSessionGit(sessionId, branchHint)
+        } else {
+          await client.pushSessionBranchWithUpstream(sessionId, "origin", status?.branch)
+        }
+      }
+      onDone()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Git action failed")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="space-y-1">
+      <Button
+        size="sm"
+        className="w-full"
+        disabled={action.disabled || busy}
+        onClick={() => void run()}
+      >
+        {busy ? "Working…" : action.label}
+      </Button>
+      {action.hint && !busy && (
+        <p className="text-xs text-muted-foreground">{action.hint}</p>
+      )}
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  )
+}
 
 export function SessionInspector({ session }: { session?: ApiSession }) {
   const [activeTab, setActiveTab] = useStateInspector("overview")
@@ -240,8 +461,24 @@ function Workspace({ session }: { session: ApiSession }) {
           <div className="flex items-center gap-2 text-xs">
             <GitBranch className="size-3.5" />
             <span className="font-medium">{status?.branch || git.data?.output.split("\\n")[0] || "No Git repository"}</span>
+            {status?.isWorktree && (
+              <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600">
+                worktree{status.worktreePath ? " · isolated" : ""}
+              </span>
+            )}
             {status && <span className="ml-auto text-muted-foreground">{status.staged.length + status.modified.length + status.untracked.length} changed</span>}
           </div>
+          {buildGitHubLink(status) && (
+            <a
+              href={buildGitHubLink(status)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline dark:text-blue-400"
+            >
+              <ExternalLink className="size-3" />
+              {status?.isDefault || status?.ahead === 0 ? "View repository" : "Open compare / PR on GitHub"}
+            </a>
+          )}
           <div className="grid grid-cols-5 gap-1">
             {(["status", "diff", "log", "branches", "worktrees"] as const).map((view) => (
               <Button key={view} size="xs" variant={gitView === view ? "default" : "outline"} onClick={() => setGitView(view)}>
@@ -256,6 +493,14 @@ function Workspace({ session }: { session: ApiSession }) {
               <Row label="Staged" value={String(status?.staged.length ?? 0)} />
               <Row label="Modified" value={String(status?.modified.length ?? 0)} />
               <Row label="Untracked" value={String(status?.untracked.length ?? 0)} />
+              <div className="mb-1 space-y-1 border-t border-border/60 pt-2">
+                <GitQuickActionButton
+                  sessionId={session.id}
+                  gitStatus={gitStatus}
+                  onDone={() => void gitStatus.refetch()}
+                />
+              </div>
+              <ChangedFiles changes={status?.changes} onPick={setSelectedPath} />
               {git.isError && <p className="text-destructive">Git status unavailable.</p>}
               <div className="space-y-1 border-t border-border/60 pt-2">
                 <Input placeholder="commit message" value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} />

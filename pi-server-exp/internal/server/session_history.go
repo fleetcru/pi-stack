@@ -303,6 +303,31 @@ const idempotencyTTL = 60 * time.Second
 
 // checkIdempotency returns true if this key was already seen within the TTL
 // window. If not, it records the key and returns false.
+func (s *Server) idempotencySeen(key string) bool {
+	s.idempotencyMu.Lock()
+	defer s.idempotencyMu.Unlock()
+	if s.idempotency == nil {
+		return false
+	}
+	now := time.Now()
+	for k, exp := range s.idempotency {
+		if now.After(exp) {
+			delete(s.idempotency, k)
+		}
+	}
+	exp, ok := s.idempotency[key]
+	return ok && now.Before(exp)
+}
+
+func (s *Server) recordIdempotency(key string) {
+	s.idempotencyMu.Lock()
+	defer s.idempotencyMu.Unlock()
+	if s.idempotency == nil {
+		s.idempotency = make(map[string]time.Time)
+	}
+	s.idempotency[key] = time.Now().Add(idempotencyTTL)
+}
+
 func (s *Server) checkIdempotency(key string) bool {
 	s.idempotencyMu.Lock()
 	defer s.idempotencyMu.Unlock()

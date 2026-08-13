@@ -266,7 +266,10 @@ Companion/Webby
 
 External Pi TUI sessions bridge into pi-server via the `external-session-bridge.ts` extension.
 
-- **Lease rotation:** New bridge detaches old relay. Old relay's read goroutine exits via `isCurrentRelay()` check.
+- **Single process ownership:** Never run an RPC Pi process and a bridged TUI against the same JSONL file. Inventory and Machine Session Discovery must prefer a live relay, because separate Pi processes do not synchronize live state and can corrupt history.
+- **Lifecycle forwarding:** The bridge forwards `agent_start`, `agent_end`, and `agent_settled`; relay admission is released only on `agent_settled`, not the earlier `agent_end`.
+- **Delivery confirmation:** A normal idle relay prompt is acknowledged only after its user `message_start` appears. Pi's extension `sendUserMessage()` is fire-and-forget and does not synchronously throw on an idle/working race.
+- **Lease rotation:** New bridge detaches old relay. Old relay's read goroutine exits via `isCurrentRelay()` check, and WebSocket acknowledgements are bound to the owning relay generation.
 - **Command persistence:** Commands saved synchronously under lock before `enqueue()` returns. Atomic rename prevents truncated stores.
 - **Event ring:** Dual-bound (200 count + 8MB bytes). Matches PiProcess semantics.
 - **Detach/close ordering:** LIFO — close then detach to prevent stale relay from clobbering new one.
@@ -278,6 +281,20 @@ External Pi TUI sessions bridge into pi-server via the `external-session-bridge.
 - **Mobile response:** Companion posts `id`, `cancelled`, `value`, `confirmed`, `selections`, `comment`, and `responseKind`. The server persists an `extension_ui_response` relay command; its command `id` is for acknowledgement and `requestId` identifies the waiting question.
 - **Bridge completion:** The bridge emits `ask:remote-response` back onto Pi's event bus, allowing `ask_user` to close its local overlay and complete the tool call.
 - **Late viewers:** Both local and relay state expose `pendingExtensionUiRequest`, because fresh Companion views intentionally skip old event replay.
+
+### Git Workflows (worktrees & branches)
+
+Per-session isolated git worktrees and a guided commit/push flow, inspired by T3 Code.
+
+- **Auto-worktree on create:** `createSessionRequest.createWorktree.enabled` makes the server create `<repoRoot>/.pi-worktrees/<title>` (sanitized) with a fresh `feature/<title>` branch (numeric `-2`, `-3`… de-conflict) based on the repo default branch. The session `cwd` is set to the worktree and the branch name is recorded in `Metadata["worktreeBranch"]`. Cannot be combined with an explicit `worktreePath` — the server rejects that.
+- **Cleanup on delete:** `deleteSession` calls `removeOwnedWorktree(spec)`, which only removes worktrees genuinely registered with the session's repo. On Git for Windows it falls back to clearing read-only attributes + `os.RemoveAll` + `worktree prune` + `branch -D` because `git worktree remove` fails with "Permission denied" even on a clean checkout.
+- **Branch naming:** `sanitizeFeatureBranchName` preserves an existing `feature/…` prefix (no double `feature/feature/`), keeps slash-namespaces (`docs/readme` → `feature/docs/readme`), falls back to `feature/update`, and `resolveAutoFeatureBranchName` de-conflicts against existing branches (numeric `-2`, `-3`…). Kept local `feature/agent` fallback rather than t3code's `feature/update`.
+- **GitHub open/compare link:** `gitStatus` resolves `origin` via `parseGitHubRepositoryNameWithOwner` / `normalizeGitRemoteURL` (ported from T3 Code, MIT) into `githubRepo`; the inspector renders an "Open compare / PR" link (`/compare/<default>...<branch>`).
+- **Enriched status:** `GET .../git/status?format=json` now returns `hasUpstream`, `hasRemote`, `isDefault`, `isWorktree`, `worktreePath`, `defaultBranch`, `remoteUrl`, `githubRepo`. Clients gate the commit/push flow on these.
+- **Gated stacked flow:** The inspector's `resolveGitQuickAction` computes one primary action (Commit → Commit & push → Push / Push+set-upstream → blocked-with-hint) from branch state. It disables auto-push on default branches and when `origin` is missing or the branch has diverged/fallen behind.
+- **Push with upstream:** `POST .../git/push` accepts `setUpstream` to run `git push -u origin <branch>` in one step for fresh feature branches.
+
+> **Parsing gotcha:** `git for-each-ref --format=%(HEAD)\t%(refname:short)\t%(upstream:short)` emits a literal tab only with `%09`, and pads non-current refs with a leading SPACE. A whole-blob `strings.TrimSpace` (or `TrimSpace` per line) strips that leading space+tab and silently drops the first branch's name. Use `%09` separators and trim only the trailing `\r`/empty fields, not leading whitespace.
 
 ### Event Deduplication
 
@@ -361,3 +378,6 @@ cd pi-companion-exp && ./gradlew :app:testDebugUnitTest
 8. **Don't use `!!` in Compose functions** — causes ClassCastException during recomposition race. Use `?: ""` or `?.let`.
 9. **Don't create new list instances in `_items.update` CAS lambdas** — causes recomposition storms. Reuse existing item references.
 10. **Windows: Child processes need `CREATE_NO_WINDOW`** — set `SysProcAttr{HideWindow: true}` before `cmd.Start()` to prevent CMD popups.
+11. **Git `--format` tabs:** use `%09`, not `\t`, as a `for-each-ref` field separator, and never `TrimSpace` the blob — it eats the first branch's leading-space HEAD padding and silently drops it.
+12. **Windows `git worktree remove` fails with “Permission denied”** even on clean checkouts — `removeOwnedWorktree` falls back to clearing read-only attrs + `os.RemoveAll` + `worktree prune` + `branch -D`.
+13. **`createWorktree.enabled` vs `worktreePath` are mutually exclusive** — the server must reject both set at once, and the auto branch must be recorded in `Metadata["worktreeBranch"]` so delete can clean it up.

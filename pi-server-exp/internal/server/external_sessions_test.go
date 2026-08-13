@@ -1,9 +1,44 @@
 package server
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestRelayPromptIdempotencyRecordsOnlyAcceptedCommands(t *testing.T) {
+	s := newTestServer(t, "")
+	s.external.register("relay", ".", "", "", "bridge")
+	s.external.mu.Lock()
+	s.external.sessions["relay"].Status = "stopped"
+	s.external.mu.Unlock()
+
+	post := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/sessions/relay/prompt", strings.NewReader(`{"message":"hello"}`))
+		req.Header.Set("X-Idempotency-Key", "same-key")
+		w := httptest.NewRecorder()
+		s.sessionPost(w, req)
+		return w
+	}
+	if got := post(); got.Code != http.StatusBadGateway {
+		t.Fatalf("failed enqueue status=%d body=%s", got.Code, got.Body.String())
+	}
+	if s.idempotencySeen("relay:same-key") {
+		t.Fatal("failed relay enqueue consumed idempotency key")
+	}
+
+	s.external.mu.Lock()
+	s.external.sessions["relay"].Status = "idle"
+	s.external.mu.Unlock()
+	if got := post(); got.Code != http.StatusAccepted || strings.Contains(got.Body.String(), `"idempotent":true`) {
+		t.Fatalf("first accepted enqueue status=%d body=%s", got.Code, got.Body.String())
+	}
+	if got := post(); got.Code != http.StatusAccepted || !strings.Contains(got.Body.String(), `"idempotent":true`) {
+		t.Fatalf("duplicate enqueue status=%d body=%s", got.Code, got.Body.String())
+	}
+}
 
 func TestExternalCommandLeaseRejectsStalePollAndAck(t *testing.T) {
 	r := newExternalRegistry(t.TempDir() + "/relay-commands.json")
@@ -49,6 +84,24 @@ func TestExternalCommandLeaseRejectsStalePollAndAck(t *testing.T) {
 	commands, _, authorized = r.commandsFor("external-session", secondLease)
 	if !authorized || len(commands) != 0 {
 		t.Fatalf("acknowledged command remained queued: %#v", commands)
+	}
+}
+
+func TestExternalRegistryGetReturnsRelayLiveness(t *testing.T) {
+	r := newExternalRegistry(t.TempDir() + "/relay-commands.json")
+	_, lease := r.register("session", ".", "", "history.jsonl", "bridge")
+	_, _, _, _, detach, exists, authorized := r.attachRelay("session", lease)
+	if !exists || !authorized {
+		t.Fatal("relay did not attach")
+	}
+	snapshot, ok := r.get("session")
+	if !ok || !snapshot.RelayConnected || snapshot.UpdatedAt.IsZero() {
+		t.Fatalf("get omitted liveness fields: %#v", snapshot)
+	}
+	detach()
+	snapshot, _ = r.get("session")
+	if snapshot.RelayConnected {
+		t.Fatal("detached relay still reported connected")
 	}
 }
 
@@ -103,6 +156,39 @@ func TestRelayLeaseRotationDetachesStaleWebSocket(t *testing.T) {
 	case command := <-firstChannel:
 		t.Fatalf("stale relay received command: %#v", command)
 	default:
+	}
+}
+
+func TestRelayAckRejectsRotatedGeneration(t *testing.T) {
+	r := newExternalRegistry(t.TempDir() + "/relay-commands.json")
+	_, lease := r.register("session", ".", "", "", "bridge")
+	_, _, firstGeneration, _, firstDetach, exists, authorized := r.attachRelay("session", lease)
+	if !exists || !authorized {
+		t.Fatal("first relay did not attach")
+	}
+	if !r.enqueue("session", ExternalCommand{ID: "command-1", Type: "prompt"}) {
+		t.Fatal("enqueue failed")
+	}
+	_, _, secondGeneration, _, secondDetach, exists, authorized := r.attachRelay("session", lease)
+	if !exists || !authorized || secondGeneration == firstGeneration {
+		t.Fatal("replacement relay did not rotate generation")
+	}
+	defer firstDetach()
+	defer secondDetach()
+
+	if r.acknowledgeForRelay("session", firstGeneration, []string{"command-1"}) {
+		t.Fatal("stale relay generation acknowledged a command")
+	}
+	commands, _, authorized := r.commandsFor("session", lease)
+	if !authorized || len(commands) != 1 || commands[0].ID != "command-1" {
+		t.Fatalf("stale ack removed command: %#v", commands)
+	}
+	if !r.acknowledgeForRelay("session", secondGeneration, []string{"command-1"}) {
+		t.Fatal("current relay generation could not acknowledge command")
+	}
+	commands, _, _ = r.commandsFor("session", lease)
+	if len(commands) != 0 {
+		t.Fatalf("acknowledged command remained queued: %#v", commands)
 	}
 }
 

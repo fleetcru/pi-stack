@@ -62,7 +62,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		specs := s.sessions.ListSpecs()
 		filtered := make([]SessionSpec, 0, len(specs))
 		for _, spec := range specs {
-			if !duplicateRelaySpec(spec, specs) {
+			if !s.hideDuplicateSessionSpec(spec, specs) {
 				filtered = append(filtered, spec)
 			}
 		}
@@ -142,7 +142,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	// Build summaries, merging parallel state results.
 	for _, spec := range specs {
-		if duplicateRelaySpec(spec, specs) {
+		if s.hideDuplicateSessionSpec(spec, specs) {
 			continue
 		}
 		sum := localSummaryFromSpec(spec)

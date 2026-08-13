@@ -64,6 +64,16 @@ class SessionDetailViewModel(
   val sendState: StateFlow<SendState> = _sendState.asStateFlow()
   private val _agentWorking = MutableStateFlow(false)
   val agentWorking: StateFlow<Boolean> = _agentWorking.asStateFlow()
+  private var agentWorkingJob: kotlinx.coroutines.Job? = null
+
+  /** Debounced setter for _agentWorking to batch rapid event bursts into one recomposition. */
+  private fun setAgentWorking(value: Boolean, delayMs: Long = 80) {
+    agentWorkingJob?.cancel()
+    agentWorkingJob = viewModelScope.launch {
+      if (delayMs > 0 && value) kotlinx.coroutines.delay(delayMs)
+      _agentWorking.value = value
+    }
+  }
 
   private val _sessionTitle = MutableStateFlow("")
   val sessionTitle: StateFlow<String> = _sessionTitle.asStateFlow()
@@ -89,6 +99,7 @@ class SessionDetailViewModel(
   private var lastClosedExtensionRequestId: String? = null
   private val dismissedExtensionRequestIds = LinkedHashSet<String>()
   private var pendingExtensionAbsentPolls = 0
+  private var externalSession: Boolean? = null
   private val _gitOutput = MutableStateFlow<Pair<String, String>?>(null)
   val gitOutput: StateFlow<Pair<String, String>?> = _gitOutput.asStateFlow()
   private val _gitChanges = MutableStateFlow<List<GitFileChange>>(emptyList())
@@ -235,6 +246,10 @@ class SessionDetailViewModel(
   }
 
   private fun connect() {
+    // Manual/settings/network reconnects must replace, not race, a scheduled
+    // backoff reconnect that could otherwise open a second ticketed stream.
+    reconnectJob?.cancel()
+    reconnectJob = null
     // A reconnect must not let buffered tokens from the old socket append to
     // the first assistant message received on the new socket.
     assistantFlushJob?.cancel()
@@ -244,12 +259,12 @@ class SessionDetailViewModel(
     synchronized(pendingAssistantDeltas) {
       val remaining = pendingAssistantDeltas.toString()
       pendingAssistantDeltas.clear()
-      if (remaining.isNotEmpty() && assistantTextOpen) {
+      if (remaining.isNotEmpty()) {
         // Append to the existing assistant bubble instead of creating a new one.
         _items.update { current ->
-          val index = current.indexOfLast {
+          val index = if (assistantTextOpen) current.indexOfLast {
             it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
-          }
+          } else -1
           if (index >= 0) {
             val existing = current.getOrNull(index) as? SessionTimelineItem.Chat
             if (existing != null) {
@@ -264,6 +279,7 @@ class SessionDetailViewModel(
           }
         }
       }
+      assistantTextOpen = false
     }
     toolFlushJob?.cancel()
     toolFlushJob = null
@@ -299,15 +315,13 @@ class SessionDetailViewModel(
       launch { loadHistory() }
       relayHealthJob?.cancel()
       relayHealthJob = launch {
-        // Poll once to check if this is an external (relay) session. If not,
-        // skip the polling loop entirely — local RPC sessions get state from
-        // the WebSocket stream, not HTTP polling.
-        refreshRelayHealth()
-        if (_relayHealth.value != null) {
-          while (!closed) {
-            delay(5_000)
-            refreshRelayHealth()
-          }
+        // Retry an inconclusive first state request instead of permanently
+        // disabling relay health/pending-dialog recovery after one network
+        // hiccup. Stop only after a successful response proves this is local.
+        var external: Boolean? = null
+        while (!closed && external != false) {
+          external = refreshRelayHealth()
+          if (external != false) delay(5_000)
         }
       }
 
@@ -330,9 +344,13 @@ class SessionDetailViewModel(
           }
           is SocketEvent.EventsLost -> {
             appendItem(SessionTimelineItem.System("Connection missed session events; restoring conversation history"))
-            activeServer?.let { server ->
-              launch { loadHistory(); openTicketedStream(server, null) }
-            }
+            // Use one reconnect path and resume from the last event actually
+            // delivered to this ViewModel. Opening with null requested a full
+            // ring replay and raced the normal backoff reconnect.
+            reconnectJob?.cancel()
+            reconnectJob = null
+            viewModelScope.launch { loadHistory() }
+            scheduleReconnect(immediate = true)
           }
           is SocketEvent.Disconnected -> {
             _connectionState.value = ConnectionState.Disconnected(event.reason)
@@ -456,12 +474,13 @@ class SessionDetailViewModel(
     }
   }
 
-  private suspend fun refreshRelayHealth() {
-    val server = activeServer ?: return
-    when (val result = withContext(Dispatchers.IO) { client.getSessionState(server, sessionId) }) {
+  private suspend fun refreshRelayHealth(): Boolean? {
+    val server = activeServer ?: return null
+    return when (val result = withContext(Dispatchers.IO) { client.getSessionState(server, sessionId) }) {
       is com.example.picompanion.data.api.HttpResult.Success -> {
-        val state = result.value["data"] as? JsonObject ?: return
+        val state = result.value["data"] as? JsonObject ?: return null
         val external = state["external"]?.jsonPrimitive?.booleanOrNull == true
+        externalSession = external
         _relayHealth.value = if (external) RelayHealth(
           connected = state["relayConnected"]?.jsonPrimitive?.booleanOrNull == true,
           latencyMs = state["relayLatencyMs"]?.jsonPrimitive?.longOrNull,
@@ -492,8 +511,9 @@ class SessionDetailViewModel(
             pendingExtensionAbsentPolls = 0
           }
         }
+        external
       }
-      is com.example.picompanion.data.api.HttpResult.Failure -> Unit
+      is com.example.picompanion.data.api.HttpResult.Failure -> null
     }
   }
 
@@ -556,6 +576,9 @@ class SessionDetailViewModel(
           receivedAssistantTextInMessage = false
           assistantTextOpen = false
           _streamingAssistantOrder.value = 0
+          // Reset the turn guard so streaming deltas for this new turn are not
+          // dropped by the stale-delta check in appendAssistantDelta.
+          turnCompleteGeneration = 0
           return
         }
         if (role == "user") {
@@ -730,20 +753,29 @@ class SessionDetailViewModel(
         return
       }
       "bridge_receipt" -> {
-        _sendState.value = SendState.Delivered
+        if (raw.getString("status") == "failed") {
+          _sendState.value = SendState.Failed("The TUI could not accept this message")
+          _agentWorking.value = false
+        } else {
+          _sendState.value = SendState.Delivered
+        }
         return
       }
       "agent_start", "agent_end", "agent_settled", "turn_start", "turn_end" -> {
         if (type == "agent_start" && pendingPromptIds.isNotEmpty()) {
           _sendState.value = SendState.Running
-          _agentWorking.value = true
+          setAgentWorking(true)
         }
-        if (type == "agent_settled" || type == "agent_end") {
+        // A relay agent_end may be followed by automatic retry, compaction, or
+        // queued continuation. Keep its UI running until agent_settled, matching
+        // the server's relay admission lifecycle.
+        val relaySession = externalSession == true
+        if (type == "agent_settled" || (type == "agent_end" && !relaySession)) {
           pendingPromptIds.clear()
           promptReconcileJob?.cancel()
           promptReconcileJob = null
           _sendState.value = SendState.Idle
-          _agentWorking.value = false
+          setAgentWorking(false, delayMs = 0)
           turnCompleteGeneration++
         }
         return
@@ -755,8 +787,10 @@ class SessionDetailViewModel(
         // fires between now and when this state is applied, the generation
         // will have advanced and we skip re-enabling the spinner.
         val gen = turnCompleteGeneration
-        _agentWorking.value = (state == "working" || state == "starting" || state == "reconnecting")
-          && gen == turnCompleteGeneration
+        setAgentWorking(
+          (state == "working" || state == "starting" || state == "reconnecting")
+            && gen == turnCompleteGeneration,
+        )
         if (state == "idle" || state == "stopped" || state == "failed") {
           _sendState.value = SendState.Idle
         }
@@ -936,11 +970,11 @@ class SessionDetailViewModel(
         pendingAssistantDeltas.clear()
         s
       }
-      if (remaining.isNotEmpty() && assistantTextOpen) {
+      if (remaining.isNotEmpty()) {
         _items.update { current ->
-          val index = current.indexOfLast {
+          val index = if (assistantTextOpen) current.indexOfLast {
             it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
-          }
+          } else -1
           if (index >= 0) {
             val existing = current[index] as SessionTimelineItem.Chat
             current.toMutableList().also {
@@ -1395,11 +1429,18 @@ class SessionDetailViewModel(
     viewModelScope.launch {
       _refreshing.value = true
       try {
-        loadMetadata()
-        loadHistory()
-        refreshRelayHealth()
-        if (_connectionState.value is ConnectionState.Disconnected || _connectionState.value is ConnectionState.Error) {
-          reconnect()
+        val broken = _connectionState.value is ConnectionState.Disconnected || _connectionState.value is ConnectionState.Error
+        if (broken) {
+          // Full reconnection path: reset stuck spinner/send state, flush
+          // buffered deltas, and reopen the stream. Using reconnect() here
+          // left _agentWorking/_sendState stuck, disabling the send button.
+          connect()
+        } else {
+          // Connection is healthy: just reload the latest history snapshot
+          // without disrupting the live stream.
+          loadMetadata()
+          loadHistory()
+          refreshRelayHealth()
         }
       } finally {
         _refreshing.value = false

@@ -11,6 +11,16 @@ describe("IncrementalTimeline", () => {
     expect(reducer.update([first, second])).toMatchObject([{ kind: "assistant", text: "hello world" }])
   })
 
+  it("marks the assistant message as streaming until message_end", () => {
+    const reducer = new IncrementalTimeline()
+    const start = { type: "message_start", _daemonEventId: 1, message: { role: "assistant", timestamp: 1 } }
+    const delta = { type: "message_update", _daemonEventId: 2, assistantMessageEvent: { type: "text_delta", delta: "hi" } }
+    const end = { type: "message_end", _daemonEventId: 3 }
+    // update() expects the cumulative window; passing the tail keeps the cursor.
+    expect(reducer.update([start, delta])).toMatchObject([{ kind: "assistant", text: "hi", streaming: true }])
+    expect(reducer.update([delta, end])).toMatchObject([{ kind: "assistant", text: "hi", streaming: false }])
+  })
+
   it("updates tool entities in place", () => {
     const reducer = new IncrementalTimeline()
     const events = [

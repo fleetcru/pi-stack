@@ -141,7 +141,7 @@ func (s *Server) listMachineSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	specs := s.sessions.ListSpecs()
 	for i := range items {
-		if spec := matchingServerSession(items[i], specs); spec != nil {
+		if spec := s.preferredServerSession(items[i], specs); spec != nil {
 			items[i].ServerSessionID = spec.ID
 		}
 	}
@@ -184,6 +184,56 @@ func duplicateRelaySpec(spec SessionSpec, specs []SessionSpec) bool {
 		return false
 	}
 	return matchingServerSession(MachineSession{Path: spec.SessionPath}, specs) != nil
+}
+
+func sessionSpecsShareHistory(a, b SessionSpec) bool {
+	if a.SessionPath == "" && b.SessionPath == "" {
+		return false
+	}
+	if a.SessionPath != "" && b.SessionPath != "" && canonicalPath(a.SessionPath) == canonicalPath(b.SessionPath) {
+		return true
+	}
+	if a.SessionPath != "" && b.ManagedSessionDir != "" && canonicalPath(filepath.Dir(a.SessionPath)) == canonicalPath(b.ManagedSessionDir) {
+		return true
+	}
+	if b.SessionPath != "" && a.ManagedSessionDir != "" && canonicalPath(filepath.Dir(b.SessionPath)) == canonicalPath(a.ManagedSessionDir) {
+		return true
+	}
+	return false
+}
+
+func (s *Server) liveRelaySpecForHistory(spec SessionSpec, specs []SessionSpec) *SessionSpec {
+	const relayFreshness = 90 * time.Second
+	for i := range specs {
+		candidate := &specs[i]
+		if candidate.Transport != "relay" || !sessionSpecsShareHistory(*candidate, spec) {
+			continue
+		}
+		relay, ok := s.external.get(candidate.ID)
+		if ok && (relay.RelayConnected || time.Since(relay.UpdatedAt) <= relayFreshness) {
+			return candidate
+		}
+	}
+	return nil
+}
+
+// preferredServerSession prevents Machine Session Discovery from starting a
+// second RPC process for a JSONL file already owned by a live bridged TUI.
+func (s *Server) preferredServerSession(machine MachineSession, specs []SessionSpec) *SessionSpec {
+	probe := SessionSpec{SessionPath: machine.Path}
+	if relay := s.liveRelaySpecForHistory(probe, specs); relay != nil {
+		return relay
+	}
+	return matchingServerSession(machine, specs)
+}
+
+// hideDuplicateSessionSpec presents the live TUI relay as the canonical owner
+// when an unsafe legacy RPC+relay duplicate already exists for one JSONL file.
+func (s *Server) hideDuplicateSessionSpec(spec SessionSpec, specs []SessionSpec) bool {
+	if relay := s.liveRelaySpecForHistory(spec, specs); relay != nil {
+		return spec.ID != relay.ID
+	}
+	return duplicateRelaySpec(spec, specs)
 }
 
 func (s *Server) openMachineSession(w http.ResponseWriter, r *http.Request, machineID string) {
@@ -232,7 +282,7 @@ func (s *Server) openMachineSession(w http.ResponseWriter, r *http.Request, mach
 	// the same persisted JSONL session. Resolve bridge symlinks before matching:
 	// native discovery prefers the symlink while managed specs store its target
 	// directory, and comparing the unresolved paths created duplicate processes.
-	if spec := matchingServerSession(*found, s.sessions.ListSpecs()); spec != nil {
+	if spec := s.preferredServerSession(*found, s.sessions.ListSpecs()); spec != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"id": spec.ID, "machineSessionId": found.ID, "cwd": spec.CWD, "ws": "/v1/sessions/" + spec.ID + "/ws"})
 		return
 	}
