@@ -7,6 +7,40 @@ import type {
   TimelineRun,
 } from "./types"
 
+// Path segments that should never surface as "File changed:" system messages
+// in the chat. These are git/editor/build/dependency internals that generate a
+// flood of irrelevant file_change events (e.g. .git/*, .wrangler/tmp).
+const NOISE_FILE_SEGMENTS = new Set([
+  ".git",
+  ".wrangler",
+  "node_modules",
+  ".next",
+  ".output",
+  ".turbo",
+  ".cache",
+  ".pnpm-store",
+  ".venv",
+  ".idea",
+  ".vscode",
+  "dist",
+  "build",
+  "coverage",
+  "target",
+  "vendor",
+  "__pycache__",
+])
+
+// Exact filenames (any directory) that should never be reported as file changes.
+const NOISE_FILE_NAMES = new Set([".DS_Store", "Thumbs.db", "desktop.ini"])
+
+/** Returns true for file paths that should be hidden from the change feed. */
+export function isNoiseFilePath(path: string): boolean {
+  const segments = path.replace(/\\/g, "/").split("/")
+  const leaf = segments[segments.length - 1]
+  if (NOISE_FILE_NAMES.has(leaf)) return true
+  return segments.some((segment) => NOISE_FILE_SEGMENTS.has(segment))
+}
+
 /**
  * Extracts plain text from a Pi message content value.
  * Content can be a string or an array of { text: string } parts.
@@ -122,7 +156,7 @@ export class IncrementalTimeline {
       }
     }
 
-    if (event.type === "file_change" && event.path) this.items.push({ id: `file-${String(event._daemonEventId ?? index)}`, kind: "system", text: `File ${event.change ?? "changed"}: ${event.path}`, taskId, runId })
+    if (event.type === "file_change" && event.path && !isNoiseFilePath(event.path)) this.items.push({ id: `file-${String(event._daemonEventId ?? index)}`, kind: "system", text: `File ${event.change ?? "changed"}: ${event.path}`, taskId, runId })
     if (event.type === "tool_execution_start") {
       const id = `tool-${String(event.toolCallId ?? event._daemonEventId ?? index)}`
       this.items.push({ id, kind: "tool", name: String(event.toolName ?? "tool"), done: false, startedAt: typeof event.timestamp === "string" || typeof event.timestamp === "number" ? event.timestamp : undefined, args: typeof event.args === "object" && event.args !== null ? event.args as Record<string, unknown> : undefined, taskId, runId })

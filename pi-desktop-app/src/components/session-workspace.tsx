@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
-import { ArrowUp, Bot, Brain, ChevronRight, Code, Copy, CopyCheck, Folder, ImagePlus, Search, Sparkles, Square, Terminal, X } from "lucide-react"
+import { ArrowUp, Bot, Brain, ChevronRight, CircleCheck, CircleX, Clock3, Copy, CopyCheck, ImagePlus, LoaderCircle, Sparkles, Square, Terminal, X } from "lucide-react"
 import { useImageAttachments } from "@/hooks/use-image-attachments"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/input-group"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message"
 import { ChangedFilesList } from "@/components/changed-files-list"
@@ -442,13 +443,6 @@ function ChatTurn({ item }: { item: TextItem }) {
   )
 }
 
-const toolIcons: Record<string, React.ComponentType<{ className?: string }>> = {
-  terminal: Terminal,
-  code: Code,
-  search: Search,
-  folder: Folder,
-}
-
 function DeferredMarkdown({ text, streaming }: { text: string; streaming?: boolean }) {
   // Hooks must run unconditionally before any early return.
   const [expanded, setExpanded] = useState(() => text.length <= LARGE_RENDER_THRESHOLD)
@@ -515,25 +509,16 @@ function MarkdownResponse({ children }: { children: string }) {
 }
 
 function ToolTurn({ item }: { item: ToolItem }) {
-  const { label, icon } = toolDisplayName(item.name)
-  const IconComponent = toolIcons[icon] ?? Terminal
+  const { label } = toolDisplayName(item.name)
+  const command = toolCommand(item.args)
+  const argumentPreview = formatToolArguments(item.args)
+  const argumentDetails = formatToolArgumentDetails(item.args, command ? ["command", "cmd"] : [])
   const summary = extractToolSummary(item.name, item.args, item.output)
+  const collapsedDetail = command ? formatInlineCommand(command) : argumentPreview || summary
   const duration = toolDuration(item.startedAt, item.endedAt)
   const isRunning = !item.done
   const isFailed = item.failed === true
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle")
-
-  const statusColor = isFailed
-    ? "border-l-red-500"
-    : isRunning
-      ? "border-l-blue-500"
-      : "border-l-emerald-500"
-
-  const statusBg = isFailed
-    ? "bg-red-500/5"
-    : isRunning
-      ? "bg-blue-500/5"
-      : ""
 
   const copyOutput = () => {
     if (!item.output) return
@@ -546,66 +531,109 @@ function ToolTurn({ item }: { item: ToolItem }) {
   return (
     <Collapsible className="w-full">
       <CollapsibleTrigger className="group/tool w-full text-left">
-        <div className={`flex items-center gap-2 rounded-lg border-l-[3px] px-3 py-2 text-xs transition-colors hover:bg-muted/40 ${statusColor} ${statusBg}`}>
-          {isRunning ? (
-            <span className="relative flex size-4 shrink-0 items-center justify-center">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-blue-400 opacity-40" />
-              <IconComponent className="relative size-3.5 text-blue-500" />
-            </span>
-          ) : (
-            <IconComponent className={`size-3.5 shrink-0 ${isFailed ? "text-red-500" : "text-emerald-500"}`} />
+        <div className="flex h-9 items-center gap-3 border-b border-border/50 px-2 font-mono text-xs text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+          <Terminal className="size-4 shrink-0" aria-hidden="true" />
+          <span className="shrink-0 text-sm font-semibold text-foreground">{label}</span>
+          {collapsedDetail && (
+            <span className="min-w-0 flex-1 truncate">{collapsedDetail}</span>
           )}
-          <span className="min-w-0 flex-1 truncate">
-            <span className="font-medium text-foreground/90">{label}</span>
-            {summary && (
-              <span className="ml-1.5 text-muted-foreground">{summary}</span>
+          <span className="flex shrink-0 items-center gap-3">
+            {(duration != null || (isRunning && item.startedAt)) && (
+              <span className="flex items-center gap-1 tabular-nums">
+                <Clock3 className="size-3" aria-hidden="true" />
+                {isRunning && item.startedAt ? <RunningTimer startedAt={item.startedAt} /> : formatDuration(duration!)}
+              </span>
             )}
+            {isRunning ? (
+              <LoaderCircle className="size-4 animate-spin" aria-label="Running" />
+            ) : isFailed ? (
+              <CircleX className="size-4 text-destructive" aria-label="Failed" />
+            ) : (
+              <CircleCheck className="size-4" aria-label="Completed" />
+            )}
+            <ChevronRight className="size-3.5 transition-transform group-data-[state=open]/tool:rotate-90" aria-hidden="true" />
           </span>
-          {duration != null && !isRunning && (
-            <span className="shrink-0 tabular-nums text-muted-foreground">
-              {formatDuration(duration)}
-            </span>
-          )}
-          {isRunning && item.startedAt && (
-            <RunningTimer startedAt={item.startedAt} />
-          )}
-          <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/60 transition-transform group-data-[state=open]/tool:rotate-90" />
         </div>
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="mx-3 mt-1 rounded-lg border border-border/60 bg-muted/20">
+        <div className="mt-2 rounded-xl border border-border/60 px-4 py-3 font-mono text-xs">
+          {command && (
+            <section>
+              <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Command</p>
+              <pre className="max-h-40 overflow-auto leading-5 whitespace-pre-wrap text-foreground/80">{command}</pre>
+            </section>
+          )}
+          {command && (argumentDetails || item.output) && <Separator className="my-3" />}
+          {argumentDetails && (
+            <section>
+              <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Arguments</p>
+              <pre className="max-h-40 overflow-auto leading-5 whitespace-pre-wrap text-foreground/80">{argumentDetails}</pre>
+            </section>
+          )}
+          {argumentDetails && item.output && <Separator className="my-3" />}
           {item.output ? (
-            <>
-              <div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
-                <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                  {isFailed ? "Error output" : "Output"}
-                </span>
-                <button
-                  type="button"
-                  onClick={copyOutput}
-                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                >
-                  {copyState === "copied" ? <><CopyCheck className="size-3" /> Copied</> : <><Copy className="size-3" /> Copy</>}
-                </button>
+            <section>
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{isFailed ? "Error output" : "Output"}</p>
+                <Button type="button" variant="ghost" size="xs" onClick={copyOutput}>
+                  {copyState === "copied" ? <><CopyCheck data-icon="inline-start" />Copied</> : <><Copy data-icon="inline-start" />Copy</>}
+                </Button>
               </div>
-              <pre className="max-h-64 overflow-auto p-3 font-mono text-xs leading-5 whitespace-pre-wrap text-foreground/80">
+              <pre className="max-h-64 overflow-auto leading-5 whitespace-pre-wrap text-foreground/80">
                 {item.output.slice(0, LARGE_TOOL_OUTPUT_THRESHOLD)}
               </pre>
               {item.output.length > LARGE_TOOL_OUTPUT_THRESHOLD && (
-                <p className="border-t border-border/40 px-3 py-1.5 text-[10px] text-muted-foreground">
-                  Output truncated — {Math.ceil(item.output.length / 1024)} KB total
-                </p>
+                <p className="mt-2 text-[10px] text-muted-foreground">Output truncated — {Math.ceil(item.output.length / 1024)} KB total</p>
               )}
-            </>
-          ) : (
-            <p className="px-3 py-3 text-xs text-muted-foreground">
-              {isRunning ? "Waiting for output…" : "No output"}
-            </p>
+            </section>
+          ) : !argumentDetails && (
+            <p className="text-muted-foreground">{isRunning ? "Waiting for output…" : "No output"}</p>
           )}
         </div>
       </CollapsibleContent>
     </Collapsible>
   )
+}
+
+function formatToolArguments(args?: Record<string, unknown>): string {
+  if (!args) return ""
+  return Object.entries(args)
+    .filter(([, value]) => value !== undefined)
+    .slice(0, 3)
+    .map(([key, value]) => `${key}=${formatToolArgumentValue(value)}`)
+    .join("  ")
+}
+
+function formatToolArgumentDetails(args?: Record<string, unknown>, omitKeys: string[] = []): string {
+  if (!args) return ""
+  return Object.entries(args)
+    .filter(([key, value]) => value !== undefined && !omitKeys.includes(key))
+    .map(([key, value]) => `${key}=${formatToolArgumentDetailValue(value)}`)
+    .join("\n")
+}
+
+function toolCommand(args?: Record<string, unknown>): string | undefined {
+  const command = args?.command ?? args?.cmd
+  return typeof command === "string" && command.trim() ? command : undefined
+}
+
+function formatInlineCommand(command: string): string {
+  const singleLine = command.replace(/\s+/g, " ").trim()
+  return singleLine.length > 96 ? `${singleLine.slice(0, 93)}…` : singleLine
+}
+
+function formatToolArgumentDetailValue(value: unknown): string {
+  if (typeof value === "string") return JSON.stringify(value)
+  return JSON.stringify(value) ?? String(value)
+}
+
+function formatToolArgumentValue(value: unknown): string {
+  if (typeof value === "string") {
+    const abbreviated = value.replace(/\s+/g, " ").trim()
+    return JSON.stringify(abbreviated.length > 64 ? `${abbreviated.slice(0, 61)}…` : abbreviated)
+  }
+  const serialized = JSON.stringify(value)
+  return serialized && serialized.length > 64 ? `${serialized.slice(0, 61)}…` : serialized ?? String(value)
 }
 
 /** Live elapsed timer for running tools. Updates every second. */
@@ -621,7 +649,7 @@ function RunningTimer({ startedAt }: { startedAt: string | number }) {
   }, [startMs])
 
   return (
-    <span className="shrink-0 tabular-nums text-blue-500">
+    <span className="tabular-nums">
       {formatDuration(elapsed)}
     </span>
   )

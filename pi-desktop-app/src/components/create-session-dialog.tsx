@@ -26,6 +26,7 @@ export function CreateSessionDialog({
 }) {
   const [cwd, setCwd] = useState("")
   const [title, setTitle] = useState("")
+  const [isolated, setIsolated] = useState(false)
   const [workerId, setWorkerId] = useState("")
   const [workerHealth, setWorkerHealth] = useState<Record<string, string>>({})
   const [args, setArgs] = useState("")
@@ -75,6 +76,7 @@ export function CreateSessionDialog({
     if (!workerId) return
     const input = {
       cwd: cwd.trim(), title: title.trim() || undefined, start: true,
+      createWorktree: isolated ? { enabled: true } : undefined,
       args: args.split(/\s+/).filter(Boolean),
       labels: labels.split(",").map((label) => label.trim()).filter(Boolean),
     }
@@ -85,6 +87,7 @@ export function CreateSessionDialog({
     onOpenChange(false)
     setCwd("")
     setTitle("")
+    setIsolated(false)
   }
 
   return (
@@ -160,6 +163,21 @@ export function CreateSessionDialog({
               onChange={(event) => setTitle(event.target.value)}
               placeholder="Refactor authentication"
             />
+          </label>
+          <label className="flex items-start gap-2 rounded-lg border border-border/70 p-3 text-sm">
+            <input
+              type="checkbox"
+              checked={isolated}
+              onChange={(event) => setIsolated(event.target.checked)}
+              className="mt-0.5 accent-primary"
+            />
+            <span className="grid gap-0.5">
+              <span className="font-medium">Isolated git worktree</span>
+              <span className="text-muted-foreground">
+                Spawn a fresh feature branch in <span className="font-mono">.pi-worktrees/&lt;title&gt;</span> so
+                agent edits never touch your working tree. Cleaned up on session close.
+              </span>
+            </span>
           </label>
           <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="rounded-lg border border-border/70">
             <CollapsibleTrigger className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-medium hover:bg-muted/50">

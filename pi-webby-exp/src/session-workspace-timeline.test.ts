@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { findExtensionRequest, IncrementalTimeline } from "@pi-stack/webby-shared/session-workspace"
+import { findExtensionRequest, IncrementalTimeline, isNoiseFilePath } from "@pi-stack/webby-shared/session-workspace"
 
 describe("IncrementalTimeline", () => {
   it("applies only new deltas and survives a shifted event window", () => {
@@ -46,5 +46,42 @@ describe("IncrementalTimeline", () => {
       request,
       { type: "extension_ui_closed", id: "ask-1" },
     ])).toBeUndefined()
+  })
+
+  it("filters out noise file paths from the change feed", () => {
+    // noise paths (should be hidden)
+    for (const p of [
+      ".git",
+      ".git/index",
+      ".git/config",
+      ".wrangler",
+      ".wrangler/tmp/abc",
+      "node_modules/pkg/index.js",
+      "dist/bundle.js",
+      "build/.DS_Store",
+    ]) {
+      expect(isNoiseFilePath(p), p).toBe(true)
+    }
+    // real user paths (must stay visible)
+    for (const p of [
+      "src/app.tsx",
+      "AGENTS.md",
+      "pi-server-exp/internal/server/git_handlers.go",
+      "README.md",
+    ]) {
+      expect(isNoiseFilePath(p), p).toBe(false)
+    }
+  })
+
+  it("does not emit system items for noise file changes", () => {
+    const reducer = new IncrementalTimeline()
+    const events = [
+      { type: "file_change", _daemonEventId: 1, path: ".git/index", change: "modified" },
+      { type: "file_change", _daemonEventId: 2, path: ".wrangler/tmp/x", change: "modified" },
+      { type: "file_change", _daemonEventId: 3, path: "src/app.tsx", change: "modified" },
+    ]
+    const items = reducer.update(events)
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ kind: "system", text: "File modified: src/app.tsx" })
   })
 })
