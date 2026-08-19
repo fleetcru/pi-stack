@@ -73,7 +73,10 @@ function MessageScrollerItem({
       data-slot="message-scroller-item"
       scrollAnchor={scrollAnchor}
       className={cn(
-        "min-w-0 shrink-0 [contain-intrinsic-size:auto_10rem] [content-visibility:auto]",
+        // Keep message heights fully laid out while scrolling. content-visibility
+        // with a fixed intrinsic height causes tall tool/code messages to change
+        // size as they enter view, fighting the scroller's prepend anchoring.
+        "min-w-0 shrink-0",
         className
       )}
       {...props}
