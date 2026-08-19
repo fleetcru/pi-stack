@@ -52,6 +52,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   let sessionCtx: { model?: unknown; abort: () => void; isIdle?: () => boolean } | undefined;
   let relaySocket: WebSocket | undefined;
   let relayReconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  let relayConnectInFlight = false;
   let abortCurrent: (() => void) | undefined;
   /** Generation counter bumped on every new socket or registration so stale
    *  callbacks (onopen/onclose/onmessage) cannot mutate live state or schedule
@@ -399,15 +400,27 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
 
   // ── WebSocket ─────────────────────────────────────────────────────────
 
-  const connectRelay = () => {
+  const connectRelay = async () => {
     if (stopped || !id || !baseUrl) return;
-    // Guard: don't open a duplicate socket.
-    if (relaySocket?.readyState === WebSocket.OPEN || relaySocket?.readyState === WebSocket.CONNECTING) return;
-    // Require registration + lease before attempting WS so the handshake
-    // never proceeds without a valid lease.
-    if (!registered || !lease) { void register().then((ok) => { if (ok && !stopped) connectRelay(); }); return; }
+    // Guard both the socket and the async registration path. Without the
+    // second guard, polling and reconnect timers can each start registration
+    // and then race to open sockets for different leases.
+    if (relaySocket?.readyState === WebSocket.OPEN || relaySocket?.readyState === WebSocket.CONNECTING || relayConnectInFlight) return;
+    relayConnectInFlight = true;
+    try {
+      // Require registration + lease before attempting WS. Awaiting this
+      // directly avoids the old recursive register().then(connectRelay)
+      // pattern and gives failed registration one explicit retry path.
+      if (!registered || !lease) {
+        const ok = await register();
+        if (!ok || stopped) {
+          relayConnectInFlight = false;
+          if (!stopped) scheduleReconnect();
+          return;
+        }
+      }
 
-    const gen = ++socketGen;
+      const gen = ++socketGen;
 
     // Authenticate via a WebSocket subprotocol instead of a URL query token so
     // the secret stays out of URLs, proxy logs, and process listings. Tokens
@@ -417,7 +430,10 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       // Never put a bearer token in the WebSocket URL. The server deliberately
       // accepts relay credentials only through Sec-WebSocket-Protocol. HTTP
       // polling remains available as the safe fallback for unusual tokens.
+      relayConnectInFlight = false;
       ui?.setStatus("external-session-bridge", "Bridge: connected (HTTP fallback; token is not WebSocket-safe)");
+      // HTTP polling remains the active command transport for tokens that
+      // cannot be represented in a WebSocket subprotocol.
       return;
     }
     const relayQuery = new URLSearchParams({ lease });
@@ -427,6 +443,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       relaySocket = socket;
 
       socket.onopen = async () => {
+        relayConnectInFlight = false;
         // Stale-guard: a newer socket already took over.
         if (gen !== socketGen) return;
         resetBackoff();
@@ -478,6 +495,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       };
 
       socket.onclose = () => {
+        relayConnectInFlight = false;
         if (gen !== socketGen) return; // stale socket — don't mutate state or reschedule
         if (relaySocket === socket) relaySocket = undefined;
         if (!stopped) {
@@ -487,7 +505,10 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       };
 
       socket.onerror = () => socket.close();
-    } catch {
+    } catch (error) {
+      relayConnectInFlight = false;
+      registered = false;
+      ui?.setStatus("external-session-bridge", `Bridge: reconnecting (${error instanceof Error ? error.message : "WebSocket setup failed"})`);
       scheduleReconnect();
     }
   };
@@ -505,13 +526,16 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     if (pollRunning) return;
     pollRunning = true;
     while (!stopped && id) {
+      // The poller is both the fallback transport and the recovery supervisor:
+      // a closed/failed socket must not leave us registered but disconnected.
+      // connectRelay() is guarded against concurrent registration/socket setup.
       if (relaySocket?.readyState === WebSocket.OPEN) {
         await new Promise((resolve) => setTimeout(resolve, 5_000));
         continue;
       }
       try {
         if (!registered && !(await register())) throw new Error("not registered");
-        if (registered && !relaySocket) connectRelay();
+        if (registered && !relaySocket) void connectRelay();
         const response = await request(`/v1/external-sessions/${id}/commands?lease=${encodeURIComponent(lease)}`);
         const data = await response.json() as { commands?: Array<{ id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt"; provider?: string; modelId?: string; level?: string; requestId?: string; value?: string; cancelled?: boolean; confirmed?: boolean; selections?: string[]; comment?: string; responseKind?: string }> };
         for (const command of data.commands ?? []) await deliverCommand(command);
@@ -572,6 +596,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     description: "Disconnect this Pi session from pi-server until the next reconnect",
     handler: async (_args, ctx) => {
       stopped = true;
+      relayConnectInFlight = false;
       socketGen++; // invalidate any outstanding socket callbacks
       relaySocket?.close();
       relaySocket = undefined;
@@ -661,6 +686,11 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     // HTTP polling remains a temporary fallback if a network blocks WebSockets.
     void pollCommands();
     // Emit available models so the server can serve them to companion/webby.
+    // Model discovery is intentionally ordered from most authoritative to
+    // least authoritative: current Pi scope, current Pi model list, the local
+    // models store, then the active model. Reconnect uses the same ordering but
+    // only emits a list with more than one model, so a temporary API gap cannot
+    // overwrite a previously published catalog with a one-item fallback.
     // Try multiple sources: Pi API → models-store.json → active model fallback.
     let modelsEmitted = false;
     const emitModels = async () => {
@@ -718,6 +748,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   });
   pi.on("session_shutdown", async () => {
     stopped = true;
+    relayConnectInFlight = false;
     socketGen++;
     relaySocket?.close();
     relaySocket = undefined;

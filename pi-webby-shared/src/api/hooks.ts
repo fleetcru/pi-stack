@@ -352,9 +352,15 @@ export interface ActiveSessionSocket {
  * Opens exactly one ticket-authenticated socket for the selected session.
  * Rendering this hook with another session ID closes the previous socket.
  */
+export interface ActiveSessionSocketOptions {
+  /** Maximum number of events buffered between socket delivery and UI flush. */
+  maxBufferedEvents?: number
+}
+
 export function useActiveSessionSocket(
   sessionId?: string,
-  watchFiles = false
+  watchFiles = false,
+  options: ActiveSessionSocketOptions = {}
 ): ActiveSessionSocket {
   const client = usePiServerClient()
   const selectedSessionId = useAppStore((state) => state.selectedSessionId)
@@ -368,6 +374,7 @@ export function useActiveSessionSocket(
   const socketRef = useRef<SessionSocket | undefined>(undefined)
   const queryClient = useQueryClient()
   const bufferedEventsRef = useRef<SessionEvent[]>([])
+  const maxBufferedEvents = Math.max(100, options.maxBufferedEvents ?? 4_000)
   // Use a bounded Map rather than copying/slicing a Set. Keep the eviction
   // batch small so a busy event stream never causes a long handler pause.
   const seenEventIdsRef = useRef<Map<number, boolean>>(new Map())
@@ -432,7 +439,7 @@ export function useActiveSessionSocket(
         // Keep burst buffering bounded. If a producer outpaces rendering, do
         // not silently discard events: mark the stream for durable-history
         // reconciliation while retaining lifecycle events in the queue.
-        if (bufferedEventsRef.current.length >= 1_000) {
+        if (bufferedEventsRef.current.length >= maxBufferedEvents) {
           const discardIndex = bufferedEventsRef.current.findIndex((queued) =>
             queued.type === "message_update" ||
             queued.type === "tool_execution_update" ||
@@ -487,7 +494,7 @@ export function useActiveSessionSocket(
       flushTimerRef.current = undefined
       if (socketRef.current === socket) socketRef.current = undefined
     }
-  }, [activeSessionId, client, queryClient, watchFiles])
+  }, [activeSessionId, client, maxBufferedEvents, queryClient, watchFiles])
 
   useEffect(() => {
     if (!activeSessionId) return
