@@ -54,12 +54,21 @@ func (s *Server) sessionMessages(w http.ResponseWriter, r *http.Request, p *PiPr
 		}
 	}
 	var messages []any
-	s.historyMu.Lock()
-	cached, ok := s.historyCache[p.id]
-	if ok && time.Now().Before(cached.expires) {
-		messages = cached.messages
+	status := p.Status()
+	runtimeStatus, _ := status["runtimeStatus"].(map[string]any)
+	runtimeState, _ := runtimeStatus["state"].(string)
+	// During an active turn, the cached transcript may predate the latest
+	// message deltas. Gap recovery must read Pi's current history instead of
+	// re-serving that stale snapshot.
+	useCache := runtimeState == "" || runtimeState == "idle"
+	if useCache {
+		s.historyMu.Lock()
+		cached, ok := s.historyCache[p.id]
+		if ok && time.Now().Before(cached.expires) {
+			messages = cached.messages
+		}
+		s.historyMu.Unlock()
 	}
-	s.historyMu.Unlock()
 	if messages == nil {
 		ctx, cancel := requestContext(r.Context(), s.cfg.RequestTimeout)
 		defer cancel()
@@ -73,10 +82,12 @@ func (s *Server) sessionMessages(w http.ResponseWriter, r *http.Request, p *PiPr
 		messages, _ = data["messages"].([]any)
 		// Cache only modest histories: caching giant transcripts merely moves the
 		// browser memory problem into the daemon.
-		if encoded, err := json.Marshal(messages); err == nil && len(encoded) <= maxCachedHistoryBytes {
-			s.historyMu.Lock()
-			s.historyCache[p.id] = historyCacheEntry{messages: messages, expires: time.Now().Add(20 * time.Second)}
-			s.historyMu.Unlock()
+		if useCache {
+			if encoded, err := json.Marshal(messages); err == nil && len(encoded) <= maxCachedHistoryBytes {
+				s.historyMu.Lock()
+				s.historyCache[p.id] = historyCacheEntry{messages: messages, expires: time.Now().Add(20 * time.Second)}
+				s.historyMu.Unlock()
+			}
 		}
 	}
 	data, _ := resp["data"].(map[string]any)

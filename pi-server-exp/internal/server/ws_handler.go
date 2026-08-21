@@ -53,7 +53,10 @@ func (s *Server) sessionWebSocket(w http.ResponseWriter, r *http.Request, p *PiP
 	// Keep a stalled client from retaining a large backlog of Pi events. Start
 	// the sole writer before queuing replay: a replay may legitimately exceed
 	// this buffer (the configured history defaults to 100 events).
-	out := make(chan any, 32)
+	// Leave room for a burst of small text deltas while the socket writer is
+	// briefly busy with the network. The process subscriber has a larger buffer
+	// as well, so ordinary UI stalls do not lose response fragments.
+	out := make(chan any, 256)
 	done := make(chan struct{})
 	var once sync.Once
 	closeDone := func() { once.Do(func() { close(done) }) }

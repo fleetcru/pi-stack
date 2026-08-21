@@ -214,7 +214,10 @@ func (p *PiProcess) Send(command RPCCommand) error {
 }
 
 func (p *PiProcess) SubscribeSince(since uint64) (<-chan RPCEvent, []EventRecord, func()) {
-	ch := make(chan RPCEvent, 256)
+	// Streaming responses can emit many small text_delta events per second.
+	// Keep enough headroom for brief client/UI stalls without dropping a
+	// character-sized event immediately.
+	ch := make(chan RPCEvent, 2048)
 	p.mu.Lock()
 	p.subs[ch] = struct{}{}
 	replay := make([]EventRecord, 0)
