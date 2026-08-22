@@ -1,5 +1,7 @@
 package server
 
+const remoteStatusTimeout = 5 * time.Second
+
 import (
 	"context"
 	"encoding/json"
@@ -135,7 +137,7 @@ func (s *Server) remoteEventCursor(worker Worker, sessionID string) (uint64, boo
 		return 0, false
 	}
 	base.Path = strings.TrimRight(base.Path, "/") + "/v1/sessions/" + url.PathEscape(sessionID) + "/daemon-status"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), remoteStatusTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
 	if err != nil {
@@ -167,7 +169,7 @@ func (s *Server) remoteRuntimeState(worker Worker, sessionID string) (string, bo
 		return "", false, false
 	}
 	base.Path = strings.TrimRight(base.Path, "/") + "/v1/sessions/" + url.PathEscape(sessionID) + "/daemon-status"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), remoteStatusTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
 	if err != nil {
@@ -218,7 +220,7 @@ func (s *Server) subscribeRemoteRun(worker Worker, remoteSessionID, hubSessionID
 			conn, _, err := websocket.DefaultDialer.Dial(remoteURL, header)
 			if err != nil {
 				time.Sleep(backoff)
-				if backoff < 5*time.Second {
+				if backoff < remoteStatusTimeout {
 					backoff *= 2
 				}
 				continue
