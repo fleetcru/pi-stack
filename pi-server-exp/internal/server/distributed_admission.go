@@ -1,7 +1,5 @@
 package server
 
-const remoteStatusTimeout = 5 * time.Second
-
 import (
 	"context"
 	"encoding/json"
@@ -13,6 +11,8 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+const remoteStatusTimeout = 5 * time.Second
 
 // distributedReservation is the hub's durable record that a remote or relay
 // run occupies admission capacity. The timer is a local recovery guard for
