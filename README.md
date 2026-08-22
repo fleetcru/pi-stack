@@ -53,6 +53,8 @@ The current patch line is **pi-server v0.3.x** and **Pi Companion v1.4.x**.
 
 Deploy pi-server to a remote VPS or your personal machine with a single command.
 
+> **Security note:** the installer is intended for a trusted deployment that you control. Use an explicit `PI_SERVER_AUTH_TOKEN` for internet-facing servers. Only use `--insecure` / `-AllowInsecure` on a loopback, trusted LAN, or authenticated Tailscale network.
+
 ### Linux VPS (DigitalOcean, Hetzner, etc.)
 
 ```bash
@@ -113,6 +115,8 @@ curl -sSL linux.fleetcru.dev | sudo bash -s -- --insecure
 
 ## Quick start (development)
 
+The development launchers bind pi-server to port **3142** and Webby to **5174**. The standalone server default is **3141**, so use the URLs printed by the launcher when testing locally.
+
 ### Prerequisites
 
 - [Go 1.23+](https://go.dev/dl/)
@@ -138,6 +142,14 @@ Opens three windows: pi-server, Webby (Vite dev server), and a Pi TUI terminal.
 ```bash
 chmod +x start-exp-server.sh
 ./start-exp-server.sh
+```
+
+The shell launcher is server-only. To run Webby alongside it, start Vite from `pi-webby-exp`:
+
+```bash
+cd pi-webby-exp
+pnpm install
+pnpm dev -- --host 0.0.0.0 --port 5174
 ```
 
 ### Run with authentication
@@ -177,6 +189,8 @@ All configuration is via environment variables (or CLI flags for the server):
 | `PI_SERVER_PI_BINARY` | `pi` | Path to the Pi CLI executable |
 
 ## Building
+
+Run the checks for the component you changed before opening a pull request. The full validation matrix and code-ownership guidance live in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ### Server
 
@@ -261,6 +275,18 @@ pi-stack/
 ├── install-server.*    # VPS install scripts
 └── install-exp-external-bridge.* # Relay bridge installer
 ```
+
+## Maintenance
+
+Useful repository-level references:
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — setup, validation, review expectations, and safe change patterns
+- [`AGENTS.md`](AGENTS.md) — architecture invariants and subsystem-specific pitfalls
+- [`FEATURES.md`](FEATURES.md) — planned feature proposals (not necessarily implemented)
+- [`REMOTE-SESSION-RECOVERY-PLAN.md`](REMOTE-SESSION-RECOVERY-PLAN.md) — recovery design notes
+- [`findings.md`](findings.md) — investigation notes and known follow-ups
+
+When documentation and behavior disagree, verify the launcher or package manifest first, then update both the README and the relevant detailed guide in the same change.
 
 ## License
 
