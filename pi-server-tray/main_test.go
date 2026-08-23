@@ -5,7 +5,9 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestParseConfig(t *testing.T) {
@@ -66,6 +68,40 @@ func TestParseConfigRejectsEmptyURL(t *testing.T) {
 	t.Setenv("PI_SERVER_DATA_DIR", t.TempDir())
 	if _, err := parseConfig([]string{"--url", ""}); err == nil {
 		t.Fatal("parseConfig() accepted an empty URL")
+	}
+}
+
+func TestQueueDownloadRejectsDuplicate(t *testing.T) {
+	a := &app{}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var runs atomic.Int32
+	run := func() error {
+		runs.Add(1)
+		close(started)
+		<-release
+		return nil
+	}
+	if !a.queueDownload(run) {
+		t.Fatal("first download was rejected")
+	}
+	<-started
+	if a.queueDownload(run) {
+		t.Fatal("duplicate download was queued")
+	}
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for a.downloadQueued.Load() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if runs.Load() != 1 {
+		t.Fatalf("download runs = %d, want 1", runs.Load())
+	}
+}
+
+func TestShutdownTimeoutExceedsStopTimeouts(t *testing.T) {
+	if trayShutdownTimeout <= gracefulStopTimeout+forcedStopTimeout {
+		t.Fatalf("shutdown timeout %s must exceed stop timeout %s", trayShutdownTimeout, gracefulStopTimeout+forcedStopTimeout)
 	}
 }
 

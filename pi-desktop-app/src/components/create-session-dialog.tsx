@@ -31,6 +31,9 @@ export function CreateSessionDialog({
   const [workerHealth, setWorkerHealth] = useState<Record<string, string>>({})
   const [args, setArgs] = useState("")
   const [labels, setLabels] = useState("")
+  const [sessionCount, setSessionCount] = useState(1)
+  const [submitError, setSubmitError] = useState<string>()
+  const [submitting, setSubmitting] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [browsing, setBrowsing] = useState(false)
   const [browserLoading, setBrowserLoading] = useState(false)
@@ -72,22 +75,42 @@ export function CreateSessionDialog({
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
-    if (!cwd.trim()) return
-    if (!workerId) return
-    const input = {
-      cwd: cwd.trim(), title: title.trim() || undefined, start: true,
+    if (!cwd.trim() || !workerId || createSession.isPending || submitting) return
+    setSubmitError(undefined)
+    setSubmitting(true)
+    const count = Math.min(12, Math.max(1, Math.trunc(sessionCount)))
+    const baseInput = {
+      cwd: cwd.trim(), start: true,
       createWorktree: isolated ? { enabled: true } : undefined,
       args: args.split(/\s+/).filter(Boolean),
       labels: labels.split(",").map((label) => label.trim()).filter(Boolean),
     }
-    const session = workerId === "local"
-      ? await createSession.mutateAsync(input)
-      : await client.createWorkerSession(workerId, input)
-    selectSession(session.id)
-    onOpenChange(false)
+    const results = await Promise.allSettled(Array.from({ length: count }, (_, index) => {
+      const baseTitle = title.trim()
+      const sessionTitle = count > 1
+        ? `${baseTitle || "New session"} ${index + 1}`
+        : baseTitle || undefined
+      const input = { ...baseInput, title: sessionTitle }
+      return workerId === "local"
+        ? createSession.mutateAsync(input)
+        : client.createWorkerSession(workerId, input)
+    }))
+    const sessions = results.flatMap((result) => result.status === "fulfilled" ? [result.value] : [])
+    if (sessions.length === 0) {
+      const failure = results.find((result) => result.status === "rejected")
+      setSubmitError(failure?.status === "rejected" && failure.reason instanceof Error ? failure.reason.message : "Could not create sessions")
+      setSubmitting(false)
+      return
+    }
+    selectSession(sessions[sessions.length - 1].id)
+    const partial = sessions.length !== count
+    if (!partial) onOpenChange(false)
     setCwd("")
     setTitle("")
+    setSessionCount(1)
     setIsolated(false)
+    setSubmitting(false)
+    if (partial) setSubmitError(`${sessions.length} of ${count} sessions started`)
   }
 
   return (
@@ -179,6 +202,19 @@ export function CreateSessionDialog({
               </span>
             </span>
           </label>
+          <label className="grid gap-2 text-sm">
+            Number of sessions
+            <Input
+              type="number"
+              min={1}
+              max={12}
+              value={sessionCount}
+              step={1}
+              onChange={(event) => setSessionCount(Math.min(12, Math.max(1, Math.trunc(Number(event.target.value) || 1))))}
+              aria-describedby="session-count-help"
+            />
+            <span id="session-count-help" className="text-xs text-muted-foreground">Start up to 12 identical sessions at once. A number is added to each title.</span>
+          </label>
           <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen} className="rounded-lg border border-border/70">
             <CollapsibleTrigger className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-medium hover:bg-muted/50">
               Advanced options
@@ -195,17 +231,17 @@ export function CreateSessionDialog({
               </label>
             </CollapsibleContent>
           </Collapsible>
-          {createSession.error instanceof Error && (
+          {(submitError || createSession.error instanceof Error) && (
             <p className="text-sm text-destructive">
-              {createSession.error.message}
+              {submitError || (createSession.error instanceof Error ? createSession.error.message : "")}
             </p>
           )}
           <DialogFooter>
             <Button
               type="submit"
-              disabled={createSession.isPending || !cwd.trim() || !workerId}
+              disabled={createSession.isPending || submitting || !cwd.trim() || !workerId}
             >
-              {createSession.isPending ? "Starting…" : "Create session"}
+              {createSession.isPending || submitting ? "Starting…" : sessionCount > 1 ? `Start ${sessionCount} sessions` : "Create session"}
             </Button>
           </DialogFooter>
         </form>

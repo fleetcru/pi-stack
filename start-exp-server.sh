@@ -4,6 +4,7 @@ set -euo pipefail
 # ── Defaults ──────────────────────────────────────────────
 PORT="${PORT:-3142}"
 AUTH_TOKEN="${AUTH_TOKEN:-}"
+ALLOW_INSECURE="${ALLOW_INSECURE:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_DIR="$SCRIPT_DIR/pi-server-exp"
 DATA_DIR="${DATA_DIR:-$SCRIPT_DIR/.data/pi-server}"
@@ -14,11 +15,13 @@ while [[ $# -gt 0 ]]; do
     -p|--port)       PORT="$2"; shift 2 ;;
     -t|--token)      AUTH_TOKEN="$2"; shift 2 ;;
     -d|--data-dir)   DATA_DIR="$2"; shift 2 ;;
+    --allow-insecure) ALLOW_INSECURE=1; shift ;;
     -h|--help)
       echo "Usage: start-exp-server.sh [-p PORT] [-t AUTH_TOKEN] [-d DATA_DIR]"
       echo "  -p, --port       Server port (default: 3142)"
       echo "  -t, --token      Auth token (omit for no auth)"
       echo "  -d, --data-dir   Data directory (default: .data/pi-server)"
+      echo "      --allow-insecure  Bind to the network without a token"
       exit 0 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
@@ -67,7 +70,11 @@ ORIGINS="http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http:
 
 EXTENSION="$SERVER_DIR/extensions/session-title.ts"
 
-export PI_SERVER_ADDR="0.0.0.0:${PORT}"
+BIND_HOST="127.0.0.1"
+if [[ -n "$AUTH_TOKEN" || "$ALLOW_INSECURE" == "1" ]]; then
+  BIND_HOST="0.0.0.0"
+fi
+export PI_SERVER_ADDR="${BIND_HOST}:${PORT}"
 export PI_SERVER_CWD="$SCRIPT_DIR"
 export PI_SERVER_DATA_DIR="$DATA_DIR"
 export PI_SERVER_ALLOWED_ROOTS="$SCRIPT_DIR"
@@ -84,16 +91,18 @@ if [[ -n "$AUTH_TOKEN" ]]; then
   unset PI_SERVER_ALLOW_INSECURE 2>/dev/null || true
 else
   unset PI_SERVER_AUTH_TOKEN 2>/dev/null || true
-  # Allow binding to 0.0.0.0 without auth. Tailscale encrypts and authenticates
-  # the connection, so the pi-server auth token is redundant in that context.
-  export PI_SERVER_ALLOW_INSECURE=1
+  if [[ "$ALLOW_INSECURE" == "1" ]]; then
+    export PI_SERVER_ALLOW_INSECURE=1
+  else
+    unset PI_SERVER_ALLOW_INSECURE 2>/dev/null || true
+  fi
 fi
 
 # ── Launch ────────────────────────────────────────────────
 echo ""
 echo "  pi-server-exp"
 echo "  ────────────────────────────────────"
-echo "  Bind:      0.0.0.0:${PORT}"
+echo "  Bind:      ${BIND_HOST}:${PORT}"
 echo "  Tailscale: http://${TAILSCALE_IP}:${PORT}"
 echo "  Data:      ${DATA_DIR}"
 echo "  Origins:   ${ORIGINS}"

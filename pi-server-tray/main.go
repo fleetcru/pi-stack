@@ -27,21 +27,28 @@ type config struct {
 	serverArgs   []string
 }
 
+const (
+	gracefulStopTimeout = 10 * time.Second
+	forcedStopTimeout   = 2 * time.Second
+	trayShutdownTimeout = 15 * time.Second
+)
+
 type app struct {
 	cfg config
 
-	mu       sync.Mutex
-	startMu  sync.Mutex
-	cmd      *exec.Cmd
-	cmdDone  chan struct{}
-	logFile  *os.File
-	stopping bool
-	done     chan struct{}
-	doneOnce sync.Once
-	exiting  atomic.Bool
-	busy     atomic.Bool
-	ctx      context.Context
-	cancel   context.CancelFunc
+	mu             sync.Mutex
+	startMu        sync.Mutex
+	cmd            *exec.Cmd
+	cmdDone        chan struct{}
+	logFile        *os.File
+	stopping       bool
+	done           chan struct{}
+	doneOnce       sync.Once
+	exiting        atomic.Bool
+	busy           atomic.Bool
+	downloadQueued atomic.Bool
+	ctx            context.Context
+	cancel         context.CancelFunc
 
 	statusItem    *systray.MenuItem
 	versionItem   *systray.MenuItem
@@ -175,12 +182,7 @@ func (a *app) handleMenu(openLogs, openServerFolder, quit *systray.MenuItem) {
 			_ = os.MkdirAll(filepath.Dir(a.cfg.serverPath), 0o755)
 			_ = openTarget(filepath.Dir(a.cfg.serverPath))
 		case <-a.downloadItem.ClickedCh:
-			go func() {
-				if err := a.downloadServer(); err != nil {
-					a.setDownloadInfo("failed: " + err.Error())
-					a.setStatus("Server download failed")
-				}
-			}()
+			a.queueDownload(a.downloadServer)
 		case <-a.startItem.ClickedCh:
 			if err := a.start(); err != nil {
 				a.setStatus("Start failed: " + err.Error())
@@ -199,6 +201,20 @@ func (a *app) handleMenu(openLogs, openServerFolder, quit *systray.MenuItem) {
 			return
 		}
 	}
+}
+
+func (a *app) queueDownload(run func() error) bool {
+	if !a.downloadQueued.CompareAndSwap(false, true) {
+		return false
+	}
+	go func() {
+		defer a.downloadQueued.Store(false)
+		if err := run(); err != nil {
+			a.setDownloadInfo("failed: " + err.Error())
+			a.setStatus("Server download failed")
+		}
+	}()
+	return true
 }
 
 func (a *app) start() error {
@@ -328,7 +344,7 @@ func (a *app) stop() error {
 	select {
 	case <-done:
 		return nil
-	case <-time.After(10 * time.Second):
+	case <-time.After(gracefulStopTimeout):
 	}
 	if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return err
@@ -336,7 +352,7 @@ func (a *app) stop() error {
 	select {
 	case <-done:
 		return nil
-	case <-time.After(2 * time.Second):
+	case <-time.After(forcedStopTimeout):
 		return errors.New("server process did not exit after being killed")
 	}
 }
@@ -448,7 +464,7 @@ func (a *app) onExit() {
 	a.exiting.Store(true)
 	a.cancel()
 	a.doneOnce.Do(func() { close(a.done) })
-	ctx, cancel := context.WithTimeout(context.Background(), 11*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), trayShutdownTimeout)
 	defer cancel()
 	done := make(chan struct{})
 	go func() {

@@ -1,5 +1,7 @@
 # 07 Future Implementation Plan
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 ## Home
 
 Later real data:

@@ -1,23 +1,31 @@
 # Pi-Stack Comprehensive Audit — Findings
 
-**Date:** 2025-07-30
-**Scope:** Bugs & correctness, Performance problems, Code quality & maintainability
+**Original audit date:** 2025-07-30
+**Baseline revision:** `bebb3f0`
+**Status:** Historical snapshot. Counts and remaining items may have changed; verify against the current branch and tests.
+**Scope:** Bugs and correctness, performance, code quality, and maintainability
 **Projects:** pi-server-exp, pi-webby-exp, pi-desktop-app, pi-companion-exp, pi-webby-shared
 
 ---
 
-## Summary
+## Current branch status
 
-| Category | Fixed | Remaining |
-|----------|-------|-----------|
-| Bugs & correctness | 16 | 3 |
-| Performance | 5 | 3 |
-| Code quality | 12 | 6 |
-| **Total** | **33** | **12** |
+The `fix/comprehensive-audit` branch supersedes the old numeric summary. It adds server lifecycle and multiplex fixes, installer checksum and ACL hardening, Android history and image fixes, frontend error handling, tray update guards, and broader CI coverage.
+
+Validation required before merge:
+
+- `pi-server-exp`: tests, vet, build, and race tests in CI
+- `pi-server-tray`: tests and vet
+- `pi-webby-exp`: typecheck, lint, tests, and build
+- `pi-desktop-app`: typecheck, lint, tests, frontend build, Rust check, and packaged Tauri build in CI
+- `pi-companion-exp`: debug compilation, unit tests, and release APK build
+- Windows installer checksum helper tests
+
+The sections below preserve the original audit record. Their counts are historical and must not be used as current totals.
 
 ---
 
-## ✅ All Issues Fixed (23)
+## Historical fixes
 
 ### Round 1 — Interconnectivity Audit
 

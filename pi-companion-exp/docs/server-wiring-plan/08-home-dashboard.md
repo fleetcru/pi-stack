@@ -1,11 +1,13 @@
 # 08 Home Dashboard Wiring
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Purpose: replace static dashboard numbers with real status.
 
 Data sources:
 
 ```text
-GET /v1/daemon
+GET /healthz
 GET /v1/sessions
 GET /v1/workers
 ```

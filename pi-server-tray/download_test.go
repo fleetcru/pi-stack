@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,13 +38,16 @@ func TestServerAssetName(t *testing.T) {
 
 func TestEnsureLatestDownloadsAndCachesRelease(t *testing.T) {
 	const binary = "server-binary"
+	checksum := fmt.Sprintf("%x", sha256.Sum256([]byte(binary)))
 	downloads := 0
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/fleetcru/pi-stack/releases":
-			fmt.Fprintf(w, `[{"tag_name":"tray-v9.0.0","assets":[]},{"tag_name":"server-v1.2.3","assets":[{"name":"pi-server-windows-amd64.exe","browser_download_url":%q,"size":%d}]}]`,
-				server.URL+"/download/server.exe", len(binary))
+			fmt.Fprintf(w, `[{"tag_name":"tray-v9.0.0","assets":[]},{"tag_name":"server-v1.2.3","assets":[{"name":"pi-server-windows-amd64.exe","browser_download_url":%q,"size":%d},{"name":"SHA256SUMS","browser_download_url":%q,"size":80}]}]`,
+				server.URL+"/download/server.exe", len(binary), server.URL+"/download/SHA256SUMS")
+		case "/download/SHA256SUMS":
+			fmt.Fprintf(w, "%s  pi-server-windows-amd64.exe\n", checksum)
 		case "/download/server.exe":
 			downloads++
 			_, _ = w.Write([]byte(binary))
@@ -85,6 +90,34 @@ func TestEnsureLatestDownloadsAndCachesRelease(t *testing.T) {
 	}
 	if string(version) != "server-v1.2.3\n" {
 		t.Fatalf("cached version = %q", version)
+	}
+}
+
+func TestExpectedChecksumRejectsMissingEntry(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("abc  another-file\n"))
+	}))
+	defer server.Close()
+	d := &serverDownloader{client: server.Client()}
+	asset := releaseAsset{Name: "SHA256SUMS", BrowserDownloadURL: server.URL}
+	if _, err := d.expectedChecksum(context.Background(), asset, "pi-server-linux-amd64"); err == nil {
+		t.Fatal("expectedChecksum accepted a missing entry")
+	}
+}
+
+func TestDownloadAssetRejectsChecksumMismatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("server-binary"))
+	}))
+	defer server.Close()
+	d := &serverDownloader{client: server.Client()}
+	asset := releaseAsset{Name: "pi-server-linux-amd64", BrowserDownloadURL: server.URL, Size: int64(len("server-binary"))}
+	destination := filepath.Join(t.TempDir(), "pi-server")
+	if err := d.downloadAsset(context.Background(), asset, destination, strings.Repeat("0", 64)); err == nil {
+		t.Fatal("downloadAsset accepted a checksum mismatch")
+	}
+	if fileExists(destination) {
+		t.Fatal("checksum mismatch installed the binary")
 	}
 }
 

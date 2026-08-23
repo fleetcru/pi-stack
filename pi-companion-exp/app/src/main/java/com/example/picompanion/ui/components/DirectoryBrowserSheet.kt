@@ -27,6 +27,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -57,7 +58,7 @@ fun DirectoryBrowserSheet(
   visible: Boolean,
   server: ServerEntry?,
   onDismiss: () -> Unit,
-  onSelect: (String) -> Unit,
+  onSelect: (cwd: String, prompt: String, count: Int) -> Unit,
 ) {
   if (!visible || server == null) return
 
@@ -70,6 +71,14 @@ fun DirectoryBrowserSheet(
   var directories by remember { mutableStateOf<List<DirectoryEntry>>(emptyList()) }
   var isLoading by remember { mutableStateOf(false) }
   var error by remember { mutableStateOf<String?>(null) }
+  var prompt by remember { mutableStateOf("") }
+  var countText by remember { mutableStateOf("1") }
+
+  fun resetAndDismiss() {
+    prompt = ""
+    countText = "1"
+    onDismiss()
+  }
 
   fun load(path: String? = null) {
     scope.launch {
@@ -103,7 +112,7 @@ fun DirectoryBrowserSheet(
   }
 
   ModalBottomSheet(
-    onDismissRequest = onDismiss,
+    onDismissRequest = ::resetAndDismiss,
     sheetState = sheetState,
   ) {
     Column(
@@ -149,6 +158,26 @@ fun DirectoryBrowserSheet(
 
       Spacer(Modifier.height(12.dp))
 
+      OutlinedTextField(
+        value = prompt,
+        onValueChange = { prompt = it },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("What should Pi do?") },
+        placeholder = { Text("Fix the login bug and run the tests") },
+        minLines = 2,
+        maxLines = 4,
+      )
+      Spacer(Modifier.height(8.dp))
+      OutlinedTextField(
+        value = countText,
+        onValueChange = { value -> countText = value.filter(Char::isDigit).take(2) },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("Number of sessions") },
+        supportingText = { Text("Start up to 12 sessions with the same task") },
+        singleLine = true,
+      )
+      Spacer(Modifier.height(12.dp))
+
       // Select current directory button
       if (currentPath != null) {
         Surface(
@@ -157,7 +186,13 @@ fun DirectoryBrowserSheet(
             .clickable(
               interactionSource = remember { MutableInteractionSource() },
               indication = null,
-              onClick = { currentPath?.let(onSelect) },
+              onClick = {
+                currentPath?.let { path ->
+                  onSelect(path, prompt.trim(), countText.toIntOrNull()?.coerceIn(1, 12) ?: 1)
+                  prompt = ""
+                  countText = "1"
+                }
+              },
             ),
           shape = RoundedCornerShape(12.dp),
           color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),

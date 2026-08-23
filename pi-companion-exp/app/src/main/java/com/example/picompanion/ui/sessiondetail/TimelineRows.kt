@@ -1,5 +1,6 @@
 package com.example.picompanion.ui.sessiondetail
 
+import android.content.ClipData
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -50,6 +51,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -60,10 +62,13 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun ChangedFilesCard(changes: List<GitFileChange>, modifier: Modifier = Modifier) {
@@ -137,7 +142,8 @@ fun ChangedFilesCard(changes: List<GitFileChange>, modifier: Modifier = Modifier
 @Composable
 fun ToolEventRow(item: SessionTimelineItem.Tool, modifier: Modifier = Modifier) {
   var expanded by rememberSaveable(item.callId) { mutableStateOf(false) }
-  var copied by rememberSaveable { mutableStateOf(false) }
+  val clipboard = LocalClipboard.current
+  val clipboardScope = rememberCoroutineScope()
 
   // Semantic tool icon + label mapping (matches shared toolDisplayName)
   val (icon, label) = when (item.name.lowercase()) {
@@ -318,8 +324,9 @@ fun ToolEventRow(item: SessionTimelineItem.Tool, modifier: Modifier = Modifier) 
               SectionHeader(if (isRunning) "Live output" else if (isFailed) "Error output" else "Output")
               IconButton(
                 onClick = {
-                  // Copy handled via clipboard manager at call site
-                  copied = true
+                  clipboardScope.launch {
+                    clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("Tool output", output)))
+                  }
                 },
                 modifier = Modifier.size(28.dp),
               ) {

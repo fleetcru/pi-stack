@@ -88,6 +88,8 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
     refetchInterval: socket.status === "open" ? false : 5_000,
   })
   const [extensionValue, setExtensionValue] = useState("")
+  const [extensionResponseError, setExtensionResponseError] = useState<string>()
+  const [extensionResponding, setExtensionResponding] = useState(false)
   const [ignoredExtensionIds, setIgnoredExtensionIds] = useState<string[]>([])
   const ignoreExtension = useCallback((id: string) => {
     setIgnoredExtensionIds((prev) => {
@@ -97,6 +99,20 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
     })
   }, [])
   const [extensionDialogOpen, setExtensionDialogOpen] = useState(false)
+  const respondToExtension = useCallback(async (id: string, response: Record<string, unknown>) => {
+    setExtensionResponding(true)
+    setExtensionResponseError(undefined)
+    try {
+      await client.sessionPost(sessionId, "ui-response", { id, ...response })
+      ignoreExtension(id)
+      setExtensionDialogOpen(false)
+      setExtensionValue("")
+    } catch (error) {
+      setExtensionResponseError(error instanceof Error ? error.message : "Could not send extension response")
+    } finally {
+      setExtensionResponding(false)
+    }
+  }, [client, ignoreExtension, sessionId])
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const [selectedProvider, setSelectedProvider] = useState<string | undefined>()
   const extension = useMemo(() => findExtensionRequest(socket.events), [socket.events])
@@ -212,10 +228,11 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
             <DialogHeader><DialogTitle>Pi extension request</DialogTitle><DialogDescription>{visibleExtension.message}</DialogDescription></DialogHeader>
             <p className="text-xs leading-5 text-muted-foreground">Request ID: {visibleExtension.id}. Only respond if you expected this extension prompt. A reconnect can replay an older request; Ignore hides it locally without approving or cancelling it.</p>
             <InputGroup><InputGroupTextarea value={extensionValue} onChange={(event) => setExtensionValue(event.target.value)} placeholder={visibleExtension.placeholder || "Response"} /></InputGroup>
+            {extensionResponseError && <p role="alert" className="text-sm text-destructive">{extensionResponseError}</p>}
             <DialogFooter>
-              <Button variant="ghost" onClick={() => { ignoreExtension(visibleExtension.id); setExtensionDialogOpen(false) }}>Ignore</Button>
-              <Button variant="outline" onClick={() => { void client.sessionPost(sessionId, "ui-response", { id: visibleExtension.id, cancelled: true }); ignoreExtension(visibleExtension.id); setExtensionDialogOpen(false) }}>Cancel</Button>
-              <Button onClick={() => { void client.sessionPost(sessionId, "ui-response", { id: visibleExtension.id, value: extensionValue || undefined, confirmed: true }); ignoreExtension(visibleExtension.id); setExtensionDialogOpen(false); setExtensionValue("") }}>Confirm</Button>
+              <Button variant="ghost" disabled={extensionResponding} onClick={() => { ignoreExtension(visibleExtension.id); setExtensionDialogOpen(false) }}>Ignore</Button>
+              <Button variant="outline" disabled={extensionResponding} onClick={() => { void respondToExtension(visibleExtension.id, { cancelled: true }) }}>Cancel</Button>
+              <Button disabled={extensionResponding} onClick={() => { void respondToExtension(visibleExtension.id, { value: extensionValue || undefined, confirmed: true }) }}>{extensionResponding ? "Sending…" : "Confirm"}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

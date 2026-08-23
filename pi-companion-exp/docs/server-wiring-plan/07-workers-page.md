@@ -1,5 +1,7 @@
 # 07 Workers Page
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Purpose: replace placeholder with real local/remote worker status.
 
 Create:

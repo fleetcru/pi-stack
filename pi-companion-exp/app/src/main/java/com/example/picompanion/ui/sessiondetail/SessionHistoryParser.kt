@@ -14,8 +14,8 @@ internal object SessionHistoryParser {
 
     messages.forEachIndexed { index, element ->
       val message = element as? JsonObject ?: return@forEachIndexed
-      val role = message.string("role") ?: return@forEachIndexed
       val historyType = message.string("_historyType")
+      val role = message.string("role")
       val fallbackId = "tool-history-$index"
 
       if (historyType == "tool_use") {

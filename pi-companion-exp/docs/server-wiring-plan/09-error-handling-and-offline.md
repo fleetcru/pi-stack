@@ -1,5 +1,7 @@
 # 09 Error Handling and Offline Behavior
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Purpose: make the app pleasant on unreliable private networks.
 
 States to handle everywhere:

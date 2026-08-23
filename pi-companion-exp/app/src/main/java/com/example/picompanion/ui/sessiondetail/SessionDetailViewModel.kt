@@ -9,7 +9,6 @@ import android.net.Network
 import android.net.Uri
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -30,7 +29,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.ByteArrayOutputStream
 import java.util.UUID
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -587,7 +585,9 @@ class SessionDetailViewModel(
           // Deduplicate against the optimistic insert from sendPrompt().
           // The WS echo arrives with a server timestamp while the optimistic
           // insert uses "now". Match by text content against the map values.
-          val matchedKey = recentSentPrompts.entries.find { it.value == text }?.key
+          val matchedKey = synchronized(recentSentPrompts) {
+            recentSentPrompts.entries.firstOrNull { it.value == text }?.key
+          }
           if (text == lastSentPrompt || matchedKey != null) {
             lastSentPrompt = null
             if (matchedKey != null) recentSentPrompts.remove(matchedKey)
@@ -1049,7 +1049,6 @@ class SessionDetailViewModel(
           imageUris.mapNotNull { uri ->
             try {
               val context = getApplication<Application>()
-              val mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
               // Downsample large images to prevent OOM and reduce payload size.
               val maxDimension = 1024
               val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -1059,14 +1058,11 @@ class SessionDetailViewModel(
               val bitmap = context.contentResolver.openInputStream(uri)?.use {
                 BitmapFactory.decodeStream(it, null, decodeOptions)
               } ?: return@mapNotNull null
-              val baos = ByteArrayOutputStream()
-              bitmap.compress(Bitmap.CompressFormat.JPEG, 85, baos)
-              bitmap.recycle()
-              val bytes = baos.toByteArray()
-              com.example.picompanion.data.api.PromptImage(
-                base64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
-                mimeType = mimeType,
-              )
+              try {
+                PromptImageEncoder.encodeJpeg(bitmap)
+              } finally {
+                bitmap.recycle()
+              }
             } catch (_: Exception) { null }
           }
         }

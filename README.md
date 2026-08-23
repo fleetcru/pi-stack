@@ -10,6 +10,8 @@ A multi-device coding agent ecosystem for [Pi](https://github.com/earendil-works
 | **pi-webby** | React + TypeScript + Vite | Browser client for creating, monitoring, and chatting with Pi sessions |
 | **pi-desktop** | Tauri v2 + React + TypeScript | Desktop app with native OS integration, image attachments, and offline support |
 | **pi-companion** | Kotlin + Jetpack Compose | Android client with camera attachments, mobile UX, and real-time session status |
+| **pi-webby-shared** | TypeScript | Shared API, state, socket, and timeline logic used by Webby and Desktop |
+| **pi-server-tray** | Go | Desktop tray controller and verified pi-server updater |
 
 ## Architecture
 
@@ -47,69 +49,33 @@ A multi-device coding agent ecosystem for [Pi](https://github.com/earendil-works
 - [pi-server releases](https://github.com/fleetcru/pi-stack/releases?q=server-v) — Linux and Windows AMD64 binaries
 - [Pi Companion releases](https://github.com/fleetcru/pi-stack/releases?q=v) — directly installable Android APKs
 
-The current patch line is **pi-server v0.3.x** and **Pi Companion v1.4.x**.
+Use the release pages above for current version numbers.
 
-## One-liner install (production)
+## Production installation
 
-Deploy pi-server to a remote VPS or your personal machine with a single command.
+Clone or download this repository and inspect the installer before running it. The installers verify release checksums and do not silently execute an unverified binary.
 
-### Linux VPS (DigitalOcean, Hetzner, etc.)
+### Linux with systemd
 
 ```bash
-curl -sSL linux.fleetcru.dev | sudo bash
+git clone https://github.com/fleetcru/pi-stack.git
+cd pi-stack
+sudo PI_SERVER_AUTH_TOKEN="your-secret" ./install-server.sh
 ```
 
-- Installs to `/opt/pi-server`
-- Creates a systemd service (auto-start on boot)
-- Runs as dedicated `pi-server` user
-- Config at `/etc/pi-server/pi-server.env`
+The service runs as the user who invoked `sudo`, which keeps access to that user's Pi installation and projects. It allows session roots under that user's home directory. Configuration is stored at `/etc/pi-server/pi-server.env` with mode `0600`.
 
-### Windows VPS (Admin)
+### Windows VPS
 
 ```powershell
-irm https://windows.fleetcru.dev | iex
+git clone https://github.com/fleetcru/pi-stack.git
+cd pi-stack
+.\install-server.ps1 -AuthToken "your-secret"
 ```
 
-- Installs to `C:\pi-server`
-- Creates a scheduled task (runs at startup as SYSTEM)
-- Config at `C:\pi-server\config\pi-server.env`
+Run PowerShell as Administrator. This installer creates a `SYSTEM` startup task and records the current Pi executable path. A Pi installation that depends on user-only Node configuration may still be inaccessible to `SYSTEM`; use `install-server-user.ps1` in that case.
 
-### Personal machine (no admin)
-
-**Linux/macOS:**
-```bash
-curl -sSL linux.fleetcru.dev | bash
-```
-
-**Windows:**
-```powershell
-irm https://get.fleetcru.dev | iex
-```
-
-- Installs to `%LOCALAPPDATA%\pi-server` (Windows) or `~/.local/share/pi-server` (Linux)
-- Runs at logon under your user account
-- No admin/root required
-
-### With custom auth token
-
-```bash
-# Linux
-PI_SERVER_AUTH_TOKEN="my-secret" curl -sSL linux.fleetcru.dev | sudo bash
-
-# Windows
-irm https://windows.fleetcru.dev -OutFile install.ps1
-.\install.ps1 -AuthToken "my-secret"
-```
-
-### Insecure mode (local/trusted networks only)
-
-```bash
-# Linux
-curl -sSL linux.fleetcru.dev | sudo bash -s -- --insecure
-
-# Windows
-.\install-server.ps1 -AllowInsecure
-```
+Remote insecure mode remains available for trusted LAN or Tailscale deployments, but requires an explicit installer or launcher flag.
 
 ## Quick start (development)
 
@@ -133,7 +99,7 @@ Opens three windows: pi-server, Webby (Vite dev server), and a Pi TUI terminal.
 .\start-exp-server.ps1
 ```
 
-### Run on Linux / macOS
+### Run on Linux
 
 ```bash
 chmod +x start-exp-server.sh

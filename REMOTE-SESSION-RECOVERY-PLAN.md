@@ -1,4 +1,6 @@
-# Durable Remote Session Recovery — Implementation Plan
+# Durable remote session recovery implementation record
+
+> Historical design record. Much of this plan is implemented. Treat `AGENTS.md`, tests, and the current server code as authoritative for present behavior.
 
 ## 1. Goal
 

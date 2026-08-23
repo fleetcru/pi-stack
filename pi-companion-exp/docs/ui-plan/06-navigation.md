@@ -1,5 +1,7 @@
 # 06 Navigation Wiring
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Preferred route structure:
 
 ```kotlin

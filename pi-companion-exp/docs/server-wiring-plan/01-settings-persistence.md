@@ -1,5 +1,7 @@
 # 01 Settings Persistence
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Purpose: store connection settings before calling the server.
 
 Create:

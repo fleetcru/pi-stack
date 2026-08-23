@@ -101,6 +101,7 @@ export function ServerConnectionsDialog({
             <Checkbox checked={rememberToken} onCheckedChange={(checked) => setRememberToken(checked === true)} />
             Remember token on this browser
           </label>
+          {rememberToken && <p className="text-xs text-amber-600 dark:text-amber-400">This stores the bearer token in browser storage. Any script or extension with page access may read it.</p>}
         </div>
         <DialogFooter>
           <Button type="button" onClick={add} disabled={!baseUrl.trim()}>Add server</Button>

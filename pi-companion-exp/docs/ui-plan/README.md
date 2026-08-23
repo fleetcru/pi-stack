@@ -1,6 +1,8 @@
-# Pi Companion UI Plan
+# Pi Companion UI plan
 
-Goal: expand the Android app with mock/example UI screens before wiring real server networking.
+> Historical plan. The app now uses real REST and realtime networking. These files describe the initial mock-UI phase and are not current operating instructions.
+
+Goal: document the initial mock/example UI work completed before server networking was added.
 
 Style requirements:
 - Kotlin + Jetpack Compose
@@ -14,14 +16,14 @@ Style requirements:
 Build command:
 
 ```powershell
-cd C:\Users\basin\Desktop\pi-companion
-.\gradlew.bat assembleDebug
+cd pi-companion-exp
+.\gradlew.bat :app:assembleDebug
 ```
 
 APK copy target:
 
 ```text
-C:\Users\basin\Desktop\pi-companion-apk\pi-companion-debug.apk
+<artifact-directory>\pi-companion-debug.apk
 ```
 
 Recommended new bottom nav:

@@ -144,6 +144,7 @@ export function WorkspaceShell() {
                     <input
                       type="text"
                       placeholder="Filter sessions..."
+                      aria-label="Filter sessions"
                       value={filterText}
                       onChange={(event) => setFilterText(event.target.value)}
                       className="h-7 w-full rounded-md border border-border bg-muted/40 pl-7 pr-2 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary/40 focus:outline-none"
@@ -329,6 +330,7 @@ function MobileWorkspace({
                 <input
                   type="text"
                   placeholder="Filter sessions..."
+                      aria-label="Filter sessions"
                   value={mobileFilterText}
                   onChange={(event) => setMobileFilterText(event.target.value)}
                   className="h-7 w-full rounded-md border border-border bg-muted/40 pl-7 pr-2 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary/40 focus:outline-none"

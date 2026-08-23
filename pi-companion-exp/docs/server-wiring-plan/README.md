@@ -1,6 +1,8 @@
-# Pi Companion Server Wiring Plan
+# Pi Companion server wiring plan
 
-Goal: replace mock UI data with real `pi-server` REST + WebSocket data in small, safe phases.
+> Historical implementation plan. Networking is now implemented. Use the server OpenAPI document and current client code for endpoint and payload details.
+
+Goal: document the phased replacement of mock UI data with real `pi-server` REST and WebSocket data.
 
 Non-goals for first wiring pass:
 - no public internet hardening

@@ -385,9 +385,9 @@ fun SessionsScreen(
     visible = showBrowser,
     server = settings.activeServer,
     onDismiss = { showBrowser = false },
-    onSelect = { cwd ->
+    onSelect = { cwd, prompt, count ->
       showBrowser = false
-      viewModel.createSession(cwd)
+      viewModel.createSession(cwd = cwd, prompt = prompt, count = count)
     },
   )
 }

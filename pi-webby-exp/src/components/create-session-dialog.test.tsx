@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
-import { render, screen, within, cleanup } from "@testing-library/react"
+import { render, screen, within, cleanup, waitFor, fireEvent } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import "@testing-library/jest-dom/vitest"
 import { CreateSessionDialog } from "./create-session-dialog"
 import { useAppStore } from "@/state/app-store"
@@ -19,9 +20,14 @@ vi.mock("lucide-react", async (importOriginal) => {
   }
 })
 
+const hookMocks = vi.hoisted(() => ({
+  createSession: vi.fn(),
+  createWorkerSession: vi.fn(),
+}))
+
 vi.mock("@/api/hooks", () => ({
   useCreateSession: () => ({
-    mutateAsync: vi.fn(),
+    mutateAsync: hookMocks.createSession,
     isPending: false,
     error: null,
   }),
@@ -29,7 +35,7 @@ vi.mock("@/api/hooks", () => ({
     baseUrl: "http://localhost:3141",
     listDirectories: vi.fn().mockResolvedValue({}),
     getWorkerHealth: vi.fn(),
-    createWorkerSession: vi.fn(),
+    createWorkerSession: hookMocks.createWorkerSession,
   }),
   useWorkers: () => ({
     data: [
@@ -67,6 +73,7 @@ describe("CreateSessionDialog", () => {
   afterEach(() => {
     cleanup()
     resetStore()
+    vi.clearAllMocks()
   })
 
   it("renders the dialog title", () => {
@@ -125,6 +132,86 @@ describe("CreateSessionDialog", () => {
     render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
     const dialog = getDialogContent()
     expect(within(dialog).getByText("Select a worker")).toBeInTheDocument()
+  })
+
+  async function fillRequiredFields(workerName = "local") {
+    const user = userEvent.setup()
+    const dialog = getDialogContent()
+    await user.type(within(dialog).getByPlaceholderText("/home/user/project"), "/repo")
+    await user.click(within(dialog).getByRole("combobox"))
+    await user.click(await screen.findByRole("option", { name: new RegExp(workerName, "i") }))
+    return user
+  }
+
+  it("creates one local session", async () => {
+    hookMocks.createSession.mockResolvedValue({ id: "local-1" })
+    const onOpenChange = vi.fn()
+    render(<CreateSessionDialog open={true} onOpenChange={onOpenChange} />)
+    const user = await fillRequiredFields()
+
+    await user.click(within(getDialogContent()).getByRole("button", { name: "Create session" }))
+
+    await waitFor(() => expect(hookMocks.createSession).toHaveBeenCalledTimes(1))
+    expect(useAppStore.getState().selectedSessionId).toBe("local-1")
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it("shows a total batch failure", async () => {
+    hookMocks.createSession.mockRejectedValue(new Error("capacity full"))
+    render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
+    const user = await fillRequiredFields()
+    const count = within(getDialogContent()).getByRole("spinbutton")
+    fireEvent.change(count, { target: { value: "2" } })
+    await user.click(within(getDialogContent()).getByRole("button", { name: "Start 2 sessions" }))
+
+    expect(await within(getDialogContent()).findByText("capacity full")).toBeInTheDocument()
+    expect(hookMocks.createSession).toHaveBeenCalledTimes(2)
+  })
+
+  it("reports partial batch failure and selects the successful session", async () => {
+    hookMocks.createSession
+      .mockResolvedValueOnce({ id: "ok-1" })
+      .mockRejectedValueOnce(new Error("failed"))
+    render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
+    const user = await fillRequiredFields()
+    const count = within(getDialogContent()).getByRole("spinbutton")
+    fireEvent.change(count, { target: { value: "2" } })
+    await user.click(within(getDialogContent()).getByRole("button", { name: "Start 2 sessions" }))
+
+    expect(await within(getDialogContent()).findByText("1 of 2 sessions started")).toBeInTheDocument()
+    expect(useAppStore.getState().selectedSessionId).toBe("ok-1")
+  })
+
+  it("clamps the displayed batch count to twelve", async () => {
+    render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
+    const user = await fillRequiredFields()
+    const count = within(getDialogContent()).getByRole("spinbutton")
+    await user.clear(count)
+    await user.type(count, "99")
+    expect(count).toHaveValue(12)
+    expect(within(getDialogContent()).getByRole("button", { name: "Start 12 sessions" })).toBeInTheDocument()
+  })
+
+  it("blocks duplicate submissions while creation is pending", async () => {
+    let resolve!: (value: { id: string }) => void
+    hookMocks.createSession.mockReturnValue(new Promise((done) => { resolve = done }))
+    render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
+    const user = await fillRequiredFields()
+    const submit = within(getDialogContent()).getByRole("button", { name: "Create session" })
+    await user.click(submit)
+    await user.click(submit)
+    expect(hookMocks.createSession).toHaveBeenCalledTimes(1)
+    resolve({ id: "later" })
+    await waitFor(() => expect(useAppStore.getState().selectedSessionId).toBe("later"))
+  })
+
+  it("creates a remote worker session", async () => {
+    hookMocks.createWorkerSession.mockResolvedValue({ id: "remote-session" })
+    render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
+    const user = await fillRequiredFields("remote-1")
+    await user.click(within(getDialogContent()).getByRole("button", { name: "Create session" }))
+    await waitFor(() => expect(hookMocks.createWorkerSession).toHaveBeenCalledTimes(1))
+    expect(hookMocks.createSession).not.toHaveBeenCalled()
   })
 
   it("does not render when open is false", () => {

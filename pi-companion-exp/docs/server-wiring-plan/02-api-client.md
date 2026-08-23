@@ -1,5 +1,7 @@
 # 02 API Client Foundation
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Purpose: centralize HTTP calls to `pi-server`.
 
 Create:
@@ -43,12 +45,12 @@ sealed interface HttpResult<out T> {
 First endpoints:
 
 ```text
-GET /v1/daemon
+GET /healthz
 GET /v1/sessions
 GET /v1/workers
 ```
 
 Acceptance:
-- `Test connection` can call daemon/status endpoint
+- `Test connection` can call the health endpoint
 - auth token is respected
 - connection failures show helpful errors

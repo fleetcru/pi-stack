@@ -1,5 +1,7 @@
 # 03 Session Chat Page
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Create:
 
 ```text
@@ -21,7 +23,7 @@ Example:
 
 ```text
 Build Android companion       Running
-pi-companion · C:/Users/basin/Desktop/pi-companion
+pi-companion · <project-root>/pi-companion-exp
 ```
 
 Body:

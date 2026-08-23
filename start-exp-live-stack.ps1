@@ -3,8 +3,13 @@ param(
   [int]$ServerPort = 3142,
   [int]$WebPort = 5174,
   [string]$AuthToken = "",
+  [switch]$AllowInsecure,
   [switch]$InstallGlobalBridge,
+  [switch]$Background,
+  [switch]$Minimized,
   [bool]$LaunchPi = $true,
+  [int]$MaxSessions = 16,
+  [int]$MaxActiveRuns = 8,
   [int]$HealthTimeoutSec = 15
 )
 
@@ -45,15 +50,17 @@ if ($InstallGlobalBridge) {
 function Quote-PowerShell([string]$value) { "'" + $value.Replace("'", "''") + "'" }
 
 # --- Build server command ---
+$bindHost = if ($AuthToken -or $AllowInsecure) { "0.0.0.0" } else { "127.0.0.1" }
 $serverCommand = @(
-  "`$env:PI_SERVER_ADDR = '0.0.0.0:$ServerPort'"
+  "`$env:PI_SERVER_ADDR = '${bindHost}:$ServerPort'"
   "`$env:PI_SERVER_CWD = $(Quote-PowerShell $root)"
   "`$env:PI_SERVER_DATA_DIR = $(Quote-PowerShell $dataDir)"
   "`$env:PI_SERVER_ALLOWED_ROOTS = $(Quote-PowerShell $root)"
   "`$env:PI_SERVER_ALLOWED_ORIGINS = $(Quote-PowerShell $origins)"
   "`$env:PI_SERVER_PI_EXTENSIONS = $(Quote-PowerShell (Join-Path $serverDir 'extensions' | Join-Path -ChildPath 'session-title.ts'))"
-  "`$env:PI_SERVER_MAX_SESSIONS = '8'"
-  $(if ($AuthToken) { "`$env:PI_SERVER_AUTH_TOKEN = $(Quote-PowerShell $AuthToken); Remove-Item Env:PI_SERVER_ALLOW_INSECURE -ErrorAction SilentlyContinue" } else { "Remove-Item Env:PI_SERVER_AUTH_TOKEN -ErrorAction SilentlyContinue; `$env:PI_SERVER_ALLOW_INSECURE = '1'" })
+  "`$env:PI_SERVER_MAX_SESSIONS = '$MaxSessions'"
+  "`$env:PI_SERVER_MAX_ACTIVE_RUNS = '$MaxActiveRuns'"
+  $(if ($AuthToken) { "`$env:PI_SERVER_AUTH_TOKEN = $(Quote-PowerShell $AuthToken); Remove-Item Env:PI_SERVER_ALLOW_INSECURE -ErrorAction SilentlyContinue" } elseif ($AllowInsecure) { "Remove-Item Env:PI_SERVER_AUTH_TOKEN -ErrorAction SilentlyContinue; `$env:PI_SERVER_ALLOW_INSECURE = '1'" } else { "Remove-Item Env:PI_SERVER_AUTH_TOKEN -ErrorAction SilentlyContinue; Remove-Item Env:PI_SERVER_ALLOW_INSECURE -ErrorAction SilentlyContinue" })
   "Set-Location $(Quote-PowerShell $serverDir)"
   "go run ./cmd/pi-server"
 ) -join "; "
@@ -62,21 +69,25 @@ $serverCommand = @(
 $webCommand = "Set-Location $(Quote-PowerShell $webDir); pnpm exec vite --host 0.0.0.0 --port $WebPort --strictPort"
 
 # --- Launch processes ---
-$psBaseArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit", "-Command")
+$windowStyle = if ($Background) { "Hidden" } elseif ($Minimized) { "Minimized" } else { "Normal" }
+$psBaseArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass")
+if (-not $Background) { $psBaseArgs += "-NoExit" }
+$psBaseArgs += @("-Command")
 
-$serverProc = Start-Process powershell.exe -ArgumentList ($psBaseArgs + $serverCommand) -PassThru | Out-Null
-$webProc = Start-Process powershell.exe -ArgumentList ($psBaseArgs + $webCommand) -PassThru | Out-Null
+$serverProc = Start-Process powershell.exe -WindowStyle $windowStyle -ArgumentList ($psBaseArgs + $serverCommand) -PassThru | Out-Null
+$webProc = Start-Process powershell.exe -WindowStyle $windowStyle -ArgumentList ($psBaseArgs + $webCommand) -PassThru | Out-Null
 
 if ($LaunchPi) {
+  $installedBridge = Join-Path $HOME ".pi" | Join-Path -ChildPath "agent" | Join-Path -ChildPath "extensions" | Join-Path -ChildPath "external-session-bridge.ts"
+  $piLaunch = if (Test-Path -LiteralPath $installedBridge -PathType Leaf) { "pi" } else { "pi -e $(Quote-PowerShell $bridge)" }
   $piCommand = @(
     "`$env:PI_EXTERNAL_RELAY_URL = 'http://127.0.0.1:$ServerPort'"
     $(if ($AuthToken) { "`$env:PI_EXTERNAL_RELAY_TOKEN = $(Quote-PowerShell $AuthToken)" } else { "Remove-Item Env:PI_EXTERNAL_RELAY_TOKEN -ErrorAction SilentlyContinue" })
     "Set-Location $(Quote-PowerShell $root)"
-    # The bridge is globally installed with pi install; do not also pass -e,
-    # otherwise Pi loads two relay instances and Webby receives duplicate events.
-    "pi"
+    # Load the repository bridge explicitly unless the global copy exists.
+    $piLaunch
   ) -join "; "
-  $piProc = Start-Process powershell.exe -ArgumentList ($psBaseArgs + $piCommand) -PassThru | Out-Null
+  $piProc = Start-Process powershell.exe -WindowStyle $windowStyle -ArgumentList ($psBaseArgs + $piCommand) -PassThru | Out-Null
 }
 
 # --- Health check: wait for server to respond ---
@@ -99,10 +110,14 @@ if ($serverReady) {
 
 # --- Summary ---
 Write-Host ""
-Write-Host "Started exp live stack." -ForegroundColor Green
+Write-Host "Started exp live stack$(if ($Background) { ' in background mode' } else { '' })." -ForegroundColor Green
 Write-Host "  Webby:      http://127.0.0.1:$WebPort  (phone: http://${lanIp}:$WebPort)"
-Write-Host "  pi-server:  http://${lanIp}:$ServerPort"
+Write-Host "  pi-server:  http://$(if ($bindHost -eq '127.0.0.1') { '127.0.0.1' } else { $lanIp }):$ServerPort"
 Write-Host "  CORS:       $origins"
 if ($AuthToken) { Write-Host "  Auth:       token configured" } else { Write-Host "  Auth:       none (trusted LAN only)" -ForegroundColor Yellow }
 Write-Host ""
-Write-Host "Close the spawned PowerShell windows to stop each service." -ForegroundColor DarkGray
+if ($Background) {
+  Write-Host "Background mode: use the server shutdown/stop command or terminate the spawned processes to stop the stack." -ForegroundColor DarkGray
+} else {
+  Write-Host "Close the spawned PowerShell windows to stop each service." -ForegroundColor DarkGray
+}

@@ -60,9 +60,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	// lock, eliminating the TOCTOU race between ActiveCount() and Add().
 	maxSessions := 0
 	if req.Start {
-		maxSessions = s.cfg.MaxSessions
+		maxSessions = int(s.maxSessionsAtomicValue())
 	}
 	if err := s.sessions.AddIfCapacity(p, spec, maxSessions); err != nil {
+		s.rollbackCreatedSession(spec)
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -71,6 +72,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		if err := p.Start(ctx); err != nil {
 			_ = s.sessions.Delete(spec.ID)
+			s.rollbackCreatedSession(spec)
 			writeError(w, http.StatusBadGateway, err)
 			return
 		}
@@ -78,7 +80,11 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	// Link immediately, then the message-end callback refreshes the link once
 	// Pi creates its first JSONL file.
 	go s.linkManagedSession(spec)
-	writeJSON(w, http.StatusCreated, map[string]any{"id": spec.ID, "cwd": spec.CWD, "args": spec.Args, "managed": true, "status": "running", "ws": "/v1/sessions/" + spec.ID + "/ws"})
+	status := "created"
+	if req.Start {
+		status = "running"
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": spec.ID, "cwd": spec.CWD, "args": spec.Args, "managed": true, "status": status, "ws": "/v1/sessions/" + spec.ID + "/ws"})
 }
 
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
@@ -97,8 +103,7 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 			writeErrorText(w, http.StatusBadGateway, "mapped worker no longer exists")
 			return
 		}
-		s.proxyWorker(w, r, worker, "/v1/sessions/"+record.WorkerSessionID)
-		if r.Context().Err() == nil {
+		if s.proxyWorker(w, r, worker, "/v1/sessions/"+record.WorkerSessionID) {
 			_ = s.remoteSessions.Delete(id)
 		}
 		return
@@ -111,7 +116,10 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.ShutdownTimeout)
 	defer cancel()
-	_ = p.Close(ctx)
+	if err := p.Close(ctx); err != nil {
+		writeError(w, http.StatusGatewayTimeout, fmt.Errorf("stop session: %w", err))
+		return
+	}
 	s.stopWatcher(id)
 	if err := s.sessions.Delete(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -137,6 +145,17 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 // removeOwnedWorktree removes a linked worktree recorded on a SessionSpec. It
 // only proceeds when the worktree is genuinely registered with the session's
 // repository, so we never delete a directory the server does not own.
+func (s *Server) rollbackCreatedSession(spec SessionSpec) {
+	if err := s.removeManagedSessionDir(spec.ManagedSessionDir); err != nil {
+		s.logger.Warn("failed to roll back managed session directory", "session", spec.ID, "error", err)
+	}
+	if spec.WorktreePath != "" {
+		if err := s.removeOwnedWorktree(spec); err != nil {
+			s.logger.Warn("failed to roll back session worktree", "session", spec.ID, "error", err)
+		}
+	}
+}
+
 func (s *Server) removeOwnedWorktree(spec SessionSpec) error {
 	known, err := s.gitWorktrees(context.Background(), spec.CWD)
 	if err != nil {

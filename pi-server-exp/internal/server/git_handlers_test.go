@@ -146,6 +146,30 @@ func TestBuildSessionSpecAutoWorktree(t *testing.T) {
 	}
 }
 
+func TestRollbackCreatedSessionRemovesManagedDirectoryAndWorktree(t *testing.T) {
+	cwd := gitTestRepo(t)
+	dataDir := t.TempDir()
+	s := New(Config{RequestTimeout: time.Second, DataDir: dataDir, AllowedRoots: []string{cwd}}, testLogger())
+	spec, err := s.buildSessionSpec(createSessionRequest{
+		CWD: cwd, Title: "rollback", CreateWorktree: &createWorktreeOptions{Enabled: true},
+	})
+	if err != nil {
+		t.Fatalf("buildSessionSpec: %v", err)
+	}
+	if err := os.MkdirAll(spec.ManagedSessionDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	s.rollbackCreatedSession(spec)
+
+	if _, err := os.Stat(spec.WorktreePath); !os.IsNotExist(err) {
+		t.Fatalf("worktree still exists after rollback: %v", err)
+	}
+	if _, err := os.Stat(spec.ManagedSessionDir); !os.IsNotExist(err) {
+		t.Fatalf("managed session directory still exists after rollback: %v", err)
+	}
+}
+
 func TestAutoWorktreeBranchDeconfliction(t *testing.T) {
 	cwd := gitTestRepo(t)
 	s := New(Config{RequestTimeout: time.Second, DataDir: t.TempDir(), AllowedRoots: []string{cwd}}, testLogger())
@@ -172,7 +196,7 @@ func TestSanitizeFeatureBranchName(t *testing.T) {
 		in, want string
 	}{
 		{"Refactor auth", "feature/refactor-auth"},
-		{"feature/demo", "feature/demo"},        // no double feature/ prefix
+		{"feature/demo", "feature/demo"},       // no double feature/ prefix
 		{"docs/readme", "feature/docs/readme"}, // preserved namespace
 		{"!!!", "feature/update"},              // fallback label
 		{"feature/Renamed", "feature/renamed"},
@@ -320,7 +344,7 @@ func TestEnsureWorktreesGitignored(t *testing.T) {
 	t.Run("preserves existing content and appends", func(t *testing.T) {
 		dir := t.TempDir()
 		if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("node_modules/\n*.log"), 0644); err != nil {
-		t.Fatal(err)
+			t.Fatal(err)
 		}
 		s.ensureWorktreesGitignored(dir)
 		got, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
@@ -349,4 +373,3 @@ func TestEnsureWorktreesGitignored(t *testing.T) {
 		}
 	})
 }
-

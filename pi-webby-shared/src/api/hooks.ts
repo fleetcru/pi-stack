@@ -93,14 +93,14 @@ export function useServerConfigured() {
 export function useServerHealth() {
   const client = usePiServerClient()
   const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.health(client.baseUrl), queryFn: () => client.health(), refetchInterval: 30_000, enabled: configured })
+  return useQuery({ queryKey: piQueryKeys.health(client.cacheScope), queryFn: () => client.health(), refetchInterval: 30_000, enabled: configured })
 }
 
 export function useSchedulerStatus(enabled = true) {
   const client = usePiServerClient()
   const configured = useServerConfigured()
   return useQuery({
-    queryKey: piQueryKeys.scheduler(client.baseUrl),
+    queryKey: piQueryKeys.scheduler(client.cacheScope),
     queryFn: () => client.schedulerStatus(),
     refetchInterval: 2_000,
     enabled: configured && enabled,
@@ -110,38 +110,38 @@ export function useSchedulerStatus(enabled = true) {
 export function useServerCapabilities() {
   const client = usePiServerClient()
   const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.capabilities(client.baseUrl), queryFn: () => client.capabilities(), staleTime: Infinity, enabled: configured })
+  return useQuery({ queryKey: piQueryKeys.capabilities(client.cacheScope), queryFn: () => client.capabilities(), staleTime: Infinity, enabled: configured })
 }
 
 export function useWorkers() {
   const client = usePiServerClient()
   const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.workers(client.baseUrl), queryFn: () => client.listWorkers(), select: (result) => result.workers, refetchInterval: 30_000, enabled: configured })
+  return useQuery({ queryKey: piQueryKeys.workers(client.cacheScope), queryFn: () => client.listWorkers(), select: (result) => result.workers, refetchInterval: 30_000, enabled: configured })
 }
 
 export function useSessions() {
   const client = usePiServerClient()
   const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.sessions(client.baseUrl), queryFn: () => client.listSessions(), refetchInterval: 20_000, enabled: configured })
+  return useQuery({ queryKey: piQueryKeys.sessions(client.cacheScope), queryFn: () => client.listSessions(), refetchInterval: 20_000, enabled: configured })
 }
 
 export function useGlobalSessions() {
   const client = usePiServerClient()
   const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.globalSessions(client.baseUrl), queryFn: () => client.listGlobalSessions(), refetchInterval: 20_000, enabled: configured })
+  return useQuery({ queryKey: piQueryKeys.globalSessions(client.cacheScope), queryFn: () => client.listGlobalSessions(), refetchInterval: 20_000, enabled: configured })
 }
 
 export function useMachineSessions() {
   const client = usePiServerClient()
   const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.machineSessions(client.baseUrl), queryFn: () => client.listMachineSessions(), refetchInterval: 30_000, enabled: configured })
+  return useQuery({ queryKey: piQueryKeys.machineSessions(client.cacheScope), queryFn: () => client.listMachineSessions(), refetchInterval: 30_000, enabled: configured })
 }
 
 export function useSessionHistory(sessionId?: string) {
   const client = usePiServerClient()
   const configured = useServerConfigured()
   return useInfiniteQuery({
-    queryKey: ["pi-server", client.baseUrl, "sessions", sessionId ?? "none", "history"],
+    queryKey: ["pi-server", client.cacheScope, "sessions", sessionId ?? "none", "history"],
     queryFn: ({ pageParam }) => client.getSessionMessages(sessionId!, pageParam),
     initialPageParam: 0,
     getNextPageParam: (page) => {
@@ -157,7 +157,7 @@ export function useSessionHistory(sessionId?: string) {
 export function useSession(sessionId?: string) {
   const client = usePiServerClient()
   return useQuery({
-    queryKey: piQueryKeys.session(client.baseUrl, sessionId ?? "none"),
+    queryKey: piQueryKeys.session(client.cacheScope, sessionId ?? "none"),
     queryFn: () => client.getSession(sessionId!),
     enabled: Boolean(sessionId),
     refetchInterval: 10_000,
@@ -174,7 +174,7 @@ export function useSessionData(
   const client = usePiServerClient()
   return useQuery({
     queryKey: piQueryKeys.sessionData(
-      client.baseUrl,
+      client.cacheScope,
       sessionId ?? "none",
       resource
     ),
@@ -188,7 +188,7 @@ export function useSessionEvents(sessionId?: string) {
   const client = usePiServerClient()
   return useQuery({
     queryKey: piQueryKeys.sessionData(
-      client.baseUrl,
+      client.cacheScope,
       sessionId ?? "none",
       "events"
     ),
@@ -205,7 +205,7 @@ export function useSessionGit(
 ) {
   const client = usePiServerClient()
   return useQuery({
-    queryKey: piQueryKeys.git(client.baseUrl, sessionId ?? "none", resource),
+    queryKey: piQueryKeys.git(client.cacheScope, sessionId ?? "none", resource),
     queryFn: () => client.getSessionGit(sessionId!, resource),
     enabled: Boolean(sessionId),
     refetchInterval: resource === "status" ? 5_000 : false,
@@ -215,7 +215,7 @@ export function useSessionGit(
 export function useSessionGitStatus(sessionId: string | undefined) {
   const client = usePiServerClient()
   return useQuery<GitStatusResponse>({
-    queryKey: piQueryKeys.git(client.baseUrl, sessionId ?? "none", "status-json"),
+    queryKey: piQueryKeys.git(client.cacheScope, sessionId ?? "none", "status-json"),
     queryFn: () => client.getSessionGitStatus(sessionId!),
     enabled: Boolean(sessionId),
     refetchInterval: 5_000,
@@ -225,7 +225,7 @@ export function useSessionGitStatus(sessionId: string | undefined) {
 export function useSessionGitFileDiff(sessionId: string | undefined, path: string, enabled = true) {
   const client = usePiServerClient()
   return useQuery<GitFileDiffResponse>({
-    queryKey: [...piQueryKeys.git(client.baseUrl, sessionId ?? "none", "file-diff"), path],
+    queryKey: [...piQueryKeys.git(client.cacheScope, sessionId ?? "none", "file-diff"), path],
     queryFn: () => client.getSessionGitFileDiff(sessionId!, path),
     enabled: Boolean(sessionId) && Boolean(path) && enabled,
     staleTime: 5_000,
@@ -235,7 +235,7 @@ export function useSessionGitFileDiff(sessionId: string | undefined, path: strin
 export function useSessionGitBranches(sessionId: string | undefined) {
   const client = usePiServerClient()
   return useQuery<GitBranchesResponse>({
-    queryKey: piQueryKeys.git(client.baseUrl, sessionId ?? "none", "branches"),
+    queryKey: piQueryKeys.git(client.cacheScope, sessionId ?? "none", "branches"),
     queryFn: () => client.getSessionGitBranches(sessionId!),
     enabled: Boolean(sessionId),
     staleTime: 10_000,
@@ -245,7 +245,7 @@ export function useSessionGitBranches(sessionId: string | undefined) {
 export function useSessionGitWorktrees(sessionId: string | undefined) {
   const client = usePiServerClient()
   return useQuery<GitWorktreesResponse>({
-    queryKey: piQueryKeys.git(client.baseUrl, sessionId ?? "none", "worktrees"),
+    queryKey: piQueryKeys.git(client.cacheScope, sessionId ?? "none", "worktrees"),
     queryFn: () => client.getSessionGitWorktrees(sessionId!),
     enabled: Boolean(sessionId),
     staleTime: 5_000,
@@ -255,7 +255,7 @@ export function useSessionGitWorktrees(sessionId: string | undefined) {
 export function useFileTree(cwd?: string) {
   const client = usePiServerClient()
   return useQuery({
-    queryKey: piQueryKeys.files(client.baseUrl, cwd ?? "none"),
+    queryKey: piQueryKeys.files(client.cacheScope, cwd ?? "none"),
     queryFn: () => client.getFileTree(cwd!),
     enabled: Boolean(cwd),
     staleTime: 10_000,
@@ -265,7 +265,7 @@ export function useFileTree(cwd?: string) {
 export function useSessionFileContent(sessionId?: string, path?: string) {
   const client = usePiServerClient()
   return useQuery({
-    queryKey: piQueryKeys.fileContent(client.baseUrl, sessionId ?? "none", path ?? "none"),
+    queryKey: piQueryKeys.fileContent(client.cacheScope, sessionId ?? "none", path ?? "none"),
     queryFn: () => client.getSessionFileContent(sessionId!, path!),
     enabled: Boolean(sessionId && path),
     staleTime: 5_000,
@@ -277,7 +277,7 @@ export function useCreateSession() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (input: CreateSessionRequest) => client.createSession(input),
-    onSuccess: () => invalidateSessionInventory(queryClient, client.baseUrl),
+    onSuccess: () => invalidateSessionInventory(queryClient, client.cacheScope),
   })
 }
 
@@ -290,7 +290,7 @@ export function useDeleteSession() {
     mutationFn: (sessionId: string) => client.deleteSession(sessionId),
     onSuccess: (_, sessionId) => {
       if (selectedSessionId === sessionId) selectSession()
-      invalidateSessionInventory(queryClient, client.baseUrl)
+      invalidateSessionInventory(queryClient, client.cacheScope)
     },
   })
 }
@@ -313,7 +313,7 @@ export function useSendPrompt(
       return client.prompt(sessionId, request)
     },
     onSuccess: (_, { sessionId }) =>
-      invalidateSession(queryClient, client.baseUrl, sessionId),
+      invalidateSession(queryClient, client.cacheScope, sessionId),
   })
 }
 
@@ -457,7 +457,7 @@ export function useActiveSessionSocket(
             setError(new Error("Session event buffer overflow; restoring conversation history"))
             setHealth((current) => ({ ...current, resynchronizing: true }))
             void queryClient.invalidateQueries({
-              queryKey: ["pi-server", client.baseUrl, "sessions", activeSessionId, "history"],
+              queryKey: ["pi-server", client.cacheScope, "sessions", activeSessionId, "history"],
             })
           }
         }
@@ -480,7 +480,7 @@ export function useActiveSessionSocket(
         setError(new Error(`Session event history gap detected (${expectedAfter} → ${received}); resynchronizing conversation`))
         setHealth((current) => ({ ...current, gap: { expectedAfter, received }, resynchronizing: true }))
         void queryClient.invalidateQueries({
-          queryKey: ["pi-server", client.baseUrl, "sessions", activeSessionId, "history"],
+          queryKey: ["pi-server", client.cacheScope, "sessions", activeSessionId, "history"],
         })
       },
       onError: (err) => { if (!disposed) setError(err) },
@@ -515,10 +515,11 @@ export function useActiveSessionSocket(
     return () => clearLiveSessionState(activeSessionId)
   }, [activeSessionId, clearLiveSessionState])
 
-  const send = useCallback(
-    (command: RpcCommand) => socketRef.current?.send(command),
-    []
-  )
+  const send = useCallback((command: RpcCommand) => {
+    const socket = socketRef.current
+    if (!socket) throw new Error("session socket is not connected")
+    socket.send(command)
+  }, [])
 
   return {
     events,

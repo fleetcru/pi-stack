@@ -1,18 +1,20 @@
 # 08 Acceptance Criteria
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 The implementation is done when:
 
 1. App builds successfully:
 
 ```powershell
-cd C:\Users\basin\Desktop\pi-companion
+cd <project-root>\pi-companion-exp
 .\gradlew.bat assembleDebug
 ```
 
 2. APK is copied to:
 
 ```text
-C:\Users\basin\Desktop\pi-companion-apk\pi-companion-debug.apk
+<artifact-directory>\pi-companion-debug.apk
 ```
 
 3. Added mock pages:

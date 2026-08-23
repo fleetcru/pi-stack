@@ -8,8 +8,23 @@ import (
 )
 
 func replaceFile(source, destination string) error {
-	if err := os.Remove(destination); err != nil && !errors.Is(err, os.ErrNotExist) {
+	backup := destination + ".previous"
+	_ = os.Remove(backup)
+	hadDestination := true
+	if err := os.Rename(destination, backup); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		hadDestination = false
+	}
+	if err := os.Rename(source, destination); err != nil {
+		if hadDestination {
+			_ = os.Rename(backup, destination)
+		}
 		return err
 	}
-	return os.Rename(source, destination)
+	if hadDestination {
+		_ = os.Remove(backup)
+	}
+	return nil
 }

@@ -223,6 +223,7 @@ export class PiServerApiError extends Error {
  */
 export class PiServerClient {
   readonly baseUrl: string
+  readonly cacheScope: string
   private readonly token?: string
   private readonly fetchFn: typeof globalThis.fetch
 
@@ -233,6 +234,7 @@ export class PiServerClient {
         "http://127.0.0.1:3141"
     )
     this.token = options.token ?? import.meta.env.VITE_PI_SERVER_AUTH_TOKEN
+    this.cacheScope = `${this.baseUrl}#${credentialFingerprint(this.token)}`
     this.fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis)
   }
 
@@ -563,6 +565,16 @@ export class PiServerClient {
     }
     return payload as T
   }
+}
+
+function credentialFingerprint(token?: string): string {
+  if (!token) return "anonymous"
+  let hash = 2166136261
+  for (let index = 0; index < token.length; index += 1) {
+    hash ^= token.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return `auth-${(hash >>> 0).toString(16)}`
 }
 
 function normalizeBaseUrl(url: string): string {
