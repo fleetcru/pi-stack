@@ -12,6 +12,11 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const remoteStatusTimeout = 5 * time.Second
+
+// distributedReservation is the hub's durable record that a remote or relay
+// run occupies admission capacity. The timer is a local recovery guard for
+// missed lifecycle events; done lets the subscriber stop promptly on release.
 type distributedReservation struct {
 	WorkerID        string    `json:"workerId"`
 	Kind            string    `json:"kind"`
@@ -21,6 +26,9 @@ type distributedReservation struct {
 	done            chan struct{}
 }
 
+// acquireDistributedRun reserves capacity before dispatching a remote prompt.
+// The reservation is recorded before the worker is contacted so a very short
+// run cannot finish before its lifecycle subscriber is attached.
 func (s *Server) acquireDistributedRun(ctx context.Context, sessionID, workerID string) bool {
 	if !s.admission.Acquire(ctx, sessionID, workerID) {
 		return false
@@ -42,6 +50,9 @@ func (s *Server) acquireDistributedRun(ctx context.Context, sessionID, workerID 
 	return true
 }
 
+// observeDistributedRun adopts a run started by another process (for example,
+// a relay). TryAcquire applies the same global/session/worker limits as local
+// prompts without double-counting an already tracked reservation.
 func (s *Server) observeDistributedRun(sessionID, workerID, kind string) {
 	if !s.admission.TryAcquire(sessionID, workerID) {
 		return
@@ -80,6 +91,8 @@ func (s *Server) distributedRunActive(sessionID string) bool {
 	return ok
 }
 
+// releaseDistributedRun is idempotent: timeouts, lifecycle events, and
+// shutdown cleanup may race to release the same reservation.
 func (s *Server) releaseDistributedRun(sessionID string) {
 	s.distributedMu.Lock()
 	reservation, ok := s.distributedRuns[sessionID]
@@ -99,6 +112,8 @@ func (s *Server) releaseDistributedRun(sessionID string) {
 	}
 }
 
+// setDistributedRunMetadata enriches a persisted reservation after the worker
+// has assigned its remote session identifier.
 func (s *Server) setDistributedRunMetadata(sessionID, kind, remoteSessionID string) {
 	s.distributedMu.Lock()
 	reservation, ok := s.distributedRuns[sessionID]
@@ -122,7 +137,7 @@ func (s *Server) remoteEventCursor(worker Worker, sessionID string) (uint64, boo
 		return 0, false
 	}
 	base.Path = strings.TrimRight(base.Path, "/") + "/v1/sessions/" + url.PathEscape(sessionID) + "/daemon-status"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), remoteStatusTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
 	if err != nil {
@@ -154,7 +169,7 @@ func (s *Server) remoteRuntimeState(worker Worker, sessionID string) (string, bo
 		return "", false, false
 	}
 	base.Path = strings.TrimRight(base.Path, "/") + "/v1/sessions/" + url.PathEscape(sessionID) + "/daemon-status"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), remoteStatusTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
 	if err != nil {
@@ -205,7 +220,7 @@ func (s *Server) subscribeRemoteRun(worker Worker, remoteSessionID, hubSessionID
 			conn, _, err := websocket.DefaultDialer.Dial(remoteURL, header)
 			if err != nil {
 				time.Sleep(backoff)
-				if backoff < 5*time.Second {
+				if backoff < remoteStatusTimeout {
 					backoff *= 2
 				}
 				continue

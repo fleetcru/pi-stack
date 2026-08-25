@@ -1,4 +1,6 @@
 [CmdletBinding()]
+# Keep the live development stack on 3142; pi-server standalone defaults to 3141.
+# This avoids confusing a separately running server with the stack launcher.
 param(
   [int]$ServerPort = 3142,
   [int]$WebPort = 5174,

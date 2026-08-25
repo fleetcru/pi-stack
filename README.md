@@ -55,6 +55,8 @@ Use the release pages above for current version numbers.
 
 Clone or download this repository and inspect the installer before running it. The installers verify release checksums and do not silently execute an unverified binary.
 
+> **Security note:** the installer is intended for a trusted deployment that you control. Use an explicit `PI_SERVER_AUTH_TOKEN` for internet-facing servers. Only use `--insecure` / `-AllowInsecure` on a loopback, trusted LAN, or authenticated Tailscale network.
+
 ### Linux with systemd
 
 ```bash
@@ -78,6 +80,8 @@ Run PowerShell as Administrator. This installer creates a `SYSTEM` startup task 
 Remote insecure mode remains available for trusted LAN or Tailscale deployments, but requires an explicit installer or launcher flag.
 
 ## Quick start (development)
+
+The development launchers bind pi-server to port **3142** and Webby to **5174**. The standalone server default is **3141**, so use the URLs printed by the launcher when testing locally.
 
 ### Prerequisites
 
@@ -104,6 +108,14 @@ Opens three windows: pi-server, Webby (Vite dev server), and a Pi TUI terminal.
 ```bash
 chmod +x start-exp-server.sh
 ./start-exp-server.sh
+```
+
+The shell launcher is server-only. To run Webby alongside it, start Vite from `pi-webby-exp`:
+
+```bash
+cd pi-webby-exp
+pnpm install
+pnpm dev -- --host 0.0.0.0 --port 5174
 ```
 
 ### Run with authentication
@@ -143,6 +155,8 @@ All configuration is via environment variables (or CLI flags for the server):
 | `PI_SERVER_PI_BINARY` | `pi` | Path to the Pi CLI executable |
 
 ## Building
+
+Run the checks for the component you changed before opening a pull request. The full validation matrix and code-ownership guidance live in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ### Server
 
@@ -229,11 +243,20 @@ pi-stack/
 └── install-exp-external-bridge.* # Relay bridge installer
 ```
 
-## Audit records
+## Maintenance and audit records
 
-- [`findings.md`](findings.md) preserves the comprehensive audit history.
-- [`REMAINING-WORK.md`](REMAINING-WORK.md) is the maintained backlog and current source of truth.
-- `pi-companion-exp/docs/archive/` contains historical plans. Use the current code, tests, OpenAPI document, and `AGENTS.md` for implemented behavior.
+Useful repository-level references:
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — setup, validation, review expectations, and safe change patterns
+- [`AGENTS.md`](AGENTS.md) — architecture invariants and subsystem-specific pitfalls
+- [`FEATURES.md`](FEATURES.md) — planned feature proposals, not necessarily implemented
+- [`REMOTE-SESSION-RECOVERY-PLAN.md`](REMOTE-SESSION-RECOVERY-PLAN.md) — recovery design notes
+- [`findings.md`](findings.md) — comprehensive audit history and investigation notes
+- [`REMAINING-WORK.md`](REMAINING-WORK.md) — maintained audit backlog and current source of truth
+
+`pi-companion-exp/docs/archive/` contains historical plans. Use the current code, tests, OpenAPI document, and `AGENTS.md` for implemented behavior.
+
+When documentation and behavior disagree, verify the launcher or package manifest first, then update both the README and the relevant detailed guide in the same change.
 
 ## License
 
