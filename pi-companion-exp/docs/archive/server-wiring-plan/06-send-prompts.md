@@ -1,5 +1,7 @@
 # 06 Sending Prompts
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Purpose: make Session Detail input send prompts to `pi-server`.
 
 Endpoint:

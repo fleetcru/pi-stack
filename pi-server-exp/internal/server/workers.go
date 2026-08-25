@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -192,8 +193,24 @@ func (s *Server) validateWorkerURL(raw string) (*url.URL, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, errors.New("worker url must be absolute http(s)")
 	}
-	if len(s.cfg.AllowedWorkerHosts) > 0 && !hostAllowed(u.Hostname(), s.cfg.AllowedWorkerHosts) {
-		return nil, errors.New("worker host not allowed")
+	if u.User != nil {
+		return nil, errors.New("worker url must not contain user credentials")
+	}
+	host := u.Hostname()
+	if len(s.cfg.AllowedWorkerHosts) > 0 {
+		if !hostAllowed(host, s.cfg.AllowedWorkerHosts) {
+			return nil, errors.New("worker host not allowed")
+		}
+		return u, nil
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil || len(ips) == 0 {
+		return nil, errors.New("worker host could not be resolved")
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return nil, errors.New("private worker hosts require PI_SERVER_ALLOWED_WORKER_HOSTS")
+		}
 	}
 	return u, nil
 }

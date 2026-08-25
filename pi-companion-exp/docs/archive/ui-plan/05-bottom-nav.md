@@ -1,5 +1,7 @@
 # 05 Bottom Navigation
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Current nav should be changed to:
 
 ```text

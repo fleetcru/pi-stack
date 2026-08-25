@@ -1,4 +1,6 @@
-# New Features
+# Feature proposals and history
+
+> Status: mixed. Global and machine session discovery are implemented. Share-token and peer-server sections remain proposals. Check the server OpenAPI document for the current API.
 
 ## 1. Global Session Discovery
 

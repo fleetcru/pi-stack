@@ -1,5 +1,6 @@
 package com.example.picompanion.ui.main
 
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -72,6 +73,7 @@ import com.example.picompanion.ui.components.TopAppBarCompact
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 
@@ -84,6 +86,7 @@ fun MainScreen(
   viewModel: HomeViewModel = viewModel(),
 ) {
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+  val context = LocalContext.current
 
   // Start/stop polling based on screen visibility to save battery.
   val lifecycleOwner = LocalLifecycleOwner.current
@@ -117,7 +120,11 @@ fun MainScreen(
       onMenuClick = onMenuClick,
       onRefresh = { viewModel.refresh() },
       onGlobalSessionClick = { id -> viewModel.attachGlobalSession(id, onSessionClick) },
-      onMachineSessionClick = { id -> viewModel.openMachineSession(id, onSessionClick) },
+      onMachineSessionClick = { id ->
+        viewModel.openMachineSession(id, onSessionClick) { message ->
+          Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        }
+      },
       onUpdateCapacity = { viewModel.updateCapacity(it) },
       modifier = modifier,
     )

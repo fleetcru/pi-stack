@@ -12,6 +12,7 @@ import com.example.picompanion.data.model.visibleMachineSessions
 import com.example.picompanion.data.repository.SessionsRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,6 +20,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class SessionsViewModel(application: Application) : AndroidViewModel(application) {
+
+  private data class CreateOutcome(
+    val sessionId: String?,
+    val error: String?,
+  )
 
   private val client = AppModule.client
   private val settingsDataStore = AppModule.settingsDataStore
@@ -85,17 +91,38 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
     }
   }
 
-  fun createSession(cwd: String) {
+  fun createSession(cwd: String, prompt: String = "", count: Int = 1) {
     viewModelScope.launch {
-      when (val result = repository.createSession(CreateSessionRequest(cwd = cwd, start = true))) {
-        is HttpResult.Success -> {
-          _createdSessionId.value = result.value.id
-          refresh()
-        }
-        is HttpResult.Failure -> {
-          // Keep current state, could show a snackbar
-        }
+      val outcomes = kotlinx.coroutines.coroutineScope {
+        (1..count.coerceIn(1, 12)).map { index ->
+          async(Dispatchers.IO) {
+            val title = if (count > 1) "New session $index" else null
+            when (val created = repository.createSession(
+              CreateSessionRequest(cwd = cwd, title = title, start = true)
+            )) {
+              is HttpResult.Success -> {
+                if (prompt.isBlank()) {
+                  CreateOutcome(created.value.id, null)
+                } else {
+                  when (val sent = repository.sendPrompt(created.value.id, prompt)) {
+                    is HttpResult.Success -> CreateOutcome(created.value.id, null)
+                    is HttpResult.Failure -> CreateOutcome(created.value.id, "Session created, but task was not sent: ${sent.userMessage}")
+                  }
+                }
+              }
+              is HttpResult.Failure -> CreateOutcome(null, created.userMessage)
+            }
+          }
+        }.awaitAll()
       }
+      val sessionIds = outcomes.mapNotNull { it.sessionId }
+      if (sessionIds.isNotEmpty()) {
+        // Keep the session list visible when creating a batch. The user can
+        // choose which thread to open instead of being moved to the last one.
+        if (count == 1) _createdSessionId.value = sessionIds.last()
+        refresh()
+      }
+      outcomes.firstOrNull { it.error != null }?.error?.let { _actionError.value = it }
     }
   }
 

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -41,6 +42,7 @@ type Server struct {
 	idempotency               map[string]time.Time
 	resolvedRoots             []string // pre-resolved allowed roots (symlinks evaluated)
 	stopHeartbeat             chan struct{}
+	shutdownOnce              sync.Once
 	sessionBridge             *SessionBridge
 	distributedMu             sync.Mutex
 	distributedPersistMu      sync.Mutex
@@ -81,6 +83,15 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		distributedPath:   filepath.Join(cfg.DataDir, "distributed-runs.json"),
 		startedAt:         time.Now(),
 		admin:             newAdminState(cfg),
+	}
+	s.httpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return http.ErrUseLastResponse
+		}
+		if _, err := s.validateWorkerURL(req.URL.String()); err != nil {
+			return err
+		}
+		return nil
 	}
 	s.external.onLifecycle = func(sessionID, eventType string) {
 		if eventType == "agent_start" {
@@ -155,10 +166,16 @@ func New(cfg Config, logger *slog.Logger) *Server {
 
 func (s *Server) ListenAndServe() error { return s.httpSrv.ListenAndServe() }
 
+func (s *Server) maxSessionsAtomicValue() int64 {
+	return atomic.LoadInt64(&s.maxSessionsAtomic)
+}
+
 func (s *Server) Shutdown(ctx context.Context) error {
-	close(s.stopHeartbeat)
-	s.stopWatchers()
-	s.sessions.CloseAll(ctx)
+	s.shutdownOnce.Do(func() {
+		close(s.stopHeartbeat)
+		s.stopWatchers()
+		s.sessions.CloseAll(ctx)
+	})
 	return s.httpSrv.Shutdown(ctx)
 }
 

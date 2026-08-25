@@ -84,7 +84,10 @@ func NewPiProcess(spec SessionSpec, cfg Config, logger *slog.Logger) *PiProcess 
 	return &PiProcess{id: spec.ID, cfg: cfg, spec: spec, logger: logger.With("session", spec.ID, "cwd", spec.CWD), waiters: map[string]responseWaiter{}, subs: map[chan RPCEvent]struct{}{}, eventMax: eventMax, eventMaxBytes: eventMaxBytes, runtimeState: "created", taskID: spec.ID, runID: newRequestID()}
 }
 
-func (p *PiProcess) Start(_ context.Context) error {
+func (p *PiProcess) Start(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.running {
@@ -119,6 +122,9 @@ func (p *PiProcess) Start(_ context.Context) error {
 		return err
 	}
 	applyProcessAttrs(cmd)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := cmd.Start(); err != nil {
 		return err
 	}

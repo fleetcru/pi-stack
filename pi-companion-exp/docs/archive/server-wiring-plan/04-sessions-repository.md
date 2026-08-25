@@ -1,5 +1,7 @@
 # 04 Sessions Repository
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Purpose: replace `mockSessions` with real server sessions.
 
 Create:

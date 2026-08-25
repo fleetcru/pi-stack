@@ -1,5 +1,7 @@
 # 04 Settings Page
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Create:
 
 ```text
@@ -20,7 +22,7 @@ Show mock/example values:
 
 ## App behavior
 
-- Default project root: `C:/Users/basin`
+- Default project root: `<user-home>`
 - Reconnect WebSocket on launch
 - Remember last selected session
 - Dark theme, enabled/locked for now

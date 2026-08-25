@@ -1,5 +1,6 @@
 package com.example.picompanion.ui.main
 
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.layout.Box
@@ -16,6 +17,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.example.picompanion.AppRoute
@@ -33,6 +35,8 @@ import com.example.picompanion.ui.settings.SettingsScreen
 import com.example.picompanion.ui.workers.WorkersScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -60,6 +64,7 @@ fun ShellScreen(
   val settingsDataStore = AppModule.settingsDataStore
   val settings by settingsDataStore.settingsFlow.collectAsStateWithLifecycle(initialValue = AppSettings())
   val coroutineScope = rememberCoroutineScope()
+  val context = LocalContext.current
 
   LaunchedEffect(drawerOpen) {
     if (drawerOpen) {
@@ -131,15 +136,40 @@ fun ShellScreen(
       visible = showNewSessionBrowser,
       server = settings.activeServer,
       onDismiss = { showNewSessionBrowser = false },
-      onSelect = { cwd ->
+      onSelect = { cwd, prompt, count ->
         showNewSessionBrowser = false
         coroutineScope.launch {
           val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
-          val created = withContext(Dispatchers.IO) {
-            client.createSession(server, CreateSessionRequest(cwd = cwd, start = true))
+          val outcomes = kotlinx.coroutines.coroutineScope {
+            (1..count.coerceIn(1, 12)).map { index ->
+              async(Dispatchers.IO) {
+                when (val created = client.createSession(
+                  server,
+                  CreateSessionRequest(
+                    cwd = cwd,
+                    title = if (count > 1) "New session $index" else null,
+                    start = true,
+                  ),
+                )) {
+                  is HttpResult.Failure -> null to created.userMessage
+                  is HttpResult.Success -> {
+                    val promptFailure = if (prompt.isNotBlank()) {
+                      (client.sendPrompt(server, created.value.id, prompt) as? HttpResult.Failure)?.userMessage
+                    } else null
+                    created.value.id to promptFailure
+                  }
+                }
+              }
+            }.awaitAll()
           }
-          if (created is HttpResult.Success) {
-            onNavigate(AppRoute.SessionDetail(created.value.id))
+          val createdIds = outcomes.mapNotNull { it.first }
+          val failures = outcomes.mapNotNull { it.second }
+          if (failures.isNotEmpty()) {
+            val message = if (createdIds.isEmpty()) failures.first() else "${createdIds.size} of ${outcomes.size} sessions completed without errors"
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+          }
+          if (count == 1) {
+            createdIds.lastOrNull()?.let { onNavigate(AppRoute.SessionDetail(it)) }
           }
         }
       },

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,7 +91,15 @@ func (d *serverDownloader) ensureLatest(ctx context.Context, destination string)
 			return release.TagName, nil
 		}
 	}
-	if err := d.downloadAsset(ctx, asset, destination); err != nil {
+	checksums, err := findAsset(release.Assets, "SHA256SUMS")
+	if err != nil {
+		return "", fmt.Errorf("release %s: %w", release.TagName, err)
+	}
+	expected, err := d.expectedChecksum(ctx, checksums, assetName)
+	if err != nil {
+		return "", err
+	}
+	if err := d.downloadAsset(ctx, asset, destination, expected); err != nil {
 		return "", err
 	}
 	if err := atomicWriteFile(versionPath, []byte(release.TagName+"\n"), 0o644); err != nil {
@@ -138,7 +148,37 @@ func (d *serverDownloader) latestRelease(ctx context.Context) (githubRelease, er
 	return githubRelease{}, errors.New("no stable server-v* GitHub release was found")
 }
 
-func (d *serverDownloader) downloadAsset(ctx context.Context, asset releaseAsset, destination string) error {
+func (d *serverDownloader) expectedChecksum(ctx context.Context, asset releaseAsset, name string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, asset.BrowserDownloadURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "pi-server-tray")
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("download checksums: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("download checksums: server returned %s", resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", fmt.Errorf("read checksums: %w", err)
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && strings.TrimPrefix(fields[1], "*") == name {
+			if _, err := hex.DecodeString(fields[0]); err != nil || len(fields[0]) != sha256.Size*2 {
+				return "", errors.New("release checksum is invalid")
+			}
+			return strings.ToLower(fields[0]), nil
+		}
+	}
+	return "", fmt.Errorf("release checksums do not contain %s", name)
+}
+
+func (d *serverDownloader) downloadAsset(ctx context.Context, asset releaseAsset, destination, expectedChecksum string) error {
 	if asset.BrowserDownloadURL == "" {
 		return errors.New("release asset has no download URL")
 	}
@@ -183,6 +223,14 @@ func (d *serverDownloader) downloadAsset(ctx context.Context, asset releaseAsset
 	}
 	if asset.Size > 0 && written != asset.Size {
 		return fmt.Errorf("download %s: received %d bytes, expected %d", asset.Name, written, asset.Size)
+	}
+	contents, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return fmt.Errorf("verify %s: %w", asset.Name, err)
+	}
+	digest := sha256.Sum256(contents)
+	if hex.EncodeToString(digest[:]) != strings.ToLower(expectedChecksum) {
+		return fmt.Errorf("verify %s: checksum mismatch", asset.Name)
 	}
 	if err := os.Chmod(tmpPath, 0o755); err != nil {
 		return fmt.Errorf("make server executable: %w", err)

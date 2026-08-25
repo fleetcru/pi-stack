@@ -1,16 +1,18 @@
 # 10 Testing Checklist
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Build:
 
 ```powershell
-cd C:\Users\basin\Desktop\pi-companion
+cd <project-root>\pi-companion-exp
 .\gradlew.bat assembleDebug
 ```
 
 Copy APK:
 
 ```powershell
-Copy-Item .\app\build\outputs\apk\debug\app-debug.apk C:\Users\basin\Desktop\pi-companion-apk\pi-companion-debug.apk -Force
+Copy-Item .\app\build\outputs\apk\debug\app-debug.apk <artifact-directory>\pi-companion-debug.apk -Force
 ```
 
 Manual server test:
@@ -18,8 +20,8 @@ Manual server test:
 1. Start pi-server:
 
 ```powershell
-cd C:\Users\basin\pi-server
-$env:PI_SERVER_ALLOWED_ROOTS = "C:\Users\basin\pi-server,C:\Users\basin\Desktop"
+cd <project-root>\pi-server-exp
+$env:PI_SERVER_ALLOWED_ROOTS = "<project-root>\pi-server-exp,<project-root>"
 go run .\cmd\pi-server --addr 0.0.0.0:3141
 ```
 

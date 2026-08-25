@@ -99,8 +99,9 @@ export function ServerConnectionsDialog({
           <Input value={token} onChange={(event) => setToken(event.target.value)} placeholder="Auth token (raw value; do not include Bearer)" type="password" />
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             <Checkbox checked={rememberToken} onCheckedChange={(checked: boolean) => setRememberToken(checked)} />
-            Remember token on this browser
+            Remember token on this device
           </label>
+          {rememberToken && <p className="text-xs text-amber-600 dark:text-amber-400">This stores the bearer token in local app storage. Other software running as your user may be able to read it.</p>}
         </div>
         <DialogFooter>
           <Button type="button" onClick={add} disabled={!baseUrl.trim()}>Add server</Button>

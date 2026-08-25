@@ -1,5 +1,7 @@
 # 01 Mock Data
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Create:
 
 ```text
@@ -39,9 +41,9 @@ Add example lists:
 
 ```kotlin
 val mockSessions = listOf(
-  MockSession("1", "Build Android companion", "pi-companion", "C:/Users/basin/Desktop/pi-companion", "Running", "Updating Compose dashboard components", "now"),
-  MockSession("2", "Pi server hardening", "pi-server", "C:/Users/basin/pi-server", "Idle", "go test ./... passed", "12m"),
-  MockSession("3", "Browser test client", "pi-server-full-test", "C:/Users/basin/Desktop/pi-server-full-test", "Stopped", "Waiting for next task", "1h"),
+  MockSession("1", "Build Android companion", "pi-companion", "<project-root>/pi-companion-exp", "Running", "Updating Compose dashboard components", "now"),
+  MockSession("2", "Pi server hardening", "pi-server", "<project-root>/pi-server-exp", "Idle", "go test ./... passed", "12m"),
+  MockSession("3", "Browser test client", "pi-server-full-test", "<project-root>/pi-server-full-test", "Stopped", "Waiting for next task", "1h"),
 )
 
 val mockChatMessages = listOf(

@@ -1,5 +1,26 @@
 import { describe, expect, it } from "vitest"
-import { findExtensionRequest, IncrementalTimeline, isNoiseFilePath } from "@pi-stack/webby-shared/session-workspace"
+import { buildHistory, findExtensionRequest, IncrementalTimeline, isNoiseFilePath } from "@pi-stack/webby-shared/session-workspace"
+
+describe("shared history timeline", () => {
+  it("parses Pi toolCall and toolResult records", () => {
+    const timeline = buildHistory({ data: { messages: [
+      { role: "assistant", timestamp: 1, content: [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "README.md" } }] },
+      { role: "toolResult", timestamp: 2, toolCallId: "call-1", content: [{ type: "text", text: "hello" }] },
+    ] } })
+    expect(timeline).toEqual([
+      expect.objectContaining({ id: "tool-call-1", name: "read", args: { path: "README.md" }, done: false }),
+      expect.objectContaining({ id: "tool-call-1", name: "read", output: "hello", done: true }),
+    ])
+  })
+
+  it("parses standalone fallback tool records without a role", () => {
+    const timeline = buildHistory({ data: { messages: [
+      { _historyType: "tool_use", id: "call-2", name: "bash", input: { command: "pwd" } },
+      { _historyType: "tool_result", tool_use_id: "call-2", content: [{ type: "text", text: "/tmp" }] },
+    ] } })
+    expect(timeline.at(-1)).toEqual(expect.objectContaining({ id: "tool-call-2", name: "bash", output: "/tmp", done: true }))
+  })
+})
 
 describe("IncrementalTimeline", () => {
   it("applies only new deltas and survives a shifted event window", () => {

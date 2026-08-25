@@ -16,6 +16,9 @@
 .PARAMETER AllowInsecure
     Allow binding to 0.0.0.0 without auth enforcement. Use only on trusted networks.
 
+.PARAMETER SourceRevision
+    Exact Git commit used only when a release binary is unavailable.
+
 .EXAMPLE
     .\install-server.ps1
     .\install-server.ps1 -Port 9000 -AuthToken "my-secret"
@@ -25,10 +28,13 @@
 param(
     [int]$Port = 3142,
     [string]$AuthToken = "",
-    [switch]$AllowInsecure
+    [switch]$AllowInsecure,
+    [ValidatePattern('^[0-9a-fA-F]{40}$')]
+    [string]$SourceRevision = "098d635625f0bdb1edbb2e84f148d093afcfe8da"
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "windows-installer-common.ps1")
 
 # ── Config ────────────────────────────────────────────────
 $Repo = "fleetcru/pi-stack"
@@ -36,6 +42,7 @@ $InstallDir = "C:\pi-server"
 $DataDir = Join-Path $InstallDir "data"
 $ConfigDir = Join-Path $InstallDir "config"
 $BinaryUrl = "https://github.com/$Repo/releases/latest/download/pi-server-windows-amd64.exe"
+$ChecksumUrl = "https://github.com/$Repo/releases/latest/download/SHA256SUMS"
 $TaskName = "PiServer"
 
 # ── Helpers ───────────────────────────────────────────────
@@ -49,7 +56,7 @@ if (-not $AuthToken) {
     $bytes = New-Object byte[] 32
     [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
     $AuthToken = [Convert]::ToBase64String($bytes) -replace '[/+=]', '' | ForEach-Object { $_.Substring(0, [Math]::Min(32, $_.Length)) }
-    Write-Step "Generated auth token: $AuthToken"
+    Write-Step "Generated an auth token"
 }
 
 # ── Create directories ────────────────────────────────────
@@ -64,8 +71,13 @@ Write-Step "Downloading pi-server..."
 $ExePath = Join-Path $InstallDir "pi-server.exe"
 
 try {
+    $ChecksumPath = Join-Path $env:TEMP "pi-server-SHA256SUMS"
     Invoke-WebRequest -Uri $BinaryUrl -OutFile $ExePath -UseBasicParsing
-    Write-Ok "Downloaded pre-built binary"
+    Invoke-WebRequest -Uri $ChecksumUrl -OutFile $ChecksumPath -UseBasicParsing
+    $ExpectedHash = Get-ExpectedReleaseHash -ChecksumPath $ChecksumPath -AssetName "pi-server-windows-amd64.exe"
+    Assert-ReleaseChecksum -FilePath $ExePath -ExpectedHash $ExpectedHash
+    Remove-Item -LiteralPath $ChecksumPath -Force -ErrorAction SilentlyContinue
+    Write-Ok "Downloaded and verified pre-built binary"
 } catch {
     Write-Warn "No pre-built binary found. Building from source..."
     
@@ -76,9 +88,14 @@ try {
     $TmpDir = Join-Path $env:TEMP "pi-stack-build"
     if (Test-Path $TmpDir) { Remove-Item -Recurse -Force $TmpDir }
     
-    Write-Step "Cloning repository..."
-    git clone --depth 1 "https://github.com/$Repo.git" $TmpDir
-    
+    Write-Step "Fetching pinned source revision $SourceRevision..."
+    New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null
+    git -C $TmpDir init
+    git -C $TmpDir remote add origin "https://github.com/$Repo.git"
+    git -C $TmpDir fetch --depth 1 origin $SourceRevision
+    git -C $TmpDir checkout --detach FETCH_HEAD
+    if ($LASTEXITCODE -ne 0) { Write-Fail "Could not fetch pinned source revision $SourceRevision" }
+
     Write-Step "Building pi-server..."
     Push-Location (Join-Path $TmpDir "pi-server-exp")
     go build -o $ExePath ./cmd/pi-server
@@ -91,6 +108,9 @@ try {
 # ── Write config ──────────────────────────────────────────
 Write-Step "Writing configuration..."
 $EnvFile = Join-Path $ConfigDir "pi-server.env"
+$PiCommand = Get-Command pi -ErrorAction SilentlyContinue
+if (-not $PiCommand) { Write-Fail "Pi CLI is not installed or is not available in PATH." }
+$PiBinary = $PiCommand.Source
 
 $EnvContent = @"
 # pi-server configuration
@@ -100,8 +120,9 @@ $EnvContent = @"
 
 PI_SERVER_ADDR=0.0.0.0:$Port
 PI_SERVER_DATA_DIR=$DataDir
-PI_SERVER_ALLOWED_ROOTS=$DataDir
+PI_SERVER_ALLOWED_ROOTS=$env:USERPROFILE
 PI_SERVER_AUTH_TOKEN=$AuthToken
+PI_SERVER_PI_BINARY=$PiBinary
 "@
 
 # Only add ALLOW_INSECURE if explicitly requested
@@ -111,7 +132,10 @@ if ($AllowInsecure) {
 }
 
 Set-Content -Path $EnvFile -Value $EnvContent -Encoding UTF8
-Write-Ok "Config written to $EnvFile"
+$CurrentUserSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+& icacls.exe $EnvFile /inheritance:r /grant:r "*$CurrentUserSid`:(R)" "*S-1-5-18`:(F)" "*S-1-5-32-544`:(F)" | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Fail "Could not restrict ACLs on $EnvFile" }
+Write-Ok "Config written to $EnvFile with restricted ACLs"
 
 # ── Create wrapper script ────────────────────────────────
 Write-Step "Creating service wrapper..."
@@ -143,7 +167,7 @@ Write-Step "Creating scheduled task..."
 
 $Action = New-ScheduledTaskAction `
     -Execute "powershell.exe" `
-    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$WrapperPath`"" `
+    -Argument "-NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File `"$WrapperPath`"" `
     -WorkingDirectory $InstallDir
 
 $Trigger = New-ScheduledTaskTrigger -AtStartup
@@ -199,6 +223,6 @@ Write-Host "    Start-ScheduledTask -TaskName '$TaskName'" -ForegroundColor Cyan
 Write-Host "    Stop-ScheduledTask -TaskName '$TaskName'" -ForegroundColor Cyan
 Write-Host "    Get-ScheduledTask -TaskName '$TaskName'" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Auth token: $AuthToken" -ForegroundColor Cyan
+Write-Host "  Auth token: stored in $EnvFile" -ForegroundColor Cyan
 Write-Host "  Save this token — it is required for all API connections." -ForegroundColor Yellow
 Write-Host "==================================================" -ForegroundColor Green

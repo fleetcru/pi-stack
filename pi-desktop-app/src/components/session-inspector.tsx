@@ -228,12 +228,28 @@ function Workspace({ session }: { session: ApiSession }) {
   const [commitMessage, setCommitMessage] = useState("")
   const [mergeBranch, setMergeBranch] = useState("")
   const [remote, setRemote] = useState("origin")
+  const [actionError, setActionError] = useState<string>()
+  const [actionPending, setActionPending] = useState(false)
   const content = useSessionFileContent(session.id, selectedPath)
+  async function runGitAction(action: () => Promise<unknown>, onSuccess?: () => void | Promise<unknown>) {
+    if (actionPending) return
+    setActionPending(true)
+    setActionError(undefined)
+    try {
+      await action()
+      await onSuccess?.()
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Git action failed")
+    } finally {
+      setActionPending(false)
+    }
+  }
   const status = gitStatus.data?.status
   return (
     <ScrollArea className="h-full">
       <div className="space-y-5 p-4">
         <Section title="Git">
+          {actionError && <p role="alert" className="mb-2 text-xs text-destructive">{actionError}</p>}
           <div className="flex items-center gap-2 text-xs">
             <GitBranch className="size-3.5" />
             <span className="font-medium">{status?.branch || git.data?.output.split("\\n")[0] || "No Git repository"}</span>
@@ -275,17 +291,17 @@ function Workspace({ session }: { session: ApiSession }) {
               {git.isError && <p className="text-destructive">Git status unavailable.</p>}
               <div className="space-y-1 border-t border-border/60 pt-2">
                 <Input placeholder="commit message" value={commitMessage} onChange={(event) => setCommitMessage(event.target.value)} />
-                <Button size="sm" disabled={!commitMessage.trim()} onClick={() => { if (window.confirm("Create a commit with all current changes?")) void client.commitSessionGit(session.id, commitMessage.trim()).then(() => { setCommitMessage(""); return gitStatus.refetch() }) }}>Commit all changes</Button>
+                <Button size="sm" disabled={actionPending || !commitMessage.trim()} onClick={() => { if (window.confirm("Create a commit with all current changes?")) void runGitAction(() => client.commitSessionGit(session.id, commitMessage.trim()), async () => { setCommitMessage(""); await gitStatus.refetch() }) }}>Commit all changes</Button>
                 <div className="flex gap-1">
                   <Input placeholder="branch to merge" value={mergeBranch} onChange={(event) => setMergeBranch(event.target.value)} />
-                  <Button size="sm" variant="outline" disabled={!mergeBranch.trim()} onClick={() => { if (window.confirm(`Merge ${mergeBranch} into the current branch?`)) void client.mergeSessionGit(session.id, mergeBranch.trim()).then(() => { setMergeBranch(""); return gitStatus.refetch() }) }}>Merge</Button>
+                  <Button size="sm" variant="outline" disabled={actionPending || !mergeBranch.trim()} onClick={() => { if (window.confirm(`Merge ${mergeBranch} into the current branch?`)) void runGitAction(() => client.mergeSessionGit(session.id, mergeBranch.trim()), async () => { setMergeBranch(""); await gitStatus.refetch() }) }}>Merge</Button>
                 </div>
                 <div className="flex gap-1">
                   <Input placeholder="remote" value={remote} onChange={(event) => setRemote(event.target.value)} />
-                  <Button size="sm" variant="outline" onClick={() => { if (window.confirm(`Pull from ${remote}?`)) void client.pullSessionGit(session.id, remote).then(() => gitStatus.refetch()) }}>Pull</Button>
-                  <Button size="sm" variant="outline" onClick={() => { if (window.confirm(`Push to ${remote}?`)) void client.pushSessionGit(session.id, remote).then(() => gitStatus.refetch()) }}>Push</Button>
+                  <Button size="sm" variant="outline" disabled={actionPending} onClick={() => { if (window.confirm(`Pull from ${remote}?`)) void runGitAction(() => client.pullSessionGit(session.id, remote), () => gitStatus.refetch()) }}>Pull</Button>
+                  <Button size="sm" variant="outline" disabled={actionPending} onClick={() => { if (window.confirm(`Push to ${remote}?`)) void runGitAction(() => client.pushSessionGit(session.id, remote), () => gitStatus.refetch()) }}>Push</Button>
                 </div>
-                <Button size="sm" variant="ghost" onClick={() => void client.abortGitMerge(session.id).then(() => gitStatus.refetch())}>Abort merge</Button>
+                <Button size="sm" variant="ghost" disabled={actionPending} onClick={() => void runGitAction(() => client.abortGitMerge(session.id), () => gitStatus.refetch())}>Abort merge</Button>
               </div>
             </div>
           )}
@@ -299,8 +315,8 @@ function Workspace({ session }: { session: ApiSession }) {
                   <div className="font-medium">{item.branch || "detached"}</div>
                   <div className="truncate text-muted-foreground">{item.path}</div>
                   <div className="mt-1 flex gap-1">
-                    <Button size="xs" variant="outline" onClick={() => void client.createSession({ cwd: item.path, start: true }).then(() => undefined)}>Open session</Button>
-                    <Button size="xs" variant="ghost" onClick={() => void client.removeSessionWorktree(session.id, item.path).then(() => worktrees.refetch())}>Remove</Button>
+                    <Button size="xs" variant="outline" disabled={actionPending} onClick={() => void runGitAction(() => client.createSession({ cwd: item.path, start: true }))}>Open session</Button>
+                    <Button size="xs" variant="ghost" disabled={actionPending} onClick={() => void runGitAction(() => client.removeSessionWorktree(session.id, item.path), () => worktrees.refetch())}>Remove</Button>
                   </div>
                 </div>
               ))}
@@ -313,7 +329,7 @@ function Workspace({ session }: { session: ApiSession }) {
                   <input type="checkbox" checked={existingBranch} onChange={(event) => setExistingBranch(event.target.checked)} />
                   Use existing branch
                 </label>
-                <Button size="sm" className="w-full" disabled={!branch || !worktreePath} onClick={() => void client.createSessionWorktree(session.id, { path: worktreePath, branch, startPoint: existingBranch ? undefined : startPoint || undefined, existingBranch }).then(() => { setBranch(""); setStartPoint(""); setWorktreePath(""); return worktrees.refetch() })}>{existingBranch ? "Create from existing branch" : "Create new branch"}</Button>
+                <Button size="sm" className="w-full" disabled={actionPending || !branch || !worktreePath} onClick={() => void runGitAction(() => client.createSessionWorktree(session.id, { path: worktreePath, branch, startPoint: existingBranch ? undefined : startPoint || undefined, existingBranch }), async () => { setBranch(""); setStartPoint(""); setWorktreePath(""); await worktrees.refetch() })}>{existingBranch ? "Create from existing branch" : "Create new branch"}</Button>
               </div>
             </div>
           )}
@@ -375,7 +391,12 @@ function Settings({ session }: { session: ApiSession }) {
     )?.messages ?? []
   const [title, setTitle] = useState(session.title ?? "")
   const [project, setProject] = useState(session.project ?? "")
-  const [autoRetry, setAutoRetry] = useState(true)
+  const [autoRetry, setAutoRetry] = useState(state?.autoRetryEnabled ?? true)
+  const [previousAutoRetry, setPreviousAutoRetry] = useState(state?.autoRetryEnabled)
+  if (state?.autoRetryEnabled !== undefined && previousAutoRetry !== state.autoRetryEnabled) {
+    setPreviousAutoRetry(state.autoRetryEnabled)
+    setAutoRetry(state.autoRetryEnabled)
+  }
   // Sync local state when the session prop changes (e.g., after server-side rename).
   // Track previous prop values via state to avoid useEffect cascading renders.
   const [prevSessionTitle, setPrevSessionTitle] = useState(session.title)
@@ -442,27 +463,31 @@ function Settings({ session }: { session: ApiSession }) {
                 .then(refresh)
             }
           />
-          <ToggleRow
-            label="Auto retry"
-            checked={autoRetry}
-            onChange={(checked) => {
-              setAutoRetry(checked)
-              void client.sessionPost(session.id, "auto-retry", {
-                enabled: checked,
-              })
-            }}
-          />
-          <ToggleRow
-            label="Auto compact"
-            checked={state?.autoCompactionEnabled ?? false}
-            onChange={(checked) =>
-              void client
-                .sessionPost(session.id, "auto-compaction", {
+          {state?.autoRetryEnabled !== undefined && (
+            <ToggleRow
+              label="Auto retry"
+              checked={autoRetry}
+              onChange={(checked) => {
+                setAutoRetry(checked)
+                void client.sessionPost(session.id, "auto-retry", {
                   enabled: checked,
                 })
-                .then(refresh)
-            }
-          />
+              }}
+            />
+          )}
+          {state?.autoCompactionEnabled !== undefined && (
+            <ToggleRow
+              label="Auto compact"
+              checked={state.autoCompactionEnabled}
+              onChange={(checked) =>
+                void client
+                  .sessionPost(session.id, "auto-compaction", {
+                    enabled: checked,
+                  })
+                  .then(refresh)
+              }
+            />
+          )}
         </Section>
         <Section title="Session">
           <div className="grid grid-cols-2 gap-2">
@@ -829,6 +854,7 @@ type StateData = {
   pendingMessageCount?: number
   messageCount?: number
   autoCompactionEnabled?: boolean
+  autoRetryEnabled?: boolean
 }
 type StatsData = {
   totalMessages?: number

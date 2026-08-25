@@ -296,7 +296,7 @@ func (s *Server) openMachineSession(w http.ResponseWriter, r *http.Request, mach
 	spec := SessionSpec{ID: NewSessionID(), CWD: found.CWD, Args: []string{"--session", found.Path}, SessionPath: found.Path, Managed: true, Transport: "rpc", Status: "created", Title: filepath.Base(found.CWD)}
 	p := NewPiProcess(spec, s.cfg, s.logger)
 	p.onMessageEnd = func() { s.invalidateHistoryCache(spec.ID) }
-	if err := s.sessions.AddIfCapacity(p, spec, s.cfg.MaxSessions); err != nil {
+	if err := s.sessions.AddIfCapacity(p, spec, int(s.maxSessionsAtomicValue())); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}

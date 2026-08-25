@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -109,7 +110,9 @@ func authMiddleware(token string, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if r.Header.Get("Authorization") != "Bearer "+token {
+		expected := []byte("Bearer " + token)
+		provided := []byte(r.Header.Get("Authorization"))
+		if subtle.ConstantTimeCompare(provided, expected) != 1 {
 			writeErrorCode(w, r, http.StatusUnauthorized, CodeUnauthorized, "unauthorized")
 			return
 		}

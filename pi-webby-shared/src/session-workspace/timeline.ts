@@ -244,6 +244,28 @@ export function buildHistory(
   return (data?.messages ?? []).flatMap(
     (message, index): TimelineItem[] => {
       const role = String(message.role ?? "")
+      const historyType = String(message._historyType ?? "")
+      if (historyType === "tool_use") {
+        const id = String(message.id ?? `history-${index}`)
+        const name = String(message.name ?? "tool")
+        const args = typeof message.input === "object" && message.input !== null
+          ? message.input as Record<string, unknown>
+          : undefined
+        toolCalls.set(id, { name, args })
+        return [{ id: `tool-${id}`, kind: "tool", name, args, done: false }]
+      }
+      if (historyType === "tool_result" || role === "tool") {
+        const id = String(message.toolCallId ?? message.tool_use_id ?? message.id ?? `history-${index}`)
+        const call = toolCalls.get(id)
+        return [{
+          id: `tool-${id}`,
+          kind: "tool",
+          name: String(message.toolName ?? call?.name ?? "tool"),
+          args: call?.args,
+          output: contentText(message.content),
+          done: true,
+        }]
+      }
       const assistantToolCalls = role === "assistant" ? extractToolCalls(message.content) : []
       if (role === "assistant") rememberToolCalls(message.content, toolCalls)
       const timestamp = message.timestamp ?? index
@@ -299,14 +321,17 @@ function extractToolCalls(content: unknown): HistoryToolCall[] {
   if (!Array.isArray(content)) return []
   return content.flatMap((part): HistoryToolCall[] => {
     if (typeof part !== "object" || part === null) return []
-    const toolCall = part as { type?: unknown; id?: unknown; name?: unknown; arguments?: unknown }
-    if (toolCall.type !== "toolCall" || typeof toolCall.id !== "string") return []
+    const toolCall = part as { type?: unknown; id?: unknown; name?: unknown; arguments?: unknown; input?: unknown }
+    if (toolCall.type !== "toolCall" && toolCall.type !== "tool_use") return []
+    if (typeof toolCall.id !== "string") return []
     return [{
       id: toolCall.id,
       name: typeof toolCall.name === "string" ? toolCall.name : "tool",
       args: typeof toolCall.arguments === "object" && toolCall.arguments !== null
         ? toolCall.arguments as Record<string, unknown>
-        : undefined,
+        : typeof toolCall.input === "object" && toolCall.input !== null
+          ? toolCall.input as Record<string, unknown>
+          : undefined,
     }]
   })
 }

@@ -2,22 +2,8 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager,
+    WindowEvent,
 };
-
-#[tauri::command]
-fn send_notification(
-    app: tauri::AppHandle,
-    title: String,
-    body: String,
-) -> Result<(), String> {
-    use tauri_plugin_notification::NotificationExt;
-    app.notification()
-        .builder()
-        .title(&title)
-        .body(&body)
-        .show()
-        .map_err(|e| e.to_string())
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -70,9 +56,20 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            // Keep the desktop client and its session connections alive when the
+            // window is closed. The tray remains the explicit quit path.
+            if let Some(window) = app.get_webview_window("main") {
+                let tray_window = window.clone();
+                window.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = tray_window.hide();
+                    }
+                });
+            }
+
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![send_notification])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

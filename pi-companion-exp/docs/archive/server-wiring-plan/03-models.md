@@ -1,5 +1,7 @@
 # 03 API Models
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Purpose: define serializable models matching `pi-server` responses, while keeping UI models stable.
 
 Create:

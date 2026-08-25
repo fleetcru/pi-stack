@@ -2,8 +2,17 @@ name: Build Pi Server Tray
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'tray-v*'
+    paths:
+      - 'pi-server-tray/**'
+      - '.github/workflows/build-tray.yml'
+  pull_request:
+    paths:
+      - 'pi-server-tray/**'
+      - '.github/workflows/build-tray.yml'
   workflow_dispatch:
     inputs:
       version_name:
@@ -58,7 +67,7 @@ jobs:
           cache-dependency-path: pi-server-tray/go.sum
 
       - name: Test
-        run: go test ./...
+        run: go test ./... -race -count=1
 
       - name: Vet
         run: go vet ./...

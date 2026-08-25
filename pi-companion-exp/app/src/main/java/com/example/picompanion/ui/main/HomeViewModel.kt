@@ -175,12 +175,15 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     super.onCleared()
   }
 
-  fun openMachineSession(machineId: String, onOpened: (String) -> Unit) {
+  fun openMachineSession(machineId: String, onOpened: (String) -> Unit, onError: (String) -> Unit) {
     viewModelScope.launch {
       val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
       when (val result = kotlinx.coroutines.withContext(Dispatchers.IO) { client.openMachineSession(server, machineId) }) {
         is HttpResult.Success -> onOpened(result.value.id)
-        is HttpResult.Failure -> refresh(showLoading = false)
+        is HttpResult.Failure -> {
+          onError(result.userMessage)
+          refresh(showLoading = false)
+        }
       }
     }
   }

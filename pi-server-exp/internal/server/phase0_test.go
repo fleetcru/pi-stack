@@ -18,14 +18,15 @@ func newTestServer(t *testing.T, auth string) *Server {
 	t.Helper()
 	dir := t.TempDir()
 	cfg := Config{
-		Addr:            "127.0.0.1:0",
-		DataDir:         dir,
-		CWD:             dir,
-		AllowedRoots:    []string{dir},
-		AuthToken:       auth,
-		MaxSessions:     4,
-		RequestTimeout:  5 * time.Second,
-		ShutdownTimeout: 2 * time.Second,
+		Addr:               "127.0.0.1:0",
+		DataDir:            dir,
+		CWD:                dir,
+		AllowedRoots:       []string{dir},
+		AllowedWorkerHosts: []string{"127.0.0.1"},
+		AuthToken:          auth,
+		MaxSessions:        4,
+		RequestTimeout:     5 * time.Second,
+		ShutdownTimeout:    2 * time.Second,
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return New(cfg, logger)

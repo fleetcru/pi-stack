@@ -88,7 +88,10 @@ func (s *Server) sessionMultiplexWebSocket(w http.ResponseWriter, r *http.Reques
 					continue
 				}
 				subsMu.Lock()
-				alreadySubbed := subs[sessionID] != nil
+				_, alreadySubbed := subs[sessionID]
+				if !alreadySubbed {
+					subs[sessionID] = &sessionSub{}
+				}
 				subsMu.Unlock()
 				if alreadySubbed {
 					continue
@@ -98,7 +101,9 @@ func (s *Server) sessionMultiplexWebSocket(w http.ResponseWriter, r *http.Reques
 			case "unsubscribe":
 				subsMu.Lock()
 				if sub, ok := subs[sessionID]; ok {
-					sub.unsub()
+					if sub.unsub != nil {
+						sub.unsub()
+					}
 					delete(subs, sessionID)
 				}
 				subsMu.Unlock()
@@ -108,8 +113,13 @@ func (s *Server) sessionMultiplexWebSocket(w http.ResponseWriter, r *http.Reques
 					continue
 				}
 				cmd := RPCCommand{"type": msgType}
-				if m, ok := raw["message"].(string); ok {
-					cmd["message"] = m
+				if msgType != "abort" {
+					message, ok := raw["message"].(string)
+					if !ok || message == "" {
+						sendMultiplexError(sessionID, "message is required", out, done)
+						continue
+					}
+					cmd["message"] = message
 				}
 				s.routeMultiplexCommand(ctx, sessionID, cmd, out, done)
 			}
@@ -119,7 +129,9 @@ func (s *Server) sessionMultiplexWebSocket(w http.ResponseWriter, r *http.Reques
 	<-done
 	subsMu.Lock()
 	for _, sub := range subs {
-		sub.unsub()
+		if sub.unsub != nil {
+			sub.unsub()
+		}
 	}
 	subsMu.Unlock()
 }
@@ -128,7 +140,14 @@ func (s *Server) sessionMultiplexWebSocket(w http.ResponseWriter, r *http.Reques
 func (s *Server) routeMultiplexCommand(ctx context.Context, sessionID string, cmd RPCCommand, out chan any, done chan struct{}) {
 	// Try local sessions
 	if p, ok := s.sessions.Get(sessionID); ok {
+		if cmd["type"] == "prompt" && !s.admitLocalRun(ctx, p) {
+			sendMultiplexError(sessionID, "run capacity is busy or this session already has an active run", out, done)
+			return
+		}
 		if _, err := p.Request(ctx, cmd); err != nil {
+			if cmd["type"] == "prompt" {
+				p.releaseAdmission()
+			}
 			select {
 			case out <- map[string]any{"session": sessionID, "type": "daemon_error", "error": err.Error()}:
 			case <-done:
@@ -144,14 +163,33 @@ func (s *Server) routeMultiplexCommand(ctx context.Context, sessionID string, cm
 			queued = ExternalCommand{ID: NewSessionID(), Type: "abort"}
 		case "prompt", "steer", "follow_up":
 			commandType, _ := cmd["type"].(string)
-			queued = ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: cmd["message"].(string), Delivery: externalPromptDelivery(commandType)}
+			message, _ := cmd["message"].(string)
+			if message == "" {
+				sendMultiplexError(sessionID, "message is required", out, done)
+				return
+			}
+			if commandType == "prompt" && !s.acquireDistributedRun(ctx, sessionID, "relay:"+sessionID) {
+				sendMultiplexError(sessionID, "hub run capacity is busy or this relay already has an active run", out, done)
+				return
+			}
+			queued = ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: message, Delivery: externalPromptDelivery(commandType)}
 		}
 		if !s.external.enqueue(sessionID, queued) {
+			if cmd["type"] == "prompt" {
+				s.releaseDistributedRun(sessionID)
+			}
 			select {
 			case out <- map[string]any{"session": sessionID, "type": "daemon_error", "error": "relay command rejected"}:
 			case <-done:
 			}
 		}
+	}
+}
+
+func sendMultiplexError(sessionID, message string, out chan any, done chan struct{}) {
+	select {
+	case out <- map[string]any{"session": sessionID, "type": "daemon_error", "error": message}:
+	case <-done:
 	}
 }
 
@@ -168,9 +206,10 @@ func (s *Server) handleMultiplexSubscribe(
 	if p, ok := s.sessions.Get(sessionID); ok {
 		events, replay, unsub := p.SubscribeSince(0)
 		sub := &sessionSub{events: events, unsub: unsub}
-		subsMu.Lock()
-		subs[sessionID] = sub
-		subsMu.Unlock()
+		if !activateMultiplexSubscription(sessionID, sub, subs, subsMu, done) {
+			unsub()
+			return
+		}
 		for _, record := range replay {
 			message := any(record.Event)
 			if record.ID != 0 {
@@ -193,9 +232,10 @@ func (s *Server) handleMultiplexSubscribe(
 			return
 		}
 		sub := &sessionSub{events: events, unsub: unsub}
-		subsMu.Lock()
-		subs[sessionID] = sub
-		subsMu.Unlock()
+		if !activateMultiplexSubscription(sessionID, sub, subs, subsMu, done) {
+			unsub()
+			return
+		}
 		for _, ev := range replay {
 			select {
 			case out <- map[string]any{"session": sessionID, "event": ev}:
@@ -207,11 +247,28 @@ func (s *Server) handleMultiplexSubscribe(
 		slog.Info("multiplex: subscribed to external session", "session", sessionID)
 		return
 	}
-	// Not found
+	// Not found. Remove the reservation so a later subscribe can retry.
+	subsMu.Lock()
+	delete(subs, sessionID)
+	subsMu.Unlock()
+	sendMultiplexError(sessionID, "session not found", out, done)
+}
+
+func activateMultiplexSubscription(sessionID string, sub *sessionSub, subs map[string]*sessionSub, subsMu *sync.Mutex, done chan struct{}) bool {
+	subsMu.Lock()
+	defer subsMu.Unlock()
 	select {
-	case out <- map[string]any{"session": sessionID, "type": "daemon_error", "error": "session not found"}:
 	case <-done:
+		delete(subs, sessionID)
+		return false
+	default:
 	}
+	reserved, ok := subs[sessionID]
+	if !ok || reserved.unsub != nil {
+		return false
+	}
+	subs[sessionID] = sub
+	return true
 }
 
 // forwardMultiplex forwards events from a channel to the multiplex output.

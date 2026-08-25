@@ -1,23 +1,31 @@
 # Pi-Stack Comprehensive Audit — Findings
 
-**Date:** 2025-07-30
-**Scope:** Bugs & correctness, Performance problems, Code quality & maintainability
+**Original audit date:** 2025-07-30
+**Baseline revision:** `bebb3f0`
+**Status:** Historical snapshot. Counts and remaining items may have changed; verify against the current branch and tests.
+**Scope:** Bugs and correctness, performance, code quality, and maintainability
 **Projects:** pi-server-exp, pi-webby-exp, pi-desktop-app, pi-companion-exp, pi-webby-shared
 
 ---
 
-## Summary
+## Current branch status
 
-| Category | Fixed | Remaining |
-|----------|-------|-----------|
-| Bugs & correctness | 16 | 3 |
-| Performance | 5 | 3 |
-| Code quality | 12 | 6 |
-| **Total** | **33** | **12** |
+The `fix/comprehensive-audit` branch supersedes the old numeric summary. It adds server lifecycle and multiplex fixes, installer checksum and ACL hardening, Android history and image fixes, frontend error handling, tray update guards, and broader CI coverage.
+
+Validation required before merge:
+
+- `pi-server-exp`: tests, vet, build, and race tests in CI
+- `pi-server-tray`: tests and vet
+- `pi-webby-exp`: typecheck, lint, tests, and build
+- `pi-desktop-app`: typecheck, lint, tests, frontend build, Rust check, and packaged Tauri build in CI
+- `pi-companion-exp`: debug compilation, unit tests, and release APK build
+- Windows installer checksum helper tests
+
+The sections below preserve the original audit record. Their counts are historical and must not be used as current totals.
 
 ---
 
-## ✅ All Issues Fixed (23)
+## Historical fixes
 
 ### Round 1 — Interconnectivity Audit
 
@@ -66,17 +74,13 @@
 
 ---
 
-## ⚠️ Remaining Medium-Priority Issues
+## Medium-priority follow-ups
 
-### Webby/Desktop
-
-| # | File | Issue |
-|---|------|-------|
-| 1 | `session-inspector.tsx:356` | **`autoRetry`/`autoCompactionEnabled` not returned by server.** The toggle syncs from `state?.autoRetryEnabled` but the server doesn't emit this field. Defaults to `true`. Same for `autoCompactionEnabled`. Server needs to track and return these settings. |
+Webby and Desktop now render automatic retry and compaction toggles only when Pi reports those values. This prevents the clients from presenting invented defaults as current server state.
 
 ---
 
-## ✅ Medium-Priority Issues Fixed in Round 4
+## Medium-priority issues fixed in round 4
 
 | # | Project | File | Fix |
 |---|---------|------|-----|
@@ -90,7 +94,9 @@
 | 38 | Companion | `PiServerClient.kt`, `HomeViewModel.kt` | Added `listRecentSessions()` with client-side limit of 50 for home screen |
 | 39 | Companion | `build.gradle.kts`, `proguard-rules.pro` | Enabled R8 minification + shrinkResources with keep rules for kotlinx.serialization |
 
-## ⚠️ Remaining Low-Priority Issues
+## Historical low-priority snapshot
+
+The tables below preserve the earlier audit notes. Confirm each item against the current code before treating it as active work. Maintained work is tracked in [`REMAINING-WORK.md`](REMAINING-WORK.md).
 
 ### Server
 
@@ -98,8 +104,6 @@
 |---|------|-------|
 | 10 | `file_content.go:86` | 1MB buffer allocated per request — could use `sync.Pool` |
 | 11 | `external_history.go:83` | `readRelayMessages` reads entire session file (up to 32MB) into memory |
-| 12 | `file_handlers.go:40` | `fileTree` hardcodes limit=300, should accept `?limit=` param |
-| 13 | `git_handlers.go:522` | `runGit` discards stderr on success (git warnings lost) |
 | 14 | `session_handlers.go:46` | Dead code: `r.Body != http.NoBody` guard always passes |
 
 ### Webby/Desktop
@@ -119,9 +123,7 @@
 | 20 | `HomeViewModel:73` | 5 parallel HTTP requests every 10s — aggressive for mobile |
 | 21 | `SettingsRow.kt:88` | Debounced persist may lose final edit if user navigates within 300ms |
 | 22 | `SettingsViewModel.kt:53` | Race in `removeServer()` — stale read of `activeServerId` |
-| 23 | `HomeViewModel.kt:120` | Silent failure on machine session open — no user feedback |
 | 24 | `ShellScreen.kt` | ViewModel recreated on tab switch — loses cached state |
-| 25 | `NavigationKeys.kt:13` | Obsolete `Main` route — duplicates `AppRoute.Home` |
 
 ---
 
@@ -135,8 +137,8 @@
 - **Shared package** — `pi-webby-shared` eliminates code duplication between Desktop and Webby
 - **Singleton services** — `AppModule` in Companion eliminates duplicate OkHttp pools and DataStore handles
 
-### Key Risk Areas
-1. **Companion `isMinifyEnabled = false`** (#9) — release APK ships unoptimized
-2. **Server dead code** (#1) — session re-link after restart never happens
-3. **Webby inspector over-polling** (#6) — `state` polled every 2s even when idle
-4. **Companion no pagination** (#8) — all sessions fetched every 10s, doesn't scale
+### Current risk areas
+
+The current backlog lives in [`REMAINING-WORK.md`](REMAINING-WORK.md). The largest risks are file-access race hardening, real-time event-ordering tests, relay and worker integration tests, Android ViewModel and socket tests, and Windows process-tree cleanup.
+
+Recent low-risk follow-ups also added bounded file-tree limits, visible machine-session failures, truthful runtime-setting toggles, and removal of the obsolete Android `Main` route. `runGit` already preserved successful stderr through `CombinedOutput`, so that historical finding required no code change.

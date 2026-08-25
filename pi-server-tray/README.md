@@ -20,7 +20,7 @@ If another server is already healthy at the configured URL, the tray reports it 
 ## Prerequisites
 
 - Go 1.23+
-- Internet access on first launch so the latest stable `pi-server` can be downloaded
+- Internet access when using **Download / Update Server**
 - Linux only: the AppIndicator/GTK development libraries required by `fyne.io/systray`
 
 Typical Debian/Ubuntu prerequisites:
@@ -29,13 +29,7 @@ Typical Debian/Ubuntu prerequisites:
 sudo apt-get install gcc libgtk-3-dev libayatana-appindicator3-dev
 ```
 
-## Dependency setup
-
-From this directory, install the reviewed tray dependency:
-
-```bash
-go get fyne.io/systray@v1.12.2
-```
+Dependencies are pinned in `go.mod` and `go.sum`. Use `go mod download` when preparing an offline or clean build environment.
 
 ## Windows install
 
@@ -47,11 +41,7 @@ From PowerShell in this directory:
 
 The script builds and installs `pi-server-tray.exe` to `%LOCALAPPDATA%\PiServer`, creates a startup shortcut, and launches it. Use **Download / Update Server** in the tray to install the latest stable `pi-server.exe` to `%USERPROFILE%\.pi\server\bin`.
 
-If script execution is restricted, run:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-```
+If Windows marked the downloaded script as blocked, inspect it and then run `Unblock-File .\install.ps1`. Do not disable the machine's execution policy globally.
 
 Optional install flags:
 
@@ -91,7 +81,7 @@ On Windows, suppress the console window:
 go build -ldflags="-H=windowsgui -s -w" -o dist/pi-server-tray.exe .
 ```
 
-By default, no server executable needs to be placed beside the tray. The latest stable server is downloaded automatically.
+By default, no server executable needs to be placed beside the tray. Select **Download / Update Server** to download and checksum-verify the latest stable server.
 
 ## Run
 

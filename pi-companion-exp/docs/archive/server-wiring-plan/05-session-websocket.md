@@ -1,5 +1,7 @@
 # 05 Session WebSocket Stream
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Purpose: show real session activity in Session Detail.
 
 Create:

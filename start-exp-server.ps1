@@ -40,7 +40,8 @@ $origins = @(
   "http://${tailscaleIp}:5173", "http://${tailscaleIp}:5174"
 ) -join ","
 
-$env:PI_SERVER_ADDR         = "0.0.0.0:$Port"
+$bindHost = if ($AuthToken -or $AllowInsecure) { "0.0.0.0" } else { "127.0.0.1" }
+$env:PI_SERVER_ADDR         = "${bindHost}:$Port"
 $env:PI_SERVER_CWD          = $PSScriptRoot
 $env:PI_SERVER_DATA_DIR     = $DataDir
 $env:PI_SERVER_ALLOWED_ROOTS = $PSScriptRoot
@@ -58,17 +59,18 @@ if ($AuthToken) {
   Remove-Item Env:PI_SERVER_ALLOW_INSECURE -ErrorAction SilentlyContinue
 } else {
   Remove-Item Env:PI_SERVER_AUTH_TOKEN -ErrorAction SilentlyContinue
-  # Allow binding to 0.0.0.0 without auth. Tailscale encrypts and authenticates
-  # the connection, so the pi-server auth token is redundant in that context.
-  # Use -AuthToken for defense-in-depth if you prefer.
-  $env:PI_SERVER_ALLOW_INSECURE = "1"
+  if ($AllowInsecure) {
+    $env:PI_SERVER_ALLOW_INSECURE = "1"
+  } else {
+    Remove-Item Env:PI_SERVER_ALLOW_INSECURE -ErrorAction SilentlyContinue
+  }
 }
 
 # --- Launch ---
 Write-Host ""
 Write-Host "  pi-server-exp" -ForegroundColor Cyan
 Write-Host "  ────────────────────────────────────" -ForegroundColor DarkGray
-Write-Host "  Bind:      0.0.0.0:$Port"
+Write-Host "  Bind:      ${bindHost}:$Port"
 Write-Host "  Tailscale: http://${tailscaleIp}:$Port"
 Write-Host "  Data:      $DataDir"
 Write-Host "  Origins:   $origins"

@@ -6,9 +6,11 @@ Go daemon that supervises local `pi --mode rpc` subprocesses and coordinates rem
 
 The implementation mirrors Pi RPC mode rather than reimplementing agent behavior.
 
-- Pi RPC protocol: `C:\Users\basin\AppData\Local\pnpm\store\v11\links\@earendil-works\pi-coding-agent\0.80.7\97ed7555a5dad30946bcddcce7884b9ddb6fcbb6d184186767a8c79921a189ea\node_modules\@earendil-works\pi-coding-agent\docs\rpc.md`
-- Pi SDK reference: `C:\Users\basin\AppData\Local\pnpm\store\v11\links\@earendil-works\pi-coding-agent\0.80.7\97ed7555a5dad30946bcddcce7884b9ddb6fcbb6d184186767a8c79921a189ea\node_modules\@earendil-works\pi-coding-agent\docs\sdk.md`
-- Pi README / modes overview: `C:\Users\basin\AppData\Local\pnpm\store\v11\links\@earendil-works\pi-coding-agent\0.80.7\97ed7555a5dad30946bcddcce7884b9ddb6fcbb6d184186767a8c79921a189ea\node_modules\@earendil-works\pi-coding-agent\README.md`
+- Pi RPC protocol: `docs/rpc.md` in the installed `@earendil-works/pi-coding-agent` package
+- Pi SDK reference: `docs/sdk.md` in the installed Pi package
+- Pi modes overview: the installed Pi package's `README.md`
+
+Resolve these paths from the active Pi installation. Do not pin documentation links to one machine or package-store version.
 
 Pi RPC is strict LF-delimited JSONL. Preserve that rule: do not replace the stdout parser with a generic Unicode-aware line reader.
 

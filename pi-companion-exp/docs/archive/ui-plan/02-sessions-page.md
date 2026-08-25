@@ -1,5 +1,7 @@
 # 02 Sessions Page
 
+> Historical planning document. The current app code, tests, and server OpenAPI document are authoritative.
+
 Create:
 
 ```text
