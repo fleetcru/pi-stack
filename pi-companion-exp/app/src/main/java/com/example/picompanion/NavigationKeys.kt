@@ -10,6 +10,3 @@ sealed interface AppRoute : NavKey {
   @Serializable data object Workers : AppRoute
   @Serializable data object Settings : AppRoute
 }
-
-// Keep old Main key for backward compat during transition
-@Serializable data object Main : NavKey

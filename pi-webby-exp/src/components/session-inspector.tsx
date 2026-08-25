@@ -688,27 +688,31 @@ function Settings({ session }: { session: ApiSession }) {
                 .then(refresh)
             }
           />
-          <ToggleRow
-            label="Auto retry"
-            checked={autoRetry}
-            onChange={(checked) => {
-              setAutoRetry(checked)
-              void client.sessionPost(session.id, "auto-retry", {
-                enabled: checked,
-              })
-            }}
-          />
-          <ToggleRow
-            label="Auto compact"
-            checked={state?.autoCompactionEnabled ?? false}
-            onChange={(checked) =>
-              void client
-                .sessionPost(session.id, "auto-compaction", {
+          {state?.autoRetryEnabled !== undefined && (
+            <ToggleRow
+              label="Auto retry"
+              checked={autoRetry}
+              onChange={(checked) => {
+                setAutoRetry(checked)
+                void client.sessionPost(session.id, "auto-retry", {
                   enabled: checked,
                 })
-                .then(refresh)
-            }
-          />
+              }}
+            />
+          )}
+          {state?.autoCompactionEnabled !== undefined && (
+            <ToggleRow
+              label="Auto compact"
+              checked={state.autoCompactionEnabled}
+              onChange={(checked) =>
+                void client
+                  .sessionPost(session.id, "auto-compaction", {
+                    enabled: checked,
+                  })
+                  .then(refresh)
+              }
+            />
+          )}
         </Section>
         <Section title="Session">
           <div className="grid grid-cols-2 gap-2">

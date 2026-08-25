@@ -105,19 +105,6 @@ fun MainNavigation(
             modifier = Modifier.safeDrawingPadding(),
           )
         }
-
-        entry<Main> {
-          ShellScreen(
-            initialTab = NavTab.Home,
-            onNavigate = { route -> backStack.add(route) },
-            onBack = { backStack.removeLastOrNull() },
-            darkTheme = darkTheme,
-            onDarkThemeChange = onDarkThemeChange,
-            sharedTransitionScope = sharedTransitionScope,
-            animatedVisibilityScope = LocalNavAnimatedContentScope.current,
-            modifier = Modifier.safeDrawingPadding(),
-          )
-        }
       },
     )
   }

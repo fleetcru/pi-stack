@@ -2,6 +2,8 @@
 
 This file records the remaining work identified after the comprehensive audit remediation on `fix/comprehensive-audit`.
 
+**Current count:** 17 numbered concerns remain. Items 8 and 19 are complete and were removed. Items 11 and 12 were narrowed after their low-risk parts were completed.
+
 ## High priority
 
 ### 1. File-access TOCTOU protection
@@ -93,10 +95,6 @@ Malformed values should fail consistently before changing state.
 
 ## Medium priority
 
-### 8. Server runtime settings reporting
-
-Verify whether `autoRetryEnabled` and `autoCompactionEnabled` are fully represented in the current RPC state response. The UI should not display a default as though it came from the server.
-
 ### 9. Inspector mutation consistency
 
 Consolidate Git mutation handling across Webby and Desktop rather than maintaining parallel component logic.
@@ -113,9 +111,7 @@ Review:
 - Frequent Home polling
 - Settings persistence debounce
 - Active-server removal race
-- Silent machine-session failures
 - ViewModel lifetime across tab changes
-- Obsolete navigation routes
 
 These are mostly performance and UX issues, but some can cause stale state or lost edits.
 
@@ -125,8 +121,6 @@ Known server inefficiencies include:
 
 - Per-request file buffers
 - Entire relay history files read into memory
-- Hardcoded directory limits
-- Git warnings discarded on successful commands
 
 These can become visible with many sessions or large histories.
 
@@ -162,18 +156,18 @@ Split commits by area:
 
 `go test -race` could not run locally because GCC was unavailable. CI covers it, but the branch should not merge until that job passes.
 
-### 18. Dependency security review incomplete
+### 18. Dependency security remediation
 
-The new Desktop testing dependencies were checked individually before installation, but a complete repository dependency audit has not been performed.
+The April 2026 audit found 24 npm advisories in Webby and 20 in Desktop at moderate severity or higher. Most paths run through development tools such as shadcn, jsdom, ESLint, Vite, and OpenAPI tooling. The direct `react-router` dependency also has an advisory, although this application does not use its RSC mode.
 
-Audit:
+Dependency upgrades require separate review and approval. Go and Rust scans remain incomplete because `govulncheck` and `cargo-audit` are not installed. The Android release dependency graph was reviewed manually because the project has no vulnerability scanner configured. GitHub Actions use mutable version tags rather than commit SHAs.
 
-- npm and pnpm lockfiles
-- Android dependencies
-- Rust crates
-- Go modules
-- GitHub Actions pinning
+## Completed low-risk follow-ups
 
-### 19. Historical documents remain technically stale
-
-The plans carry historical warnings, but some detailed claims no longer match the implementation. Archive them outside the primary documentation tree or replace them with short implementation records.
+- Runtime setting toggles now appear only when Pi reports their current values.
+- Removed the obsolete Android `Main` navigation route.
+- Machine-session opening failures now show a visible error.
+- Verified that `runGit` already preserves successful stderr through `CombinedOutput`.
+- Added a validated `limit` query parameter for file trees, bounded from 1 to 2,000.
+- Archived the historical Companion UI and server-wiring plans under `docs/archive`.
+- Ran the available dependency audits and recorded unresolved remediation above.

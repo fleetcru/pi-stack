@@ -5,6 +5,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+)
+
+const (
+	defaultFileTreeLimit = 300
+	maxFileTreeLimit     = 2000
 )
 
 type FileInfo struct {
@@ -43,7 +49,15 @@ func (s *Server) fileTree(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	limit := 300
+	limit := defaultFileTreeLimit
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		parsed, parseErr := strconv.Atoi(rawLimit)
+		if parseErr != nil || parsed < 1 || parsed > maxFileTreeLimit {
+			writeErrorText(w, http.StatusBadRequest, "limit must be an integer between 1 and 2000")
+			return
+		}
+		limit = parsed
+	}
 	files := []FileInfo{}
 	stop := errors.New("file limit reached")
 	err = filepath.WalkDir(cwd, func(path string, d os.DirEntry, err error) error {

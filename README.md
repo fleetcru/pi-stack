@@ -217,6 +217,7 @@ pi-stack/
 │   ├── src/            # React frontend (shared components with pi-webby)
 │   └── src-tauri/      # Rust backend for native OS integration
 ├── pi-companion-exp/   # Android Kotlin/Compose client
+│   ├── docs/archive/   # Historical implementation plans
 │   └── app/src/main/java/
 │       ├── data/api/       # HTTP client
 │       ├── data/websocket/ # WebSocket listener
@@ -227,6 +228,12 @@ pi-stack/
 ├── install-server.*    # VPS install scripts
 └── install-exp-external-bridge.* # Relay bridge installer
 ```
+
+## Audit records
+
+- [`findings.md`](findings.md) preserves the comprehensive audit history.
+- [`REMAINING-WORK.md`](REMAINING-WORK.md) is the maintained backlog and current source of truth.
+- `pi-companion-exp/docs/archive/` contains historical plans. Use the current code, tests, OpenAPI document, and `AGENTS.md` for implemented behavior.
 
 ## License
 

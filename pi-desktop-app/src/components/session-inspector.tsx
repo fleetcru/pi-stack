@@ -391,7 +391,12 @@ function Settings({ session }: { session: ApiSession }) {
     )?.messages ?? []
   const [title, setTitle] = useState(session.title ?? "")
   const [project, setProject] = useState(session.project ?? "")
-  const [autoRetry, setAutoRetry] = useState(true)
+  const [autoRetry, setAutoRetry] = useState(state?.autoRetryEnabled ?? true)
+  const [previousAutoRetry, setPreviousAutoRetry] = useState(state?.autoRetryEnabled)
+  if (state?.autoRetryEnabled !== undefined && previousAutoRetry !== state.autoRetryEnabled) {
+    setPreviousAutoRetry(state.autoRetryEnabled)
+    setAutoRetry(state.autoRetryEnabled)
+  }
   // Sync local state when the session prop changes (e.g., after server-side rename).
   // Track previous prop values via state to avoid useEffect cascading renders.
   const [prevSessionTitle, setPrevSessionTitle] = useState(session.title)
@@ -458,27 +463,31 @@ function Settings({ session }: { session: ApiSession }) {
                 .then(refresh)
             }
           />
-          <ToggleRow
-            label="Auto retry"
-            checked={autoRetry}
-            onChange={(checked) => {
-              setAutoRetry(checked)
-              void client.sessionPost(session.id, "auto-retry", {
-                enabled: checked,
-              })
-            }}
-          />
-          <ToggleRow
-            label="Auto compact"
-            checked={state?.autoCompactionEnabled ?? false}
-            onChange={(checked) =>
-              void client
-                .sessionPost(session.id, "auto-compaction", {
+          {state?.autoRetryEnabled !== undefined && (
+            <ToggleRow
+              label="Auto retry"
+              checked={autoRetry}
+              onChange={(checked) => {
+                setAutoRetry(checked)
+                void client.sessionPost(session.id, "auto-retry", {
                   enabled: checked,
                 })
-                .then(refresh)
-            }
-          />
+              }}
+            />
+          )}
+          {state?.autoCompactionEnabled !== undefined && (
+            <ToggleRow
+              label="Auto compact"
+              checked={state.autoCompactionEnabled}
+              onChange={(checked) =>
+                void client
+                  .sessionPost(session.id, "auto-compaction", {
+                    enabled: checked,
+                  })
+                  .then(refresh)
+              }
+            />
+          )}
         </Section>
         <Section title="Session">
           <div className="grid grid-cols-2 gap-2">
@@ -845,6 +854,7 @@ type StateData = {
   pendingMessageCount?: number
   messageCount?: number
   autoCompactionEnabled?: boolean
+  autoRetryEnabled?: boolean
 }
 type StatsData = {
   totalMessages?: number
