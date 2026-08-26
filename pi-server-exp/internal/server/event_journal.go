@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -200,3 +201,58 @@ func (j *eventJournal) compact(records []EventRecord) error {
 }
 
 var errEventJournalUnavailable = errors.New("event journal unavailable")
+
+
+const (
+	defaultEventJournalMaxTotalBytes = int64(512 << 20)
+	defaultEventJournalMaxAge         = 30 * 24 * time.Hour
+)
+
+func cleanupEventJournals(dataDir string, activeSessionIDs map[string]struct{}) error {
+	dir := filepath.Join(dataDir, "events")
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	type journalFile struct {
+		path    string
+		size    int64
+		modTime time.Time
+	}
+	now := time.Now()
+	files := make([]journalFile, 0, len(entries))
+	var total int64
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		sessionID := strings.TrimSuffix(entry.Name(), ".jsonl")
+		if _, active := activeSessionIDs[sessionID]; !active && now.Sub(info.ModTime()) > defaultEventJournalMaxAge {
+			_ = os.Remove(path)
+			continue
+		}
+		files = append(files, journalFile{path: path, size: info.Size(), modTime: info.ModTime()})
+		total += info.Size()
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].modTime.Before(files[j].modTime) })
+	for _, file := range files {
+		if total <= defaultEventJournalMaxTotalBytes {
+			break
+		}
+		if _, active := activeSessionIDs[strings.TrimSuffix(filepath.Base(file.path), ".jsonl")]; active {
+			continue
+		}
+		if err := os.Remove(file.path); err == nil {
+			total -= file.size
+		}
+	}
+	return nil
+}
