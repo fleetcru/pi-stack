@@ -107,6 +107,13 @@ func New(cfg Config, logger *slog.Logger) *Server {
 	if err := s.sessions.Load(); err != nil {
 		logger.Warn("failed to load session registry", "error", err)
 	}
+	activeJournalIDs := make(map[string]struct{})
+	for _, spec := range s.sessions.ListSpecs() {
+		activeJournalIDs[safeEventJournalName(spec.ID)] = struct{}{}
+	}
+	if err := cleanupEventJournals(cfg.DataDir, activeJournalIDs); err != nil {
+		logger.Warn("failed to clean up event journals", "error", err)
+	}
 	// Relay specs from a previous run have no live bridge after restart.
 	// Remove them so clients don't see sessions they can't interact with.
 	for _, spec := range s.sessions.ListSpecs() {
