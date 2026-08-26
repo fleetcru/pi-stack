@@ -96,7 +96,8 @@ func authMiddleware(token string, next http.Handler) http.Handler {
 }
 
 func authMiddlewareWithDevices(token string, devices *deviceRegistry, next http.Handler) http.Handler {
-	if token == "" && devices == nil {
+	// An empty bootstrap token intentionally disables authentication for local/backward-compatible setups.
+	if token == "" {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
