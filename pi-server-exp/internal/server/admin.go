@@ -14,8 +14,11 @@ import (
 	"time"
 )
 
-//go:embed adminui/index.html adminui/qrcode.js
+//go:embed adminui/index.html
 var adminHTML []byte
+
+//go:embed adminui/qrcode.js
+var qrcodeJS []byte
 
 const adminCookieName = "pi_server_admin"
 const adminSessionLifetime = 8 * time.Hour
@@ -37,6 +40,11 @@ func newAdminState(cfg Config) *adminState {
 
 func (s *Server) adminRoot(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/admin/qrcode.js":
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		_, _ = w.Write(qrcodeJS)
 	case r.Method == http.MethodGet && r.URL.Path == "/admin/":
 		s.adminPage(w, r)
 	case r.URL.Path == "/admin/login":
