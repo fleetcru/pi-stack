@@ -21,6 +21,17 @@ This repository contains three projects forming a multi-device Pi coding-agent e
 
 All communication uses Pi RPC's strict LF-delimited JSONL protocol over stdin/stdout. WebSocket connections use single-use tickets for auth.
 
+## GitHub authentication
+
+Before pushing to `https://github.com/fleetcru/pi-stack.git`, switch GitHub CLI authentication to an account with write access to `fleetcru`, then push the requested branch:
+
+```bash
+gh auth switch --user <authorized-account>
+git push origin <branch>
+```
+
+If `git push` returns HTTP 403, do not retry with the same account. Check the active account with `gh auth status`, switch or sign in to the authorized account, then rerun the push command.
+
 ## Projects
 
 ### pi-server-exp (Go 1.23)
