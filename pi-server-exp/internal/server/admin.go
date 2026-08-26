@@ -133,6 +133,14 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/admin/api/state":
 		s.adminGetState(w, session)
+	case r.Method == http.MethodGet && r.URL.Path == "/admin/api/devices":
+		s.adminGetDevices(w)
+	case r.Method == http.MethodPost && r.URL.Path == "/admin/api/devices":
+		if !s.validAdminMutation(r, session) { writeErrorText(w, http.StatusForbidden, "invalid admin CSRF token or origin"); return }
+		s.adminCreateDevice(w, r)
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/admin/api/devices/"):
+		if !s.validAdminMutation(r, session) { writeErrorText(w, http.StatusForbidden, "invalid admin CSRF token or origin"); return }
+		s.adminRevokeDevice(w, r)
 	case r.Method == http.MethodPut && r.URL.Path == "/admin/api/settings":
 		if !s.validAdminMutation(r, session) {
 			writeErrorText(w, http.StatusForbidden, "invalid admin CSRF token or origin")
@@ -217,6 +225,45 @@ func (s *Server) adminGetState(w http.ResponseWriter, session adminSession) {
 		"runtimeFields":   []string{"maxSessions", "maxActiveRuns", "maxRunsPerSession", "maxRunsPerWorker", "maxQueuedRuns"},
 		"restartRequired": restartSettingsDiffer(target, settingsFromConfig(s.cfg)),
 	})
+}
+
+func (s *Server) adminGetDevices(w http.ResponseWriter) {
+	records := s.devices.list()
+	out := make([]map[string]any, 0, len(records))
+	for _, record := range records {
+		out = append(out, publicDevice(record))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"devices": out})
+}
+
+func (s *Server) adminCreateDevice(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+	var input struct { Name string }
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeErrorText(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	record, token, err := s.devices.create(input.Name)
+	if err != nil {
+		writeErrorText(w, http.StatusInternalServerError, "failed to create device")
+		return
+	}
+	response := publicDevice(record)
+	response["token"] = token
+	writeJSON(w, http.StatusCreated, response)
+}
+
+func (s *Server) adminRevokeDevice(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/admin/api/devices/")
+	if id == "" || strings.Contains(id, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	if !s.devices.revoke(id) {
+		writeErrorText(w, http.StatusNotFound, "device not found or already revoked")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"revoked": id})
 }
 
 func (s *Server) adminPutSettings(w http.ResponseWriter, r *http.Request) {
