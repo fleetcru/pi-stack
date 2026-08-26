@@ -43,6 +43,10 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 			idemKey := ""
 			if headerKey := r.Header.Get("X-Idempotency-Key"); headerKey != "" {
 				idemKey = id + ":" + headerKey
+				if receipt, ok := s.receipts.get(idemKey); ok {
+					writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "idempotent": true, "commandId": receipt.CommandID})
+					return
+				}
 				if s.idempotencySeen(idemKey) {
 					writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "idempotent": true})
 					return
@@ -66,6 +70,7 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if idemKey != "" {
 				s.recordIdempotency(idemKey)
+				s.receipts.put(idemKey, command.ID, idempotencyTTL)
 			}
 			writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "commandId": command.ID, "delivery": "queued"})
 			return
