@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-//go:embed adminui/index.html
+//go:embed adminui/index.html adminui/qrcode.js
 var adminHTML []byte
 
 const adminCookieName = "pi_server_admin"
