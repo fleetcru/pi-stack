@@ -256,3 +256,12 @@ func cleanupEventJournals(dataDir string, activeSessionIDs map[string]struct{}) 
 	}
 	return nil
 }
+
+
+func removeEventJournal(dataDir, sessionID string) error {
+	path := filepath.Join(dataDir, "events", safeEventJournalName(sessionID)+".jsonl")
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
