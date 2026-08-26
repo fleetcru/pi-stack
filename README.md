@@ -53,9 +53,19 @@ Use the release pages above for current version numbers.
 
 ## Production installation
 
-Clone or download this repository and inspect the installer before running it. The installers verify release checksums and do not silently execute an unverified binary.
+The installers verify release checksums before installing the server binary. For internet-facing servers, set an explicit `PI_SERVER_AUTH_TOKEN`. Only use `--insecure` / `-AllowInsecure` on a loopback, trusted LAN, or authenticated Tailscale network.
 
-> **Security note:** the installer is intended for a trusted deployment that you control. Use an explicit `PI_SERVER_AUTH_TOKEN` for internet-facing servers. Only use `--insecure` / `-AllowInsecure` on a loopback, trusted LAN, or authenticated Tailscale network.
+### Quick setup
+
+Review a script before running it if you are unsure what it changes. These commands install the latest pi-server release and start it automatically after login or boot.
+
+| Platform | Command |
+| --- | --- |
+| Windows, current user | `irm https://winuser.fleetcru.dev \| iex` |
+| Windows, all users | Run PowerShell as Administrator, then `irm https://windows.fleetcru.dev \| iex` |
+| Linux with systemd | `curl -fsSL https://linux.fleetcru.dev \| sudo bash` |
+
+The current-user Windows installer is the right choice when Pi is installed only for your Windows account. It creates a per-user scheduled task and does not require Administrator access.
 
 ### Linux with systemd
 

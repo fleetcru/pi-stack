@@ -28,7 +28,30 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-. (Join-Path $PSScriptRoot "windows-installer-common.ps1")
+
+# Keep this script self-contained so it also works when downloaded and run
+# directly with `irm https://winuser.fleetcru.dev | iex`.
+function Get-ExpectedReleaseHash {
+    param(
+        [Parameter(Mandatory)][string]$ChecksumPath,
+        [Parameter(Mandatory)][string]$AssetName
+    )
+    $escapedName = [Regex]::Escape($AssetName)
+    $line = Get-Content -LiteralPath $ChecksumPath | Where-Object { $_ -match "\s+\*?$escapedName$" } | Select-Object -First 1
+    if (-not $line) { throw "SHA256SUMS does not contain $AssetName" }
+    $hash = ($line -split '\s+')[0]
+    if ($hash -notmatch '^[0-9a-fA-F]{64}$') { throw "SHA256SUMS contains an invalid hash for $AssetName" }
+    return $hash.ToUpperInvariant()
+}
+
+function Assert-ReleaseChecksum {
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [Parameter(Mandatory)][string]$ExpectedHash
+    )
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $FilePath).Hash
+    if ($actual -ne $ExpectedHash) { throw "Downloaded pi-server checksum mismatch" }
+}
 
 # ── Config ────────────────────────────────────────────────
 $Repo = "fleetcru/pi-stack"
@@ -98,24 +121,24 @@ $PiCommand = Get-Command pi -ErrorAction SilentlyContinue
 if (-not $PiCommand) { Write-Fail "Pi CLI is not installed or is not available in PATH." }
 $PiBinary = $PiCommand.Source
 
-$EnvContent = @"
-# pi-server configuration
-# Edit this file, then restart the task:
-#   Stop-ScheduledTask -TaskName "$TaskName"
-#   Start-ScheduledTask -TaskName "$TaskName"
-
-PI_SERVER_ADDR=127.0.0.1:$Port
-PI_SERVER_DATA_DIR=$DataDir
-PI_SERVER_ALLOWED_ROOTS=$env:USERPROFILE
-PI_SERVER_PI_BINARY=$PiBinary
-
-# For LAN/Tailscale access, uncomment and set:
-# PI_SERVER_ADDR=0.0.0.0:$Port
-# PI_SERVER_ALLOW_INSECURE=1
-
-# Set a token to require authentication:
-# PI_SERVER_AUTH_TOKEN=your-secret-token
-"@
+$EnvContent = @(
+    "# pi-server configuration"
+    "# Edit this file, then restart the task:"
+    "#   Stop-ScheduledTask -TaskName '$TaskName'"
+    "#   Start-ScheduledTask -TaskName '$TaskName'"
+    ""
+    "PI_SERVER_ADDR=127.0.0.1:$Port"
+    "PI_SERVER_DATA_DIR=$DataDir"
+    "PI_SERVER_ALLOWED_ROOTS=$env:USERPROFILE"
+    "PI_SERVER_PI_BINARY=$PiBinary"
+    ""
+    "# For LAN/Tailscale access, uncomment and set:"
+    "# PI_SERVER_ADDR=0.0.0.0:$Port"
+    "# PI_SERVER_ALLOW_INSECURE=1"
+    ""
+    "# Set a token to require authentication:"
+    "# PI_SERVER_AUTH_TOKEN=your-secret-token"
+) -join [Environment]::NewLine
 if ($AuthToken) {
     $EnvContent += "`nPI_SERVER_AUTH_TOKEN=$AuthToken"
 }
@@ -130,16 +153,16 @@ Write-Ok "Config written to $EnvFile with restricted ACLs"
 Write-Step "Creating service wrapper..."
 $WrapperPath = Join-Path $InstallDir "start.ps1"
 
-$WrapperContent = @"
+$WrapperContent = @'
 # Reads config and starts pi-server
-`$envFile = Join-Path `$PSScriptRoot "config\pi-server.env"
-Get-Content `$envFile | ForEach-Object {
-    if (`$_ -match '^\s*([^#][^=]+)=(.+)$') {
-        [Environment]::SetEnvironmentVariable(`$matches[1].Trim(), `$matches[2].Trim(), "Process")
+$envFile = Join-Path $PSScriptRoot "config\pi-server.env"
+Get-Content $envFile | ForEach-Object {
+    if ($_ -match '^\s*([^#][^=]+)=(.+)$') {
+        [Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), "Process")
     }
 }
-& (Join-Path `$PSScriptRoot "pi-server.exe")
-"@
+& (Join-Path $PSScriptRoot "pi-server.exe")
+'@
 
 Set-Content -Path $WrapperPath -Value $WrapperContent -Encoding UTF8
 Write-Ok "Wrapper created"
@@ -174,7 +197,7 @@ Register-ScheduledTask `
     -Action $Action `
     -Trigger $Trigger `
     -Settings $Settings `
-    -Description "pi-server — Pi coding agent hub (user install)" `
+    -Description "pi-server Pi coding agent hub (user install)" `
     -Force | Out-Null
 
 Write-Ok "Logon task created: $TaskName"
