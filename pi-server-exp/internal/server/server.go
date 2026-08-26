@@ -197,6 +197,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/admin/", s.adminRoot)
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /v1/capabilities", s.capabilities)
+	mux.HandleFunc("GET /v1/diagnostics", s.diagnostics)
 	mux.HandleFunc("PATCH /v1/capacity", s.updateCapacity)
 	mux.HandleFunc("GET /v1/scheduler", s.schedulerStatus)
 	mux.HandleFunc("GET /v1/rpc/commands", s.rpcCommandCatalog)
