@@ -92,34 +92,36 @@ func isLoopbackHost(host string) bool {
 }
 
 func authMiddleware(token string, next http.Handler) http.Handler {
-	if token == "" {
+	return authMiddlewareWithDevices(token, nil, next)
+}
+
+func authMiddlewareWithDevices(token string, devices *deviceRegistry, next http.Handler) http.Handler {
+	if token == "" && devices == nil {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The embedded admin page has its own cookie-based authentication flow.
-		// Its login endpoint must be reachable before a browser has a session.
 		if r.URL.Path == "/admin" || strings.HasPrefix(r.URL.Path, "/admin/") {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// Session WebSocket may authenticate via single-use ticket instead of bearer.
-		// The relay WebSocket authenticates via a `pi-relay.<token>` subprotocol
-		// (keeps the secret out of URLs); the relayToken query param is a
-		// deprecated fallback for older bridges.
 		if (isSessionWSRequest(r) && r.URL.Query().Get("ticket") != "") || (isExternalRelayWSRequest(r) && relayWSAuthenticated(r, token)) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		expected := []byte("Bearer " + token)
-		provided := []byte(r.Header.Get("Authorization"))
-		if subtle.ConstantTimeCompare(provided, expected) != 1 {
-			writeErrorCode(w, r, http.StatusUnauthorized, CodeUnauthorized, "unauthorized")
+		provided := r.Header.Get("Authorization")
+		if token != "" && subtle.ConstantTimeCompare([]byte(provided), []byte("Bearer "+token)) == 1 {
+			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r)
+		if devices != nil && strings.HasPrefix(provided, "Bearer ") {
+			if _, ok := devices.authenticate(strings.TrimPrefix(provided, "Bearer ")); ok {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		writeErrorCode(w, r, http.StatusUnauthorized, CodeUnauthorized, "unauthorized")
 	})
 }
-
 func recoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
