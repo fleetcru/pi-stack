@@ -12,8 +12,10 @@ import (
 )
 
 type eventJournal struct {
-	file *os.File
-	path string
+	file    *os.File
+	path    string
+	records int
+	bytes   int64
 }
 
 type persistedEventRecord struct {
@@ -40,7 +42,12 @@ func openEventJournal(dataDir, sessionID string) (*eventJournal, []EventRecord, 
 		_ = file.Close()
 		return nil, nil, 0, err
 	}
-	return &eventJournal{file: file, path: path}, records, lastID, nil
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, 0, err
+	}
+	return &eventJournal{file: file, path: path, records: len(records), bytes: info.Size()}, records, lastID, nil
 }
 
 func safeEventJournalName(sessionID string) string {
@@ -116,7 +123,19 @@ func (j *eventJournal) append(record EventRecord) error {
 	}
 	// Journal writes are explicitly durable before the event is published to
 	// subscribers. This makes a reconnect after a daemon crash deterministic.
-	return j.file.Sync()
+	if err := j.file.Sync(); err != nil {
+		return err
+	}
+	j.records++
+	j.bytes += int64(len(data))
+	return nil
+}
+
+func (j *eventJournal) shouldCompact(maxRecords, maxBytes int) bool {
+	if j == nil {
+		return false
+	}
+	return (maxRecords > 0 && j.records > maxRecords*2) || (maxBytes > 0 && j.bytes > int64(maxBytes)*2)
 }
 
 func (j *eventJournal) close() error {
@@ -172,6 +191,11 @@ func (j *eventJournal) compact(records []EventRecord) error {
 		return err
 	}
 	j.file = file
+	j.records = len(records)
+	j.bytes = 0
+	if info, statErr := file.Stat(); statErr == nil {
+		j.bytes = info.Size()
+	}
 	return nil
 }
 
