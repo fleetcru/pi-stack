@@ -25,6 +25,7 @@ type Server struct {
 	external          *ExternalRegistry
 	wsTickets         *wsTicketStore
 	devices           *deviceRegistry
+	receipts          *commandReceiptStore
 	httpClient        *http.Client
 	upgrader          websocket.Upgrader
 	watchMu           sync.Mutex
@@ -72,6 +73,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		external:          newExternalRegistry(filepath.Join(cfg.DataDir, "relay-commands.json")),
 		wsTickets:         newWSTicketStore(),
 		devices:           newDeviceRegistry(filepath.Join(cfg.DataDir, "devices.json")),
+		receipts:          newCommandReceiptStore(filepath.Join(cfg.DataDir, "command-receipts.json")),
 		httpClient:        &http.Client{Timeout: cfg.RequestTimeout, Transport: &http.Transport{MaxIdleConns: 64, MaxIdleConnsPerHost: 16, MaxConnsPerHost: 32, IdleConnTimeout: 90 * time.Second}},
 		watchers:          map[string]func(){},
 		historyCache:      map[string]historyCacheEntry{},
