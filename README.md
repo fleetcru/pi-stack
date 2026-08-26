@@ -59,11 +59,11 @@ The installers verify release checksums before installing the server binary. For
 
 Review a script before running it if you are unsure what it changes. These commands install the latest pi-server release and start it automatically after login or boot.
 
-| Platform | Command |
-| --- | --- |
-| Windows, current user | `irm https://winuser.fleetcru.dev \| iex` |
-| Windows, all users | Run PowerShell as Administrator, then `irm https://windows.fleetcru.dev \| iex` |
-| Linux with systemd | `curl -fsSL https://linux.fleetcru.dev \| sudo bash` |
+| Platform | Command | Script |
+| --- | --- | --- |
+| Windows, current user | `irm https://winuser.fleetcru.dev \| iex` | [`install-server-user.ps1`](install-server-user.ps1) |
+| Windows, all users | Run PowerShell as Administrator, then `irm https://windows.fleetcru.dev \| iex` | [`install-server.ps1`](install-server.ps1) |
+| Linux with systemd | `curl -fsSL https://linux.fleetcru.dev \| sudo bash` | [`install-server.sh`](install-server.sh) |
 
 The current-user Windows installer is the right choice when Pi is installed only for your Windows account. It creates a per-user scheduled task and does not require Administrator access.
 
