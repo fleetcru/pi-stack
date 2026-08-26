@@ -155,6 +155,47 @@ func TestAdminLoginAndRuntimeSettings(t *testing.T) {
 	}
 }
 
+func TestAdminWorksWithoutToken(t *testing.T) {
+	dataDir, cwd := t.TempDir(), t.TempDir()
+	t.Setenv("PI_SERVER_DATA_DIR", dataDir)
+	t.Setenv("PI_SERVER_CWD", cwd)
+	t.Setenv("PI_SERVER_AUTH_TOKEN", "")
+	cfg := ConfigFromEnv()
+	s := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	defer close(s.stopHeartbeat)
+
+	state := httptest.NewRecorder()
+	s.httpSrv.Handler.ServeHTTP(state, httptest.NewRequest(http.MethodGet, "/admin/api/state", nil))
+	if state.Code != http.StatusOK {
+		t.Fatalf("state status=%d body=%s", state.Code, state.Body.String())
+	}
+	var response struct {
+		AuthenticationEnabled bool          `json:"authenticationEnabled"`
+		CSRF                  string        `json:"csrf"`
+		Settings              AdminSettings `json:"settings"`
+	}
+	if err := json.Unmarshal(state.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.AuthenticationEnabled {
+		t.Fatal("authentication should be disabled without PI_SERVER_AUTH_TOKEN")
+	}
+	if response.CSRF != "" {
+		t.Fatalf("csrf=%q, want empty", response.CSRF)
+	}
+
+	response.Settings.MaxSessions = 9
+	body, err := json.Marshal(response.Settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := httptest.NewRecorder()
+	s.httpSrv.Handler.ServeHTTP(settings, httptest.NewRequest(http.MethodPut, "/admin/api/settings", bytes.NewReader(body)))
+	if settings.Code != http.StatusOK {
+		t.Fatalf("settings status=%d body=%s", settings.Code, settings.Body.String())
+	}
+}
+
 func TestAdminRejectsMutationWithoutCSRF(t *testing.T) {
 	dataDir := t.TempDir()
 	t.Setenv("PI_SERVER_DATA_DIR", dataDir)
