@@ -125,6 +125,9 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	if err := removeEventJournal(s.cfg.DataDir, id); err != nil {
+		s.logger.Warn("failed to remove session event journal", "session", id, "error", err)
+	}
 	// Remove session bridge symlink from Pi's native session store.
 	if s.sessionBridge != nil {
 		s.sessionBridge.UnlinkManagedSession(id, spec.CWD)
