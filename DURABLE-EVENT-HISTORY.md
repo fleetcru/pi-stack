@@ -31,3 +31,15 @@ next safe extension would be durable command receipts keyed by client command
 ID. That can provide idempotent command retry without changing existing
 endpoints; it should be added before introducing cross-device conflict
 resolution or multi-user authorization.
+
+
+## Durable command idempotency
+
+Existing clients may send `X-Idempotency-Key` on session commands. The daemon
+now persists those keys in `<PI_SERVER_DATA_DIR>/idempotency.json` for the
+existing 60-second window. A retry from a second paired device therefore
+preserves the current duplicate-suppression behavior across a daemon restart.
+
+The response shape and HTTP status are unchanged. This is deliberately a
+deduplication receipt, not a replayable response store; future work can retain
+the original accepted response if clients need that stronger guarantee.
