@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
@@ -23,7 +24,8 @@ func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"apiVersion": s.apiVersion(),
-		"uptime":     s.startedAt,
+		"startedAt":   s.startedAt,
+		"uptime":      time.Since(s.startedAt).String(),
 		"dataDir":    s.cfg.DataDir,
 		"sessions": map[string]any{
 			"count":  len(s.sessions.List()),
