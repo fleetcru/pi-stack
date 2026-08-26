@@ -78,6 +78,8 @@ dependencies {
 
   // Pi Server client dependencies: HTTP, WebSocket, JSON, preferences, navigation
   implementation(libs.okhttp)
+  // Lightweight embedded QR scanner for trusted-device pairing.
+  implementation("com.journeyapps:zxing-android-embedded:4.3.0")
   // MessagePack for binary event streaming (~30% smaller payloads)
   implementation("org.msgpack:msgpack-core:0.9.8")
   // EncryptedSharedPreferences for secure auth token storage
