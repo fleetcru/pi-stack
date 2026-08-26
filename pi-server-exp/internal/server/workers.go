@@ -32,6 +32,7 @@ type Worker struct {
 	LastHeartbeat  time.Time       `json:"lastHeartbeat,omitempty"`
 	ActiveSessions int             `json:"activeSessions,omitempty"`
 	MaxSessions    int             `json:"maxSessions,omitempty"`
+	Generation     uint64          `json:"-"`
 }
 
 type persistedWorker struct {
@@ -43,11 +44,12 @@ type persistedWorker struct {
 type WorkerRegistry struct {
 	mu      sync.RWMutex
 	path    string
-	workers map[string]Worker
+	workers     map[string]Worker
+	generations map[string]uint64
 }
 
 func NewWorkerRegistry(path string) *WorkerRegistry {
-	return &WorkerRegistry{path: path, workers: map[string]Worker{"local": {ID: "local", URL: "local", Tags: []string{"local"}}}}
+	return &WorkerRegistry{path: path, workers: map[string]Worker{"local": {ID: "local", URL: "local", Tags: []string{"local"}, Generation: 1}}, generations: map[string]uint64{"local": 1}}
 }
 func (r *WorkerRegistry) Load() error {
 	if r.path == "" {
@@ -68,7 +70,8 @@ func (r *WorkerRegistry) Load() error {
 	defer r.mu.Unlock()
 	for _, w := range workers {
 		if w.ID != "" {
-			r.workers[w.ID] = Worker{ID: w.ID, URL: w.URL, Token: SensitiveString(w.Token), Tags: w.Tags}
+			r.generations[w.ID]++
+			r.workers[w.ID] = Worker{ID: w.ID, URL: w.URL, Token: SensitiveString(w.Token), Tags: w.Tags, Generation: r.generations[w.ID]}
 		}
 	}
 	return nil
@@ -89,6 +92,8 @@ func (r *WorkerRegistry) Save() error {
 }
 func (r *WorkerRegistry) Add(w Worker) error {
 	r.mu.Lock()
+	r.generations[w.ID]++
+	w.Generation = r.generations[w.ID]
 	r.workers[w.ID] = w
 	r.mu.Unlock()
 	return r.Save()
@@ -137,6 +142,8 @@ func (r *WorkerRegistry) Get(id string) (Worker, bool) {
 
 func (r *WorkerRegistry) Update(w Worker) error {
 	r.mu.Lock()
+	r.generations[w.ID]++
+	w.Generation = r.generations[w.ID]
 	r.workers[w.ID] = w
 	r.mu.Unlock()
 	return r.Save()
@@ -604,4 +611,11 @@ func (s *Server) proxyWorker(w http.ResponseWriter, r *http.Request, worker Work
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
+
+func (r *WorkerRegistry) CurrentGeneration(id string) uint64 {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.generations[id]
 }
