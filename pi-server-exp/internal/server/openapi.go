@@ -39,6 +39,7 @@ func schemas() map[string]any {
 		return m
 	}
 	return map[string]any{
+		"Device": obj(map[string]any{"id": str(), "name": str(), "createdAt": str(), "lastSeen": str(), "revokedAt": str()}, "id", "name"),
 		"Error": obj(map[string]any{
 			"error":     str(),
 			"code":      str(),
@@ -103,6 +104,9 @@ func paths() map[string]any {
 	get := func(path, summary string) { p[path] = map[string]any{"get": op(summary, "RPCResponse", "")} }
 	post := func(path, summary, body string) { p[path] = map[string]any{"post": op(summary, "RPCResponse", body)} }
 	p["/healthz"] = map[string]any{"get": op("Health check", "RPCResponse", "")}
+	p["/v1/diagnostics"] = map[string]any{"get": op("Operational diagnostics", "RPCResponse", "")}
+	p["/v1/devices"] = map[string]any{"get": op("List trusted devices", "RPCResponse", ""), "post": op("Create trusted device credential", "RPCResponse", "")}
+	p["/v1/devices/{id}"] = map[string]any{"delete": op("Revoke trusted device credential", "RPCResponse", "")}
 	p["/v1/scheduler"] = map[string]any{"get": op("Scheduler admission status", "RPCResponse", "")}
 	p["/openapi.json"] = map[string]any{"get": op("OpenAPI document", "RPCResponse", "")}
 	p["/v1/capabilities"] = map[string]any{"get": op("API capabilities", "Capabilities", "")}
