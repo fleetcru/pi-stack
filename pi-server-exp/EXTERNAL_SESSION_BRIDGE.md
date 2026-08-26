@@ -14,6 +14,8 @@ $env:PI_EXTERNAL_RELAY_URL = "http://127.0.0.1:3142"
 pi --extension "C:\Users\basin\Desktop\pi-stack\pi-server-exp\extensions\external-session-bridge.ts"
 ```
 
+You can also run `/bridge-register` in Pi. It asks for the relay URL and then the optional bearer token. Leave the token prompt blank only when the server has no `PI_SERVER_AUTH_TOKEN`.
+
 The extension registers the current Pi JSONL session with:
 
 ```text

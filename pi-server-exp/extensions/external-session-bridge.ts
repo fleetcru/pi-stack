@@ -407,8 +407,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     // and then race to open sockets for different leases.
     if (relaySocket?.readyState === WebSocket.OPEN || relaySocket?.readyState === WebSocket.CONNECTING || relayConnectInFlight) return;
     relayConnectInFlight = true;
-    try {
-      // Require registration + lease before attempting WS. Awaiting this
+    // Require registration + lease before attempting WS. Awaiting this
       // directly avoids the old recursive register().then(connectRelay)
       // pattern and gives failed registration one explicit retry path.
       if (!registered || !lease) {
@@ -608,7 +607,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("bridge-register", {
-    description: "Register a new bridge URL (saves to config and reconnects)",
+    description: "Register a bridge URL and optional token, then reconnect",
     handler: async (args, ctx) => {
       let url = args?.trim();
       if (!url) {
@@ -618,19 +617,24 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
           return;
         }
       }
-      // Basic URL validation
       try {
         new URL(url);
       } catch {
         ctx.ui.notify(`Invalid URL: ${url}`, "error");
         return;
       }
-      // Save to config
       const config = loadConfig();
+      const savedToken = process.env.PI_EXTERNAL_RELAY_TOKEN ?? config.relayToken ?? "";
+      const enteredToken = await ctx.ui.input("Enter bridge token, or leave blank for no token:", savedToken);
+      if (enteredToken === undefined) {
+        ctx.ui.notify("Bridge registration cancelled.", "info");
+        return;
+      }
       config.relayUrl = url;
+      if (enteredToken.trim()) config.relayToken = enteredToken.trim();
+      else delete config.relayToken;
       saveConfig(config);
-      ctx.ui.notify(`Bridge URL saved: ${url}`, "info");
-      // Reconnect with new URL
+      ctx.ui.notify(`Bridge settings saved: ${url}`, "info");
       ctx.ui.setStatus("external-session-bridge", "Bridge: reconnecting");
       await reconnectBridge();
       ctx.ui.notify(`Bridge: ${registered ? "connected" : "unable to connect"} (${bridgeSummary()})`, registered ? "info" : "error");
