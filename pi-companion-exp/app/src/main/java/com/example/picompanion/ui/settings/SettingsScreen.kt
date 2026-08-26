@@ -84,12 +84,13 @@ fun SettingsScreen(
 ) {
   val settings by viewModel.settings.collectAsStateWithLifecycle()
   val connectionResults by viewModel.connectionResults.collectAsStateWithLifecycle()
+  val context = LocalContext.current
   var scanTargetId by remember { mutableStateOf<String?>(null) }
   val scanner = rememberLauncherForActivityResult(ScanContract()) { result ->
     val target = scanTargetId
     scanTargetId = null
     if (result.contents != null && target != null) {
-      viewModel.applyPairingPayload(target, result.contents)?.let { Toast.makeText(LocalContext.current, it, Toast.LENGTH_LONG).show() }
+      viewModel.applyPairingPayload(target, result.contents)?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
     }
   }
 
