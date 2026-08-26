@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestIdempotencySurvivesServerRestart(t *testing.T) {
@@ -33,5 +32,4 @@ func TestExpiredIdempotencyKeysAreDropped(t *testing.T) {
 	if len(server.idempotency) != 0 {
 		t.Fatalf("expired key was retained: %+v", server.idempotency)
 	}
-	_ = time.Now()
 }
