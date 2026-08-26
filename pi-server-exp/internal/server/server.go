@@ -24,6 +24,7 @@ type Server struct {
 	remoteSessions    *RemoteSessionRegistry
 	external          *ExternalRegistry
 	wsTickets         *wsTicketStore
+	devices           *deviceRegistry
 	httpClient        *http.Client
 	upgrader          websocket.Upgrader
 	watchMu           sync.Mutex
@@ -70,6 +71,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		remoteSessions:    NewRemoteSessionRegistry(filepath.Join(cfg.DataDir, "remote-sessions.json")),
 		external:          newExternalRegistry(filepath.Join(cfg.DataDir, "relay-commands.json")),
 		wsTickets:         newWSTicketStore(),
+		devices:           newDeviceRegistry(filepath.Join(cfg.DataDir, "devices.json")),
 		httpClient:        &http.Client{Timeout: cfg.RequestTimeout, Transport: &http.Transport{MaxIdleConns: 64, MaxIdleConnsPerHost: 16, MaxConnsPerHost: 32, IdleConnTimeout: 90 * time.Second}},
 		watchers:          map[string]func(){},
 		historyCache:      map[string]historyCacheEntry{},
@@ -113,6 +115,9 @@ func New(cfg Config, logger *slog.Logger) *Server {
 			_ = s.sessions.Delete(spec.ID)
 		}
 	}
+	if err := s.devices.load(); err != nil {
+		logger.Warn("failed to load device registry", "error", err)
+	}
 	if err := s.workers.Load(); err != nil {
 		logger.Warn("failed to load worker registry", "error", err)
 	}
@@ -155,7 +160,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 	}
 	s.httpSrv = &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           requestIDMiddleware(loggingMiddleware(logger, corsMiddleware(cfg.AllowedOrigins, authMiddleware(cfg.AuthToken, recoverMiddleware(s.routes()))))),
+		Handler:           requestIDMiddleware(loggingMiddleware(logger, corsMiddleware(cfg.AllowedOrigins, authMiddlewareWithDevices(cfg.AuthToken, s.devices, recoverMiddleware(s.routes()))))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,
@@ -193,6 +198,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/files", s.listFiles)
 	mux.HandleFunc("GET /v1/files/tree", s.fileTree)
 	mux.HandleFunc("GET /v1/files/content", s.fileContent)
+	mux.HandleFunc("GET /v1/devices", s.listDevices)
+	mux.HandleFunc("POST /v1/devices", s.createDevice)
+	mux.HandleFunc("DELETE /v1/devices/", s.revokeDevice)
 	mux.HandleFunc("GET /v1/workers", s.listWorkers)
 	mux.HandleFunc("GET /v1/remote-sessions", s.listRemoteSessions)
 	mux.HandleFunc("GET /v1/global-sessions", s.listGlobalSessions)
