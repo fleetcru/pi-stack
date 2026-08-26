@@ -203,10 +203,15 @@ func (s *Server) remoteRuntimeState(worker Worker, sessionID string) (string, bo
 // avoid missing short runs.
 func (s *Server) subscribeRemoteRun(worker Worker, remoteSessionID, hubSessionID string, since uint64, requireStart bool) {
 	go func() {
+		generation := worker.Generation
 		cursor := since
 		seenStart := !requireStart
 		backoff := 250 * time.Millisecond
 		for s.distributedRunActive(hubSessionID) {
+			if generation != 0 && s.workers.CurrentGeneration(worker.ID) != generation {
+				s.logger.Info("stopping stale remote lifecycle subscription", "worker", worker.ID, "session", hubSessionID, "generation", generation)
+				return
+			}
 			path := "/v1/sessions/" + url.PathEscape(remoteSessionID) + "/ws"
 			remoteURL, err := workerWebSocketURL(worker.URL, path, "since="+strconv.FormatUint(cursor, 10))
 			if err != nil {
