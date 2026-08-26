@@ -90,9 +90,16 @@ func NewPiProcess(spec SessionSpec, cfg Config, logger *slog.Logger) *PiProcess 
 	for _, record := range p.events {
 		p.eventBytes += record.size
 	}
+	trimmed := false
 	for len(p.events) > p.eventMax || p.eventBytes > p.eventMaxBytes {
 		p.eventBytes -= p.events[0].size
 		p.events = p.events[1:]
+		trimmed = true
+	}
+	if trimmed {
+		if err := p.journal.compact(p.events); err != nil {
+			p.logger.Warn("failed to compact restored event journal", "error", err)
+		}
 	}
 	return p
 }
@@ -481,6 +488,11 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 		for len(p.events) > p.eventMax || p.eventBytes > p.eventMaxBytes {
 			p.eventBytes -= p.events[0].size
 			p.events = p.events[1:]
+		}
+		if p.journal.shouldCompact(p.eventMax, p.eventMaxBytes) {
+			if err := p.journal.compact(p.events); err != nil {
+				p.logger.Warn("failed to compact event journal", "error", err)
+			}
 		}
 	} else {
 		p.logger.Warn("not retaining oversized event", "bytes", len(encoded), "limit", p.eventMaxBytes)
