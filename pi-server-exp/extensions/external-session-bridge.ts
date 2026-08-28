@@ -272,7 +272,23 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     try { await request(`/v1/external-sessions/${id}/ack`, "POST", { ids: [commandId], lease }); } catch { registered = false; /* server retries delivery after lease renewal */ }
   };
 
-  const deliverCommand = async (command: { id: string; type: string; message?: string; delivery?: "steer" | "followUp" | "prompt"; provider?: string; modelId?: string; level?: string; requestId?: string; value?: string; cancelled?: boolean; confirmed?: boolean; selections?: string[]; comment?: string; responseKind?: string }) => {
+  type RelayImage = { type: "image"; data: string; mimeType: string };
+  type PiUserContent =
+    | { type: "text"; text: string }
+    | { type: "image"; source: { type: "base64"; mediaType: string; data: string } };
+
+  const userMessageContent = (message: string, images?: RelayImage[]): string | PiUserContent[] => {
+    if (!images?.length) return message;
+    return [
+      { type: "text", text: message },
+      ...images.map((image) => ({
+        type: "image" as const,
+        source: { type: "base64" as const, mediaType: image.mimeType, data: image.data },
+      })),
+    ];
+  };
+
+  const deliverCommand = async (command: { id: string; type: string; message?: string; images?: RelayImage[]; delivery?: "steer" | "followUp" | "prompt"; provider?: string; modelId?: string; level?: string; requestId?: string; value?: string; cancelled?: boolean; confirmed?: boolean; selections?: string[]; comment?: string; responseKind?: string }) => {
     if (handledCommands.has(command.id)) { await acknowledge(command.id); return; }
     if (command.type === "abort") {
       abortCurrent?.();
@@ -335,6 +351,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     promptCommandsInFlight.add(command.id);
     try {
       const requestedDelivery = command.delivery ?? "prompt";
+      const content = userMessageContent(command.message, command.images);
       const attempt = (promptDeliveryAttempts.get(command.id) ?? 0) + 1;
       promptDeliveryAttempts.set(command.id, attempt);
       const idle = sessionCtx?.isIdle?.() ?? false;
@@ -348,7 +365,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
           // Never inject the same idle prompt twice solely because its echo was
           // late. Later attempts only re-check state and either steer an active
           // turn or fail permanently with a visible receipt.
-          pi.sendUserMessage(command.message);
+          pi.sendUserMessage(content);
         }
         if (!(await appeared)) {
           if (!(sessionCtx?.isIdle?.() ?? false)) {
@@ -382,7 +399,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
         }
       } else {
         const delivery = requestedDelivery === "followUp" ? "followUp" : "steer";
-        pi.sendUserMessage(command.message, { deliverAs: delivery });
+        pi.sendUserMessage(content, { deliverAs: delivery });
       }
       promptDeliveryAttempts.delete(command.id);
       emit({ type: "bridge_receipt", commandId: command.id, status: "delivered" });
