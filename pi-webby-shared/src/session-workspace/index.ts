@@ -2,6 +2,7 @@ export * from "./types"
 export * from "./constants"
 export {
   contentText,
+  contentImages,
   buildTimeline,
   IncrementalTimeline,
   TimelineStore,

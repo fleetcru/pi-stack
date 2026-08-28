@@ -13,6 +13,18 @@ describe("shared history timeline", () => {
     ])
   })
 
+  it("preserves images in historical user messages, including image-only messages", () => {
+    const image = { type: "image", data: "abc123", mimeType: "image/png" }
+    const timeline = buildHistory({ data: { messages: [
+      { role: "user", timestamp: 1, content: [image, { type: "text", text: "Describe this" }] },
+      { role: "user", timestamp: 2, content: [image] },
+    ] } })
+    expect(timeline).toEqual([
+      expect.objectContaining({ kind: "user", text: "Describe this", images: [image] }),
+      expect.objectContaining({ kind: "user", text: "", images: [image] }),
+    ])
+  })
+
   it("parses standalone fallback tool records without a role", () => {
     const timeline = buildHistory({ data: { messages: [
       { _historyType: "tool_use", id: "call-2", name: "bash", input: { command: "pwd" } },
@@ -30,6 +42,17 @@ describe("IncrementalTimeline", () => {
     expect(reducer.update([start, first])).toMatchObject([{ kind: "assistant", text: "hello" }])
     const second = { type: "message_update", _daemonEventId: 3, assistantMessageEvent: { type: "text_delta", delta: " world" } }
     expect(reducer.update([first, second])).toMatchObject([{ kind: "assistant", text: "hello world" }])
+  })
+
+  it("preserves images in live user messages", () => {
+    const reducer = new IncrementalTimeline()
+    const image = { type: "image", data: "abc123", mimeType: "image/jpeg" }
+    const items = reducer.update([{
+      type: "message_start",
+      _daemonEventId: 1,
+      message: { role: "user", timestamp: 1, content: [image] },
+    }])
+    expect(items).toEqual([expect.objectContaining({ kind: "user", text: "", images: [image] })])
   })
 
   it("marks the assistant message as streaming until message_end", () => {
