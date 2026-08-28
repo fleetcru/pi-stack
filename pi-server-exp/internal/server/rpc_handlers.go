@@ -40,7 +40,12 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, err)
 				return
 			}
-			if body.Message == "" && len(body.Images) == 0 {
+			normalizedImages, err := normalizePromptImages(body.Images)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			if body.Message == "" && len(normalizedImages) == 0 {
 				writeErrorText(w, http.StatusBadRequest, "message or images is required")
 				return
 			}
@@ -64,7 +69,21 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 			if admitted {
 				s.setDistributedRunMetadata(id, "relay", "")
 			}
-			command := ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: body.Message, Images: body.Images, Delivery: externalPromptDelivery(action)}
+			imageSummary := make([]map[string]any, 0, len(normalizedImages))
+			for i, item := range normalizedImages {
+				data, _ := item["base64"].(string)
+				if data == "" {
+					data, _ = item["data"].(string)
+				}
+				mime, _ := item["mimeType"].(string)
+				imageSummary = append(imageSummary, map[string]any{"index": i, "mimeType": mime, "dataLength": len(data)})
+			}
+			s.logger.Info("relay prompt received", "session", id, "messageLength", len(body.Message), "images", imageSummary)
+			images := make([]any, len(normalizedImages))
+			for i := range normalizedImages {
+				images[i] = normalizedImages[i]
+			}
+			command := ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: body.Message, Images: images, Delivery: externalPromptDelivery(action)}
 			if !s.external.enqueue(id, command) {
 				if admitted {
 					s.releaseDistributedRun(id)

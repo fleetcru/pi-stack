@@ -1054,26 +1054,36 @@ class SessionDetailViewModel(
       ))
       viewModelScope.launch {
         _sendState.value = SendState.Sending
-        val images = withContext(Dispatchers.IO) {
-          imageUris.mapNotNull { uri ->
-            try {
+        val images = try {
+          withContext(Dispatchers.IO) {
+            imageUris.map { uri ->
               val context = getApplication<Application>()
               // Downsample large images to prevent OOM and reduce payload size.
               val maxDimension = 1024
               val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-              context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+              context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, options)
+              } ?: error("Could not open image")
+              require(options.outWidth > 0 && options.outHeight > 0) { "Could not read image dimensions" }
               val scale = maxOf(1, maxOf(options.outWidth, options.outHeight) / maxDimension)
               val decodeOptions = BitmapFactory.Options().apply { inSampleSize = scale }
               val bitmap = context.contentResolver.openInputStream(uri)?.use {
                 BitmapFactory.decodeStream(it, null, decodeOptions)
-              } ?: return@mapNotNull null
+              } ?: error("Could not decode image")
               try {
                 PromptImageEncoder.encodeJpeg(bitmap)
               } finally {
                 bitmap.recycle()
               }
-            } catch (_: Exception) { null }
+            }
           }
+        } catch (error: Exception) {
+          _sendState.value = SendState.Failed("Could not read image: ${error.message ?: "unknown error"}")
+          return@launch
+        }
+        if (images.size != imageUris.size) {
+          _sendState.value = SendState.Failed("Could not encode all selected images")
+          return@launch
         }
         when (val result = withContext(Dispatchers.IO) { client.sendPrompt(server, sessionId, message, images) }) {
           is com.example.picompanion.data.api.HttpResult.Success -> _sendState.value = SendState.Accepted

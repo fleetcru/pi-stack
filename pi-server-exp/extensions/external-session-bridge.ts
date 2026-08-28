@@ -69,6 +69,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   const promptDeliveryAttempts = new Map<string, number>();
   const userMessageWaiters = new Set<{
     text: string;
+    hasImage: boolean;
     resolve: (matched: boolean) => void;
     timer: ReturnType<typeof setTimeout>;
   }>();
@@ -241,9 +242,9 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
 
   const observeUserMessage = (message: any) => {
     const text = userMessageText(message);
-    if (!text) return;
+    const hasImage = Array.isArray(message?.content) && message.content.some((block: any) => block?.type === "image");
     for (const waiter of userMessageWaiters) {
-      if (waiter.text !== text) continue;
+      if (waiter.text !== text || waiter.hasImage !== hasImage) continue;
       clearTimeout(waiter.timer);
       userMessageWaiters.delete(waiter);
       waiter.resolve(true);
@@ -251,10 +252,11 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     }
   };
 
-  const waitForUserMessage = (text: string, timeoutMs = 1_000): Promise<boolean> =>
+  const waitForUserMessage = (text: string, hasImage = false, timeoutMs = 1_000): Promise<boolean> =>
     new Promise((resolve) => {
       const waiter = {
         text,
+        hasImage,
         resolve,
         timer: setTimeout(() => {
           userMessageWaiters.delete(waiter);
@@ -275,16 +277,135 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   type RelayImage = { type: "image"; data: string; mimeType: string };
   type PiUserContent =
     | { type: "text"; text: string }
-    | { type: "image"; source: { type: "base64"; mediaType: string; data: string } };
+    | { type: "image"; data: string; mimeType: string };
+
+  const isBase64 = (value: unknown): value is string =>
+    typeof value === "string" && value.length > 0 && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value);
+
+  // Pi's TUI history writer drops the base64 payload from user image blocks
+  // when persisting a session. On the next turn the replayed message reaches
+  // the provider with `data: undefined`, which Codex rejects as an invalid
+  // base64 value. Cache relay image payloads by content hash and restore them
+  // into the outgoing provider request via before_provider_request.
+  const relayImageCache = new Map<string, string>(); // key -> base64 data
+  const MAX_CACHE_BYTES = 30 * 1024 * 1024;
+  let cacheTotalBytes = 0;
+
+  const hashImageKey = async (mimeType: string, data: string): Promise<string> => {
+    try {
+      const { createHash } = await import("crypto");
+      return createHash("sha256").update(`${mimeType}:${data.slice(0, 256)}:${data.length}:${data.slice(-64)}`).digest("hex").slice(0, 32);
+    } catch {
+      return `${mimeType}:${data.length}:${data.slice(0, 32)}`;
+    }
+  };
+
+  const cacheRelayImages = async (images?: RelayImage[]) => {
+    for (const image of images ?? []) {
+      if (!isBase64(image.data)) continue;
+      const key = await hashImageKey(image.mimeType, image.data);
+      const old = relayImageCache.get(key);
+      if (old) cacheTotalBytes -= old.length;
+      relayImageCache.set(key, image.data);
+      cacheTotalBytes += image.data.length;
+    }
+    while (cacheTotalBytes > MAX_CACHE_BYTES && relayImageCache.size > 1) {
+      const oldest = relayImageCache.keys().next().value;
+      if (oldest === undefined) break;
+      cacheTotalBytes -= relayImageCache.get(oldest)?.length ?? 0;
+      relayImageCache.delete(oldest);
+    }
+  };
+
+  const restoreImageBlock = async (block: any): Promise<any> => {
+    if (!block || block.type !== "image" || isBase64(block.data)) return block;
+    const sourceData = block.source?.type === "base64" ? block.source.data : undefined;
+    if (isBase64(sourceData)) return { type: "image", data: sourceData, mimeType: block.source.mediaType ?? block.mimeType ?? "image/png" };
+    const mimeType = String(block.mimeType ?? "image/png");
+    const declaredLength = Number(block.contentLength ?? block.originalSize ?? 0);
+    let candidate: { key: string; data: string } | undefined;
+    let ambiguous = false;
+    for (const [key, data] of relayImageCache) {
+      const keyMime = key.includes(":") && !/^[0-9a-f]{32}$/.test(key) ? key.split(":")[0] : "";
+      if (keyMime && keyMime !== mimeType) continue;
+      if (declaredLength > 0 && Math.abs(data.length - declaredLength) > 8) continue;
+      if (candidate && candidate.data !== data) ambiguous = true;
+      candidate = { key, data };
+    }
+    if (candidate && !ambiguous) {
+      return { type: "image", data: candidate.data, mimeType };
+    }
+    return null; // unrecoverable — drop the broken block instead of poisoning the request
+  };
+
+  const restoreMessageImages = async (message: any): Promise<any> => {
+    const content = message?.message?.content ?? message?.content;
+    if (!Array.isArray(content) || !content.some((b: any) => b?.type === "image" && !isBase64(b.data))) return message;
+    const restored: any[] = [];
+    for (const block of content) {
+      const fixed = await restoreImageBlock(block);
+      if (fixed) restored.push(fixed);
+    }
+    if (restored.length === 0 && content.every((b: any) => b?.type === "image")) return null;
+    const target = message.message ? message.message : message;
+    return { ...message, ...(message.message ? { message: { ...target, content: restored } } : { content: restored }) };
+  };
+
+  // Rewrite a provider request payload (Responses `input` or Chat Completions
+  // `messages`) so hollow replayed image blocks carry real cached base64 again.
+  const repairProviderPayload = async (payload: unknown): Promise<unknown> => {
+    if (!payload || typeof payload !== "object") return payload;
+    const root = payload as Record<string, any>;
+    const list = Array.isArray(root.input) ? "input" : Array.isArray(root.messages) ? "messages" : undefined;
+    if (!list) return payload;
+    let dirty = false;
+    const nextList: any[] = [];
+    for (const item of root[list]) {
+      const content = item?.content;
+      if (!Array.isArray(content)) { nextList.push(item); continue; }
+      const nextContent: any[] = [];
+      for (const block of content) {
+        if (block?.type === "input_image" && typeof block.image_url === "string" && !/;base64,[A-Za-z0-9+/=]{16,}/.test(block.image_url)) {
+          const mime = block.image_url.match(/^data:([^;,]+)/)?.[1] ?? "image/jpeg";
+          const fixed = await restoreImageBlock({ type: "image", mimeType: mime });
+          if (fixed) { nextContent.push({ ...block, image_url: `data:${fixed.mimeType};base64,${fixed.data}` }); dirty = true; }
+          else { dirty = true; } // drop the hollow image entirely
+          continue;
+        }
+        if (block?.type === "image_url" && typeof block.image_url?.url === "string" && !/;base64,[A-Za-z0-9+/=]{16,}/.test(block.image_url.url)) {
+          const mime = block.image_url.url.match(/^data:([^;,]+)/)?.[1] ?? "image/jpeg";
+          const fixed = await restoreImageBlock({ type: "image", mimeType: mime });
+          if (fixed) { nextContent.push({ ...block, image_url: { ...block.image_url, url: `data:${fixed.mimeType};base64,${fixed.data}` } }); dirty = true; }
+          else { dirty = true; }
+          continue;
+        }
+        if (block?.type === "image" && !isBase64(block.data)) {
+          const fixed = await restoreImageBlock(block);
+          if (fixed) { nextContent.push(fixed); dirty = true; }
+          else { dirty = true; }
+          continue;
+        }
+        nextContent.push(block);
+      }
+      nextList.push(dirty ? { ...item, content: nextContent.filter(Boolean) } : item);
+    }
+    if (!dirty) return payload;
+    return { ...root, [list]: nextList };
+  };
 
   const userMessageContent = (message: string, images?: RelayImage[]): string | PiUserContent[] => {
     if (!images?.length) return message;
     return [
       { type: "text", text: message },
-      ...images.map((image) => ({
-        type: "image" as const,
-        source: { type: "base64" as const, mediaType: image.mimeType, data: image.data },
-      })),
+      ...images
+        // Defensively accept raw base64 or a full data URL; the provider
+        // adapter adds its own prefix.
+        .map((image) => {
+          const raw = typeof image.data === "string" ? image.data : String(image?.data ?? "");
+          const data = raw.startsWith("data:") && raw.includes("base64,") ? raw.slice(raw.indexOf("base64,") + 7) : raw;
+          return { type: "image" as const, data, mimeType: image.mimeType };
+        })
+        .filter((image) => isBase64(image.data)),
     ];
   };
 
@@ -346,11 +467,14 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       await acknowledge(command.id);
       return;
     }
-    if (command.type !== "prompt" || !command.message) return;
+    if (command.type !== "prompt" || (!command.message && !command.images?.length)) return;
+    const imageLengths = (command.images ?? []).map((image) => typeof image?.data === "string" ? image.data.length : 0);
+    console.error(`[external-session-bridge] prompt ${command.id}: images=${imageLengths.length} dataLengths=${imageLengths.join(",")}`);
     if (promptCommandsInFlight.has(command.id)) return;
     promptCommandsInFlight.add(command.id);
     try {
       const requestedDelivery = command.delivery ?? "prompt";
+      await cacheRelayImages(command.images);
       const content = userMessageContent(command.message, command.images);
       const attempt = (promptDeliveryAttempts.get(command.id) ?? 0) + 1;
       promptDeliveryAttempts.set(command.id, attempt);
@@ -360,7 +484,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
         // idle→working race through its extension error channel rather than by
         // throwing here. Confirm that the user message actually entered the TUI
         // before acknowledging the durable server command.
-        const appeared = waitForUserMessage(command.message);
+        const appeared = waitForUserMessage(command.message ?? "", Boolean(command.images?.length));
         if (attempt === 1) {
           // Never inject the same idle prompt twice solely because its echo was
           // late. Later attempts only re-check state and either steer an active
@@ -796,7 +920,21 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     emit({ type: "message_start", message: event.message });
   });
   pi.on("message_update", async (event) => emit({ type: "message_update", assistantMessageEvent: event.assistantMessageEvent }));
-  pi.on("message_end", async (event) => emit({ type: "message_end", message: event.message }));
+  pi.on("message_end", async (event) => {
+    // Restore image data stripped by Pi's history writer before re-emitting,
+    // so remote clients keep the real attachment instead of a hollow reference.
+    const restored = await restoreMessageImages(event.message);
+    if (restored === null) return;
+    emit({ type: "message_end", message: restored.message ?? restored });
+  });
+  // Re-inject cached base64 into the live provider request, because replayed
+  // history carries image blocks without data (`base64,undefined`).
+  pi.on("before_provider_request", async (event) => {
+    try {
+      const repaired = await repairProviderPayload(event.payload);
+      if (repaired !== event.payload) return repaired;
+    } catch { /* best effort — never block a request over image repair */ }
+  });
   pi.on("tool_execution_start", async (event) => emit({ type: "tool_execution_start", toolName: event.toolName, toolCallId: event.toolCallId, args: event.args }));
   pi.on("tool_execution_update", async (event) => emit({ type: "tool_execution_update", toolName: event.toolName, toolCallId: event.toolCallId, partialResult: event.partialResult }));
   pi.on("tool_execution_end", async (event) => emit({ type: "tool_execution_end", toolName: event.toolName, toolCallId: event.toolCallId, result: event.result }));

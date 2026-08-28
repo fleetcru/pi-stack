@@ -104,11 +104,18 @@ func (t relayTransport) Send(command RPCCommand) error {
 	}
 }
 func relayImages(value any) []any {
-	images, ok := value.([]any)
-	if !ok {
+	switch images := value.(type) {
+	case []any:
+		return append([]any(nil), images...)
+	case []map[string]any:
+		out := make([]any, len(images))
+		for i := range images {
+			out[i] = images[i]
+		}
+		return out
+	default:
 		return nil
 	}
-	return append([]any(nil), images...)
 }
 
 func relayStringSlice(value any) []string {
