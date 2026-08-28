@@ -131,7 +131,14 @@ fun SettingsScreen(
           onTest = { viewModel.testConnection(server) },
           onScan = {
             scanTargetId = server.id
-            scanner.launch(ScanOptions().setPrompt("Scan Pi device pairing QR").setBeepEnabled(false).setOrientationLocked(false))
+            scanner.launch(
+              ScanOptions()
+                .setCaptureActivity(PairingScanActivity::class.java)
+                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setPrompt("")
+                .setBeepEnabled(false)
+                .setOrientationLocked(false),
+            )
           },
           onRemove = if (settings.servers.size > 1) {
             { viewModel.removeServer(server.id) }
@@ -224,9 +231,9 @@ private fun ServerCard(
   modifier: Modifier = Modifier,
 ) {
   var expanded by remember(server.id) { mutableStateOf(server.name.isBlank() && server.url.isBlank()) }
-  var editName by remember(server.id) { mutableStateOf(server.name) }
-  var editUrl by remember(server.id) { mutableStateOf(server.url) }
-  var editToken by remember(server.id) { mutableStateOf(server.authToken) }
+  var editName by remember(server.id, server.name) { mutableStateOf(server.name) }
+  var editUrl by remember(server.id, server.url) { mutableStateOf(server.url) }
+  var editToken by remember(server.id, server.authToken) { mutableStateOf(server.authToken) }
 
   Surface(
     modifier = modifier.fillMaxWidth(),

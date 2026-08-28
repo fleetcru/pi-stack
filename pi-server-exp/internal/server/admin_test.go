@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -77,6 +79,37 @@ func TestAdminSettingsOverrideEnvironment(t *testing.T) {
 	}
 	if cfg.ConfigSources["maxSessions"] != "admin" {
 		t.Fatalf("source=%q", cfg.ConfigSources["maxSessions"])
+	}
+}
+
+func TestIsTailscaleIP(t *testing.T) {
+	for _, tc := range []struct {
+		ip   string
+		want bool
+	}{
+		{"100.64.0.1", true},
+		{"100.127.255.254", true},
+		{"100.128.0.1", false},
+		{"192.168.1.10", false},
+	} {
+		if got := isTailscaleIP(net.ParseIP(tc.ip)); got != tc.want {
+			t.Errorf("isTailscaleIP(%q) = %v, want %v", tc.ip, got, tc.want)
+		}
+	}
+}
+
+func TestAdminPageAllowsSameOriginScript(t *testing.T) {
+	cfg := ConfigFromEnv()
+	s := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	defer close(s.stopHeartbeat)
+
+	rec := httptest.NewRecorder()
+	s.routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/admin/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Security-Policy"); !strings.Contains(got, "script-src 'self' 'unsafe-inline'") {
+		t.Fatalf("CSP does not permit the embedded QR script: %q", got)
 	}
 }
 

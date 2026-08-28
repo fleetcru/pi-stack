@@ -6,8 +6,10 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -63,7 +65,7 @@ func (s *Server) adminPage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(adminHTML)
@@ -144,10 +146,16 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/admin/api/devices":
 		s.adminGetDevices(w)
 	case r.Method == http.MethodPost && r.URL.Path == "/admin/api/devices":
-		if !s.validAdminMutation(r, session) { writeErrorText(w, http.StatusForbidden, "invalid admin CSRF token or origin"); return }
+		if !s.validAdminMutation(r, session) {
+			writeErrorText(w, http.StatusForbidden, "invalid admin CSRF token or origin")
+			return
+		}
 		s.adminCreateDevice(w, r)
 	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/admin/api/devices/"):
-		if !s.validAdminMutation(r, session) { writeErrorText(w, http.StatusForbidden, "invalid admin CSRF token or origin"); return }
+		if !s.validAdminMutation(r, session) {
+			writeErrorText(w, http.StatusForbidden, "invalid admin CSRF token or origin")
+			return
+		}
 		s.adminRevokeDevice(w, r)
 	case r.Method == http.MethodPut && r.URL.Path == "/admin/api/settings":
 		if !s.validAdminMutation(r, session) {
@@ -179,6 +187,52 @@ func (s *Server) validAdminMutation(r *http.Request, session adminSession) bool 
 		scheme = "https"
 	}
 	return origin == scheme+"://"+r.Host
+}
+
+type pairingEndpoint struct {
+	Label string `json:"label"`
+	URL   string `json:"url"`
+}
+
+func pairingEndpoints(addr string) []pairingEndpoint {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		port = "3141"
+	}
+	var lan, tailscale []pairingEndpoint
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			ip, _, err := net.ParseCIDR(addr.String())
+			if err != nil || ip.To4() == nil {
+				continue
+			}
+			url := "http://" + ip.String() + ":" + port
+			if isTailscaleIP(ip) {
+				tailscale = append(tailscale, pairingEndpoint{Label: "Tailscale (" + iface.Name + ")", URL: url})
+			} else if ip.IsPrivate() {
+				lan = append(lan, pairingEndpoint{Label: "Home network (" + iface.Name + ")", URL: url})
+			}
+		}
+	}
+	sort.Slice(lan, func(i, j int) bool { return lan[i].URL < lan[j].URL })
+	sort.Slice(tailscale, func(i, j int) bool { return tailscale[i].URL < tailscale[j].URL })
+	return append(lan, tailscale...)
+}
+
+func isTailscaleIP(ip net.IP) bool {
+	ip = ip.To4()
+	return ip != nil && ip[0] == 100 && ip[1]&0xc0 == 0x40
 }
 
 func (s *Server) adminGetState(w http.ResponseWriter, session adminSession) {
@@ -230,8 +284,9 @@ func (s *Server) adminGetState(w http.ResponseWriter, session adminSession) {
 			"warnings": warnings, "configPath": s.cfg.AdminConfigPath,
 		},
 		"settings": target, "effectiveSettings": effective, "sources": sources,
-		"runtimeFields":   []string{"maxSessions", "maxActiveRuns", "maxRunsPerSession", "maxRunsPerWorker", "maxQueuedRuns"},
-		"restartRequired": restartSettingsDiffer(target, settingsFromConfig(s.cfg)),
+		"pairingEndpoints": pairingEndpoints(s.cfg.Addr),
+		"runtimeFields":    []string{"maxSessions", "maxActiveRuns", "maxRunsPerSession", "maxRunsPerWorker", "maxQueuedRuns"},
+		"restartRequired":  restartSettingsDiffer(target, settingsFromConfig(s.cfg)),
 	})
 }
 
@@ -246,7 +301,7 @@ func (s *Server) adminGetDevices(w http.ResponseWriter) {
 
 func (s *Server) adminCreateDevice(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
-	var input struct { Name string }
+	var input struct{ Name string }
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeErrorText(w, http.StatusBadRequest, "invalid request body")
 		return
