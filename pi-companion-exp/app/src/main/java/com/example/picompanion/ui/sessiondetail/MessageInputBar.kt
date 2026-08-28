@@ -1,14 +1,15 @@
 package com.example.picompanion.ui.sessiondetail
 
+import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -20,7 +21,6 @@ import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Tune
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -30,6 +30,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -37,6 +38,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -50,13 +54,12 @@ fun MessageInputBar(
   onSteer: ((String) -> Unit)? = null,
   onPickImage: (() -> Unit)? = null,
   onTakePhoto: (() -> Unit)? = null,
-  attachmentCount: Int = 0,
-  attachmentNames: List<String> = emptyList(),
+  attachmentUris: List<Uri> = emptyList(),
   onRemoveAttachment: ((Int) -> Unit)? = null,
 ) {
   var text by remember { mutableStateOf("") }
   val aborting = agentWorking && onAbort != null
-  val canSend = text.isNotBlank() && !sending && !aborting
+  val canSend = (text.isNotBlank() || attachmentUris.isNotEmpty()) && !sending && !aborting
 
   Surface(
     modifier = modifier
@@ -70,23 +73,26 @@ fun MessageInputBar(
       modifier = Modifier.padding(start = 12.dp, end = 8.dp, top = 4.dp, bottom = 6.dp),
       verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
-      if (attachmentNames.isNotEmpty()) {
+      if (attachmentUris.isNotEmpty()) {
         Row(
           modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
           horizontalArrangement = Arrangement.spacedBy(6.dp),
           verticalAlignment = Alignment.CenterVertically,
         ) {
-          attachmentNames.take(3).forEachIndexed { index, name ->
-            Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
-              Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 8.dp, end = 2.dp, top = 3.dp, bottom = 3.dp)) {
-                Text(name, maxLines = 1, style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(130.dp))
-                if (onRemoveAttachment != null) IconButton(onClick = { onRemoveAttachment(index) }, modifier = Modifier.size(24.dp)) {
-                  Icon(Icons.Rounded.Close, contentDescription = "Remove $name", modifier = Modifier.size(14.dp))
+          attachmentUris.take(3).forEachIndexed { index, uri ->
+            Box {
+              AttachmentThumbnailPreview(uri)
+              if (onRemoveAttachment != null) {
+                IconButton(
+                  onClick = { onRemoveAttachment(index) },
+                  modifier = Modifier.align(Alignment.TopEnd).size(24.dp),
+                ) {
+                  Icon(Icons.Rounded.Close, contentDescription = "Remove image", modifier = Modifier.size(14.dp))
                 }
               }
             }
           }
-          if (attachmentNames.size > 3) Text("+${attachmentNames.size - 3}", style = MaterialTheme.typography.labelSmall)
+          if (attachmentUris.size > 3) Text("+${attachmentUris.size - 3}", style = MaterialTheme.typography.labelSmall)
         }
       }
       TextField(
@@ -173,5 +179,36 @@ fun MessageInputBar(
         }
       }
     }
+  }
+}
+
+@Composable
+private fun AttachmentThumbnailPreview(uri: Uri) {
+  val context = LocalContext.current
+  val bitmap = produceState<android.graphics.Bitmap?>(null, uri) {
+    value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+      runCatching {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        val maxPx = (96 * context.resources.displayMetrics.density).toInt().coerceAtLeast(64)
+        val sample = maxOf(1, maxOf(bounds.outWidth, bounds.outHeight) / maxPx)
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+      }.getOrNull()
+    }
+  }.value
+  if (bitmap != null) {
+    Image(
+      bitmap = bitmap.asImageBitmap(),
+      contentDescription = "Attached image",
+      contentScale = ContentScale.Crop,
+      modifier = Modifier.size(width = 72.dp, height = 56.dp).clip(RoundedCornerShape(10.dp)),
+    )
+  } else {
+    Surface(
+      shape = RoundedCornerShape(10.dp),
+      color = MaterialTheme.colorScheme.secondaryContainer,
+      modifier = Modifier.size(width = 72.dp, height = 56.dp),
+    ) { Text("Image", modifier = Modifier.padding(8.dp), style = MaterialTheme.typography.labelSmall) }
   }
 }

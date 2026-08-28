@@ -32,8 +32,24 @@ internal class SessionHistoryState {
       .distinctBy(::historyItemId)
       .map { item -> previousOrders[historyItemId(item)]?.let { item.withOrder(it) } ?: item }
 
+    val optimisticImages = liveItems.filterIsInstance<SessionTimelineItem.Chat>()
+      .filter { it.time == "now" && it.imageUris.isNotEmpty() }
     val merged = LinkedHashMap<String, SessionTimelineItem>()
-    historicalItems.forEach { merged[historyItemId(it)] = it }
+    historicalItems.forEach { item ->
+      val withLocalPreview = (item as? SessionTimelineItem.Chat)?.let { durable ->
+        optimisticImages.firstOrNull { optimistic ->
+          optimistic.isUser == durable.isUser && optimistic.text.trim() == durable.text.trim()
+        }?.let { optimistic -> durable.copy(imageUris = optimistic.imageUris) }
+      } ?: item
+      merged[historyItemId(withLocalPreview)] = withLocalPreview
+    }
+    // Keep an optimistic image row when its durable echo has not arrived yet.
+    optimisticImages.filter { optimistic ->
+      historicalItems.none { durable ->
+        durable is SessionTimelineItem.Chat &&
+          durable.isUser == optimistic.isUser && durable.text.trim() == optimistic.text.trim()
+      }
+    }.forEach { merged[historyItemId(it)] = it }
     val liveItemIds = liveItems.mapTo(mutableSetOf(), ::historyItemId)
     val durableChatSignatures = historicalItems
       .asSequence()
@@ -43,8 +59,6 @@ internal class SessionHistoryState {
       .filter { !appendOld && historyItemId(it) !in liveItemIds }
       .map { Triple(it.isUser, it.text.trim(), it.imageUris.isNotEmpty()) }
       .toSet()
-    liveItems.filter { it is SessionTimelineItem.Chat && it.time == "now" && it.imageUris.isNotEmpty() }
-      .forEach { merged[historyItemId(it)] = it }
     liveItems.forEach { item ->
       val chat = item as? SessionTimelineItem.Chat
       val optimisticImage = chat?.time == "now" && chat.imageUris.isNotEmpty()

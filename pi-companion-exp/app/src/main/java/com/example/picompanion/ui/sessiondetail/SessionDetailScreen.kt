@@ -325,6 +325,7 @@ fun SessionDetailScreen(
               time = item.time,
               isUser = item.isUser,
               imageUris = item.imageUris,
+              imageData = item.imageData,
               streaming = !item.isUser && item.order == streamingOrder,
               modifier = Modifier.animateItem(),
             )
@@ -361,8 +362,7 @@ fun SessionDetailScreen(
           pendingCameraUri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", image)
           pendingCameraUri?.let(cameraLauncher::launch)
         },
-        attachmentCount = attachments.size,
-        attachmentNames = attachments.map { it.lastPathSegment?.substringAfterLast('/') ?: "Image" },
+        attachmentUris = attachments,
         onRemoveAttachment = { index -> attachments = attachments.toMutableList().apply { removeAt(index) } },
         modifier = Modifier.align(Alignment.BottomCenter),
       )

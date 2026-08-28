@@ -581,7 +581,9 @@ class SessionDetailViewModel(
         }
         if (role == "user") {
           // User sent a prompt from the TUI — show it in the timeline
-          val text = message?.findText()?.takeIf { it.isNotBlank() } ?: return
+          val text = message?.findText().orEmpty()
+          val images = message?.findImages().orEmpty()
+          if (text.isBlank() && images.isEmpty()) return
           // Deduplicate against the optimistic insert from sendPrompt().
           // The WS echo arrives with a server timestamp while the optimistic
           // insert uses "now". Match by text content against the map values.
@@ -598,6 +600,7 @@ class SessionDetailViewModel(
             text = text,
             time = formatTime(raw),
             isUser = true,
+            imageData = images,
           )
         } else {
           return
@@ -1014,6 +1017,12 @@ class SessionDetailViewModel(
   }
 
   /** Extract text from Pi's nested message/content structures. */
+  private fun JsonElement.findImages(): List<String> = when (this) {
+    is JsonObject -> if (getString("type") == "image") listOfNotNull(getString("data")) else this["content"]?.findImages().orEmpty()
+    is JsonArray -> flatMap { it.findImages() }
+    else -> emptyList()
+  }
+
   private fun JsonElement.findText(): String? = when (this) {
     is JsonPrimitive -> if (isString) contentOrNull else null
     is JsonObject -> getString("text") ?: getString("content") ?: getString("delta")
@@ -1514,6 +1523,7 @@ sealed interface SessionTimelineItem {
     val time: String,
     val isUser: Boolean,
     val imageUris: List<Uri> = emptyList(),
+    val imageData: List<String> = emptyList(),
     override val order: Long = 0,
   ) : SessionTimelineItem
 

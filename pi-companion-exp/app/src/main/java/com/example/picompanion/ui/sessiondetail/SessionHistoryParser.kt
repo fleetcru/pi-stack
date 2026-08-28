@@ -51,12 +51,15 @@ internal object SessionHistoryParser {
             )
           }
       }
-      message.findText()?.trim()?.takeIf { it.isNotEmpty() }?.let { text ->
+      val text = message.findText()?.trim().orEmpty()
+      val images = message.findImages()
+      if (text.isNotEmpty() || images.isNotEmpty()) {
         parsed += SessionTimelineItem.Chat(
           author = if (role == "user") "You" else "Pi Agent",
           text = text,
           time = message.string("timestamp").orEmpty(),
           isUser = role == "user",
+          imageData = images,
         )
       }
     }
@@ -68,6 +71,12 @@ internal object SessionHistoryParser {
 
   private fun JsonObject.string(key: String): String? =
     (this[key] as? JsonPrimitive)?.contentOrNull
+
+  private fun JsonElement.findImages(): List<String> = when (this) {
+    is JsonObject -> if (string("type") == "image") listOfNotNull(string("data")) else this["content"]?.findImages().orEmpty()
+    is JsonArray -> flatMap { it.findImages() }
+    else -> emptyList()
+  }
 
   private fun JsonElement.findText(): String? = when (this) {
     is JsonPrimitive -> if (isString) contentOrNull else null
