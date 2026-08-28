@@ -16,6 +16,7 @@ type ExternalCommand struct {
 	ID       string `json:"id"`
 	Type     string `json:"type"`
 	Message  string `json:"message,omitempty"`
+	Images   []any  `json:"images,omitempty"`
 	Delivery string `json:"delivery,omitempty"`
 	// For set_model commands
 	Provider string `json:"provider,omitempty"`

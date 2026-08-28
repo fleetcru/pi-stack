@@ -56,10 +56,11 @@ func (s *Server) externalSessionWebSocket(w http.ResponseWriter, r *http.Request
 				commandType, _ := command["type"].(string)
 				startsRun = commandType == "prompt"
 				message, _ := command["message"].(string)
-				if message == "" {
+				images := relayImages(command["images"])
+				if message == "" && len(images) == 0 {
 					continue
 				}
-				queued = ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: message, Delivery: externalPromptDelivery(commandType)}
+				queued = ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: message, Images: images, Delivery: externalPromptDelivery(commandType)}
 			default:
 				continue
 			}

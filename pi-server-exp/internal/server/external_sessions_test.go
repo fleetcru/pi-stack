@@ -197,7 +197,8 @@ func TestRelayCommandPersistenceAcrossRestart(t *testing.T) {
 	// First registry instance: enqueue commands.
 	r1 := newExternalRegistry(path)
 	r1.register("session-1", ".", "", "", "bridge-1")
-	if !r1.enqueue("session-1", ExternalCommand{ID: "cmd-1", Type: "prompt", Message: "first"}) {
+	images := []any{map[string]any{"type": "image", "data": "abc", "mimeType": "image/png"}}
+	if !r1.enqueue("session-1", ExternalCommand{ID: "cmd-1", Type: "prompt", Message: "first", Images: images}) {
 		t.Fatal("failed to enqueue first command")
 	}
 	if !r1.enqueue("session-1", ExternalCommand{ID: "cmd-2", Type: "prompt", Message: "second"}) {
@@ -215,6 +216,30 @@ func TestRelayCommandPersistenceAcrossRestart(t *testing.T) {
 	}
 	if commands[0].ID != "cmd-1" || commands[1].ID != "cmd-2" {
 		t.Fatalf("command order not preserved: %#v", commands)
+	}
+	if len(commands[0].Images) != 1 || commands[0].Images[0].(map[string]any)["data"] != "abc" {
+		t.Fatalf("command images not preserved: %#v", commands[0].Images)
+	}
+}
+
+func TestExternalPromptAcceptsImageOnly(t *testing.T) {
+	s := newTestServer(t, "")
+	s.external.register("relay", ".", "", "", "bridge")
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/relay/prompt", strings.NewReader(`{"images":[{"type":"image","data":"abc","mimeType":"image/png"}]}`))
+	w := httptest.NewRecorder()
+	s.sessionPost(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("image-only prompt status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	lease := s.external.sessions["relay"].leaseToken
+	commands, exists, authorized := s.external.commandsFor("relay", lease)
+	if !exists || !authorized || len(commands) != 1 {
+		t.Fatalf("image-only prompt was not queued: exists=%v authorized=%v commands=%#v", exists, authorized, commands)
+	}
+	if commands[0].Message != "" || len(commands[0].Images) != 1 {
+		t.Fatalf("queued image-only command = %#v", commands[0])
 	}
 }
 

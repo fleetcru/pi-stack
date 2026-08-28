@@ -34,10 +34,14 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 		if action == "prompt" || action == "steer" || action == "follow-up" {
 			var body struct {
 				Message string `json:"message"`
+				Images  []any  `json:"images"`
 			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			if body.Message == "" {
-				writeErrorText(w, http.StatusBadRequest, "message is required")
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			if body.Message == "" && len(body.Images) == 0 {
+				writeErrorText(w, http.StatusBadRequest, "message or images is required")
 				return
 			}
 			idemKey := ""
@@ -60,7 +64,7 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 			if admitted {
 				s.setDistributedRunMetadata(id, "relay", "")
 			}
-			command := ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: body.Message, Delivery: externalPromptDelivery(action)}
+			command := ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: body.Message, Images: body.Images, Delivery: externalPromptDelivery(action)}
 			if !s.external.enqueue(id, command) {
 				if admitted {
 					s.releaseDistributedRun(id)
