@@ -527,7 +527,17 @@ function ChatTurn({ item }: { item: TextItem }) {
               className={`max-w-full text-sm leading-6 [overflow-wrap:normal] ${user ? "w-auto whitespace-pre-wrap bg-muted/80" : "w-full text-foreground"}`}
             >
               {user ? (
-                item.text
+                <>
+                  {item.images?.map((image, index) => (
+                    <img
+                      key={`${image.mimeType}-${index}`}
+                      src={image.data.startsWith("data:") ? image.data : `data:${image.mimeType};base64,${image.data}`}
+                      alt="Attached image"
+                      className="mb-2 max-h-96 max-w-full rounded-lg object-contain last:mb-0"
+                    />
+                  ))}
+                  {item.text}
+                </>
               ) : (
                 <DeferredMarkdown text={item.text || "Thinking…"} streaming={item.streaming} />
               )}

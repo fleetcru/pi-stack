@@ -1,6 +1,7 @@
 package com.example.picompanion.ui.settings
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.picompanion.data.api.HttpResult
@@ -15,6 +16,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import java.util.UUID
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -77,6 +80,33 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val current = settings.value.servers
     val updatedList = current.map { if (it.id == updated.id) updated else it }
     viewModelScope.launch { dataStore.updateServers(updatedList) }
+  }
+
+  /** Accepts a QR payload without removing manual URL/token entry. */
+  fun applyPairingPayload(serverId: String, payload: String): String? {
+    val text = payload.trim()
+    var url = ""
+    var token = ""
+    var name = ""
+    try {
+      val obj = Json.parseToJsonElement(text).jsonObject
+      url = obj["url"]?.toString()?.trim('"').orEmpty()
+      token = obj["token"]?.toString()?.trim('"').orEmpty()
+      name = obj["name"]?.toString()?.trim('"').orEmpty()
+    } catch (_: Exception) {
+      val uri = Uri.parse(text)
+      if (uri.scheme == "pi-stack" || uri.scheme == "pistack") {
+        url = uri.getQueryParameter("url").orEmpty()
+        token = uri.getQueryParameter("token").orEmpty()
+        name = uri.getQueryParameter("name").orEmpty()
+      }
+    }
+    if (!url.startsWith("http://") && !url.startsWith("https://")) return "QR code did not contain a valid server URL"
+    if (token.isBlank()) return "QR code did not contain a device token"
+    val current = settings.value.servers.find { it.id == serverId } ?: return "Server entry not found"
+    updateServer(current.copy(name = name.ifBlank { current.name }, url = url.trimEnd('/'), authToken = token))
+    testConnection(current.copy(url = url.trimEnd('/'), authToken = token))
+    return null
   }
 
   fun setActiveServer(id: String) {

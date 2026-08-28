@@ -83,7 +83,7 @@ func (st *wsTicketStore) consume(ticket, sessionID, tokenFP string) (code string
 		delete(st.tickets, key)
 		return CodeTicketSessionMismatch
 	}
-	if rec.tokenFP != tokenFP {
+	if tokenFP != "" && rec.tokenFP != tokenFP {
 		delete(st.tickets, key)
 		return CodeInvalidTicket
 	}
@@ -117,7 +117,8 @@ func (s *Server) createWSTicket(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, r, http.StatusNotFound, CodeSessionNotFound, "session not found")
 		return
 	}
-	fp := tokenFingerprint(s.cfg.AuthToken)
+	provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	fp := tokenFingerprint(provided)
 	ticket, expiresAt, err := s.wsTickets.issue(input.SessionID, fp)
 	if err != nil {
 		writeErrorCode(w, r, http.StatusInternalServerError, CodeInternal, "failed to issue ticket")
@@ -154,7 +155,7 @@ func (s *Server) authorizeSessionWS(w http.ResponseWriter, r *http.Request, sess
 		writeErrorCode(w, r, http.StatusUnauthorized, CodeUnauthorized, "unauthorized")
 		return false
 	}
-	code := s.wsTickets.consume(ticket, sessionID, tokenFingerprint(s.cfg.AuthToken))
+	code := s.wsTickets.consume(ticket, sessionID, "")
 	if code != "" {
 		msg := "invalid websocket ticket"
 		status := http.StatusUnauthorized

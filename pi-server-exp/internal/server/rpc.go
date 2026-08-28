@@ -51,6 +51,7 @@ type PiProcess struct {
 	eventMax         int
 	eventMaxBytes    int
 	eventBytes       int
+	journal          *eventJournal
 	eventSeq         uint64
 	restarts         int
 	runtimeState     string
@@ -81,7 +82,26 @@ func NewPiProcess(spec SessionSpec, cfg Config, logger *slog.Logger) *PiProcess 
 	if eventMaxBytes <= 0 {
 		eventMaxBytes = 8 << 20
 	}
-	return &PiProcess{id: spec.ID, cfg: cfg, spec: spec, logger: logger.With("session", spec.ID, "cwd", spec.CWD), waiters: map[string]responseWaiter{}, subs: map[chan RPCEvent]struct{}{}, eventMax: eventMax, eventMaxBytes: eventMaxBytes, runtimeState: "created", taskID: spec.ID, runID: newRequestID()}
+	journal, restored, lastID, err := openEventJournal(cfg.DataDir, spec.ID)
+	if err != nil {
+		logger.Warn("durable event journal unavailable", "session", spec.ID, "error", err)
+	}
+	p := &PiProcess{id: spec.ID, cfg: cfg, spec: spec, logger: logger.With("session", spec.ID, "cwd", spec.CWD), waiters: map[string]responseWaiter{}, subs: map[chan RPCEvent]struct{}{}, eventMax: eventMax, eventMaxBytes: eventMaxBytes, journal: journal, events: restored, eventSeq: lastID, runtimeState: "created", taskID: spec.ID, runID: newRequestID()}
+	for _, record := range p.events {
+		p.eventBytes += record.size
+	}
+	trimmed := false
+	for len(p.events) > p.eventMax || p.eventBytes > p.eventMaxBytes {
+		p.eventBytes -= p.events[0].size
+		p.events = p.events[1:]
+		trimmed = true
+	}
+	if trimmed {
+		if err := p.journal.compact(p.events); err != nil {
+			p.logger.Warn("failed to compact restored event journal", "error", err)
+		}
+	}
+	return p
 }
 
 func (p *PiProcess) Start(ctx context.Context) error {
@@ -462,9 +482,17 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 		record := EventRecord{ID: id, Timestamp: time.Now().UTC(), Event: cloneEvent(ev), size: len(encoded)}
 		p.events = append(p.events, record)
 		p.eventBytes += record.size
+		if err := p.journal.append(record); err != nil {
+			p.logger.Warn("failed to persist daemon event", "error", err)
+		}
 		for len(p.events) > p.eventMax || p.eventBytes > p.eventMaxBytes {
 			p.eventBytes -= p.events[0].size
 			p.events = p.events[1:]
+		}
+		if p.journal.shouldCompact(p.eventMax, p.eventMaxBytes) {
+			if err := p.journal.compact(p.events); err != nil {
+				p.logger.Warn("failed to compact event journal", "error", err)
+			}
 		}
 	} else {
 		p.logger.Warn("not retaining oversized event", "bytes", len(encoded), "limit", p.eventMaxBytes)

@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 func getCommandForAction(action string, r *http.Request) (RPCCommand, bool) {
@@ -92,13 +94,18 @@ func commandFromBody(action string, r *http.Request) (RPCCommand, bool, error) {
 	}
 	switch action {
 	case "prompt":
-		if err := requireString(body, "message"); err != nil {
+		images, err := normalizePromptImages(body["images"])
+		if err != nil {
 			return nil, false, err
+		}
+		message := stringField(body, "message")
+		if message == "" && len(images) == 0 {
+			return nil, false, fmt.Errorf("message or images is required")
 		}
 		if v, ok := body["streamingBehavior"].(string); ok && v != "steer" && v != "followUp" {
 			return nil, false, fmt.Errorf("streamingBehavior must be steer or followUp")
 		}
-		return RPCCommand{"type": "prompt", "message": stringField(body, "message"), "streamingBehavior": body["streamingBehavior"], "images": body["images"]}, false, nil
+		return RPCCommand{"type": "prompt", "message": message, "streamingBehavior": body["streamingBehavior"], "images": images}, false, nil
 	case "steer":
 		if err := requireString(body, "message"); err != nil {
 			return nil, false, err
@@ -213,6 +220,48 @@ func validateExtensionUIResponseFields(id, value, comment string, selections []s
 		return fmt.Errorf("responseKind must be selection or freeform")
 	}
 	return nil
+}
+
+func normalizePromptImages(value any) ([]map[string]any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	images, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("images must be an array")
+	}
+	normalized := make([]map[string]any, 0, len(images))
+	for i, raw := range images {
+		image, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("images[%d] must be an object", i)
+		}
+		mimeType := stringField(image, "mimeType")
+		if mimeType == "" || !strings.HasPrefix(mimeType, "image/") {
+			return nil, fmt.Errorf("images[%d].mimeType must be an image MIME type", i)
+		}
+		data := stringField(image, "base64")
+		if data == "" {
+			data = stringField(image, "data")
+		}
+		if data == "" {
+			return nil, fmt.Errorf("images[%d].base64 is required", i)
+		}
+		if imageType := stringField(image, "type"); imageType != "" && imageType != "image" {
+			return nil, fmt.Errorf("images[%d].type must be image", i)
+		}
+		if _, err := base64.StdEncoding.DecodeString(data); err != nil {
+			if _, rawErr := base64.RawStdEncoding.DecodeString(data); rawErr != nil {
+				return nil, fmt.Errorf("images[%d].base64 is invalid", i)
+			}
+		}
+		normalized = append(normalized, map[string]any{
+			"type":     "image",
+			"data":     data,
+			"mimeType": mimeType,
+		})
+	}
+	return normalized, nil
 }
 
 func stringField(m map[string]any, key string) string {

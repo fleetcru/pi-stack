@@ -79,6 +79,53 @@ func TestConvenienceCommandValidation(t *testing.T) {
 	}
 }
 
+func TestPromptImagesNormalizeCompanionPayload(t *testing.T) {
+	r := httptest.NewRequest("POST", "/", strings.NewReader(`{"images":[{"base64":"aGVsbG8=","mimeType":"image/png"}]}`))
+	cmd, _, err := commandFromBody("prompt", r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	images, ok := cmd["images"].([]map[string]any)
+	if !ok || len(images) != 1 {
+		t.Fatalf("images = %#v, want one normalized image", cmd["images"])
+	}
+	if images[0]["type"] != "image" || images[0]["data"] != "aGVsbG8=" || images[0]["mimeType"] != "image/png" {
+		t.Fatalf("image was not normalized: %#v", images[0])
+	}
+}
+
+func TestPromptImageValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"empty prompt", `{}`},
+		{"missing image data", `{"images":[{"mimeType":"image/png"}]}`},
+		{"invalid base64", `{"images":[{"base64":"not base64!","mimeType":"image/png"}]}`},
+		{"non-image MIME type", `{"images":[{"base64":"aGVsbG8=","mimeType":"text/plain"}]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "/", strings.NewReader(tt.body))
+			if _, _, err := commandFromBody("prompt", r); err == nil {
+				t.Fatal("expected prompt validation error")
+			}
+		})
+	}
+}
+
+func TestPromptAcceptsCanonicalImagePayload(t *testing.T) {
+	r := httptest.NewRequest("POST", "/", strings.NewReader(`{"message":"describe this","images":[{"type":"image","data":"aGVsbG8=","mimeType":"image/jpeg"}]}`))
+	cmd, _, err := commandFromBody("prompt", r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	images := cmd["images"].([]map[string]any)
+	if images[0]["data"] != "aGVsbG8=" || images[0]["type"] != "image" {
+		t.Fatalf("canonical image changed unexpectedly: %#v", images[0])
+	}
+}
+
 func TestWorkerRegistryPersistence(t *testing.T) {
 	path := t.TempDir() + "/workers.json"
 	r := NewWorkerRegistry(path)

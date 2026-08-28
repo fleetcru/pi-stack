@@ -34,15 +34,28 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 		if action == "prompt" || action == "steer" || action == "follow-up" {
 			var body struct {
 				Message string `json:"message"`
+				Images  []any  `json:"images"`
 			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			if body.Message == "" {
-				writeErrorText(w, http.StatusBadRequest, "message is required")
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			normalizedImages, err := normalizePromptImages(body.Images)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+			if body.Message == "" && len(normalizedImages) == 0 {
+				writeErrorText(w, http.StatusBadRequest, "message or images is required")
 				return
 			}
 			idemKey := ""
 			if headerKey := r.Header.Get("X-Idempotency-Key"); headerKey != "" {
 				idemKey = id + ":" + headerKey
+				if receipt, ok := s.receipts.get(idemKey); ok {
+					writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "idempotent": true, "commandId": receipt.CommandID})
+					return
+				}
 				if s.idempotencySeen(idemKey) {
 					writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "idempotent": true})
 					return
@@ -56,7 +69,21 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 			if admitted {
 				s.setDistributedRunMetadata(id, "relay", "")
 			}
-			command := ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: body.Message, Delivery: externalPromptDelivery(action)}
+			imageSummary := make([]map[string]any, 0, len(normalizedImages))
+			for i, item := range normalizedImages {
+				data, _ := item["base64"].(string)
+				if data == "" {
+					data, _ = item["data"].(string)
+				}
+				mime, _ := item["mimeType"].(string)
+				imageSummary = append(imageSummary, map[string]any{"index": i, "mimeType": mime, "dataLength": len(data)})
+			}
+			s.logger.Info("relay prompt received", "session", id, "messageLength", len(body.Message), "images", imageSummary)
+			images := make([]any, len(normalizedImages))
+			for i := range normalizedImages {
+				images[i] = normalizedImages[i]
+			}
+			command := ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: body.Message, Images: images, Delivery: externalPromptDelivery(action)}
 			if !s.external.enqueue(id, command) {
 				if admitted {
 					s.releaseDistributedRun(id)
@@ -66,6 +93,7 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 			}
 			if idemKey != "" {
 				s.recordIdempotency(idemKey)
+				s.receipts.put(idemKey, command.ID, idempotencyTTL)
 			}
 			writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "commandId": command.ID, "delivery": "queued"})
 			return

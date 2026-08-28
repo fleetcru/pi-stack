@@ -61,6 +61,33 @@ class SessionHistoryStateTest {
   }
 
   @Test
+  fun durableHistoryRetainsOptimisticImagePreview() {
+    val state = SessionHistoryState()
+    val preview = SessionTimelineItem.Chat(
+      author = "You",
+      text = "look at this",
+      time = "now",
+      isUser = true,
+      imageUris = listOf(android.net.Uri.EMPTY),
+      order = 10,
+    )
+    val durable = preview.copy(time = "2026-08-11T08:29:23Z", imageUris = emptyList(), order = 0)
+
+    val merged = state.applyPage(
+      page = listOf(durable),
+      appendOld = false,
+      nextOffset = 1,
+      hasOlder = false,
+      liveItems = listOf(preview),
+      stamp = { it },
+    )
+
+    assertEquals(1, merged.size)
+    assertEquals(preview.imageUris, (merged.single() as SessionTimelineItem.Chat).imageUris)
+    assertEquals("2026-08-11T08:29:23Z", (merged.single() as SessionTimelineItem.Chat).time)
+  }
+
+  @Test
   fun durableHistoryReplacesLiveAssistantResponse() {
     val state = SessionHistoryState()
     val live = SessionTimelineItem.Chat(

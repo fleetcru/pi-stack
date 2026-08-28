@@ -2,6 +2,7 @@ package com.example.picompanion.ui.sessiondetail
 
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Base64
 import java.text.DateFormat
 import java.util.Date
 import androidx.compose.foundation.Image
@@ -43,6 +44,7 @@ fun ChatBubble(
   time: String,
   isUser: Boolean,
   imageUris: List<Uri> = emptyList(),
+  imageData: List<String> = emptyList(),
   modifier: Modifier = Modifier,
   streaming: Boolean = false,
 ) {
@@ -62,10 +64,10 @@ fun ChatBubble(
           .background(MaterialTheme.colorScheme.onSurface, RoundedCornerShape(20.dp, 20.dp, 10.dp, 20.dp))
           .padding(horizontal = 14.dp, vertical = 10.dp),
       ) {
-        if (imageUris.isNotEmpty()) {
+        if (imageUris.isNotEmpty() || imageData.isNotEmpty()) {
           Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             imageUris.take(3).forEach { uri -> AttachmentThumbnail(uri) }
-            if (imageUris.size > 3) Text("+${imageUris.size - 3}", color = MaterialTheme.colorScheme.surface)
+            imageData.take((3 - imageUris.size).coerceAtLeast(0)).forEach { data -> Base64Thumbnail(data) }
           }
           if (text.isNotBlank()) Spacer(Modifier.height(8.dp))
         }
@@ -74,7 +76,7 @@ fun ChatBubble(
       }
     }
   } else {
-    if (text.isBlank() && imageUris.isEmpty()) return
+    if (text.isBlank() && imageUris.isEmpty() && imageData.isEmpty()) return
     Column(modifier = modifier.fillMaxWidth()) {
       Surface(
         shape = RoundedCornerShape(20.dp),
@@ -105,6 +107,14 @@ private fun formatChatTime(raw: String): String? {
   if (raw == "now") return "Now"
   val epochMillis = raw.toLongOrNull() ?: return null
   return DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(epochMillis))
+}
+
+@Composable
+private fun Base64Thumbnail(data: String) {
+  val bitmap = produceState<android.graphics.Bitmap?>(null, data) {
+    value = withContext(Dispatchers.Default) { runCatching { BitmapFactory.decodeByteArray(Base64.decode(data.substringAfter(",", data), Base64.DEFAULT), 0, Base64.decode(data.substringAfter(",", data), Base64.DEFAULT).size) }.getOrNull() }
+  }.value
+  if (bitmap != null) Image(bitmap = bitmap.asImageBitmap(), contentDescription = "Attached image", modifier = Modifier.width(88.dp).height(68.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)), contentScale = ContentScale.Crop)
 }
 
 @Composable

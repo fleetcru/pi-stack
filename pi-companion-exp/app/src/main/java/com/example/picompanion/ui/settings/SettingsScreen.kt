@@ -47,6 +47,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,6 +72,8 @@ import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.picompanion.data.settings.ServerEntry
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 
 @Composable
 fun SettingsScreen(
@@ -81,6 +84,15 @@ fun SettingsScreen(
 ) {
   val settings by viewModel.settings.collectAsStateWithLifecycle()
   val connectionResults by viewModel.connectionResults.collectAsStateWithLifecycle()
+  val context = LocalContext.current
+  var scanTargetId by remember { mutableStateOf<String?>(null) }
+  val scanner = rememberLauncherForActivityResult(ScanContract()) { result ->
+    val target = scanTargetId
+    scanTargetId = null
+    if (result.contents != null && target != null) {
+      viewModel.applyPairingPayload(target, result.contents)?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+    }
+  }
 
   Column(
     modifier
@@ -117,6 +129,17 @@ fun SettingsScreen(
             viewModel.testConnection(updated)
           },
           onTest = { viewModel.testConnection(server) },
+          onScan = {
+            scanTargetId = server.id
+            scanner.launch(
+              ScanOptions()
+                .setCaptureActivity(PairingScanActivity::class.java)
+                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setPrompt("")
+                .setBeepEnabled(false)
+                .setOrientationLocked(false),
+            )
+          },
           onRemove = if (settings.servers.size > 1) {
             { viewModel.removeServer(server.id) }
           } else null,
@@ -203,13 +226,14 @@ private fun ServerCard(
   onSetActive: () -> Unit,
   onUpdate: (ServerEntry) -> Unit,
   onTest: () -> Unit,
+  onScan: () -> Unit,
   onRemove: (() -> Unit)?,
   modifier: Modifier = Modifier,
 ) {
   var expanded by remember(server.id) { mutableStateOf(server.name.isBlank() && server.url.isBlank()) }
-  var editName by remember(server.id) { mutableStateOf(server.name) }
-  var editUrl by remember(server.id) { mutableStateOf(server.url) }
-  var editToken by remember(server.id) { mutableStateOf(server.authToken) }
+  var editName by remember(server.id, server.name) { mutableStateOf(server.name) }
+  var editUrl by remember(server.id, server.url) { mutableStateOf(server.url) }
+  var editToken by remember(server.id, server.authToken) { mutableStateOf(server.authToken) }
 
   Surface(
     modifier = modifier.fillMaxWidth(),
@@ -375,6 +399,15 @@ private fun ServerCard(
                 color = MaterialTheme.colorScheme.error,
               )
             }
+          }
+
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+              onClick = onScan,
+              shape = RoundedCornerShape(8.dp),
+              contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            ) { Text("Scan pairing QR", style = MaterialTheme.typography.labelSmall) }
+            Text("Manual token entry remains available.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.CenterVertically))
           }
 
           ServerTextFieldWithActions(

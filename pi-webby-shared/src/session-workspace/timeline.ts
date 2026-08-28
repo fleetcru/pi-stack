@@ -5,6 +5,7 @@ import type {
   AvailableModel,
   ExtensionRequest,
   TimelineRun,
+  TimelineImage,
 } from "./types"
 
 // Path segments that should never surface as "File changed:" system messages
@@ -60,6 +61,18 @@ export function contentText(content: unknown): string {
       return ""
     })
     .join("")
+}
+
+/** Extracts image blocks from a Pi message content array. */
+export function contentImages(content: unknown): TimelineImage[] {
+  if (!Array.isArray(content)) return []
+  return content.flatMap((part): TimelineImage[] => {
+    if (typeof part !== "object" || part === null) return []
+    const image = part as { type?: unknown; data?: unknown; mimeType?: unknown }
+    return image.type === "image" && typeof image.data === "string" && typeof image.mimeType === "string"
+      ? [{ type: "image", data: image.data, mimeType: image.mimeType }]
+      : []
+  })
 }
 
 /**
@@ -123,11 +136,12 @@ export class IncrementalTimeline {
       this.runs.set(runId, { ...run, settled: true })
     }
     if (event.type === "message_start") {
-      const message = event.message as { role?: string; content?: unknown; timestamp?: number } | undefined
+      const message = event.message as { role?: string; content?: unknown; images?: unknown; timestamp?: number } | undefined
       const id = `${message?.role ?? "message"}-${message?.timestamp ?? event._daemonEventId ?? index}`
       if (message?.role === "user") {
         const text = contentText(message.content)
-        if (text) this.items.push({ id, kind: "user", text, taskId, runId })
+        const images = contentImages(message.content).concat(contentImages(message.images))
+        if (text || images.length > 0) this.items.push({ id, kind: "user", text, images: images.length > 0 ? images : undefined, taskId, runId })
       } else if (message?.role === "assistant") {
         this.activeAssistant = { id, kind: "assistant", text: "", streaming: true, taskId, runId }
         this.items.push(this.activeAssistant)
@@ -271,8 +285,9 @@ export function buildHistory(
       const timestamp = message.timestamp ?? index
       if (role === "user" || role === "assistant") {
         const text = contentText(message.content)
-        const items: TimelineItem[] = text
-          ? [{ id: `${role}-${String(timestamp)}`, kind: role, text }]
+        const images = role === "user" ? contentImages(message.content).concat(contentImages(message.images)) : []
+        const items: TimelineItem[] = text || images.length > 0
+          ? [{ id: `${role}-${String(timestamp)}`, kind: role, text, images: images.length > 0 ? images : undefined }]
           : []
         if (role === "assistant") {
           items.push(...assistantToolCalls.map((call) => ({

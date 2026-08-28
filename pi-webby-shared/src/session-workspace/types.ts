@@ -1,9 +1,16 @@
 /** Timeline item types shared across all Pi chat clients. */
 
+export type TimelineImage = {
+  type: "image"
+  data: string
+  mimeType: string
+}
+
 export type TextItem = {
   id: string
   kind: "user" | "assistant"
   text: string
+  images?: TimelineImage[]
   /** True while this assistant message is still being streamed (updates are
    * still arriving). Renderers use this to show plain text cheaply during
    * streaming and only run full Markdown once the message ends. */

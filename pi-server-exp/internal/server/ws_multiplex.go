@@ -114,12 +114,15 @@ func (s *Server) sessionMultiplexWebSocket(w http.ResponseWriter, r *http.Reques
 				}
 				cmd := RPCCommand{"type": msgType}
 				if msgType != "abort" {
-					message, ok := raw["message"].(string)
-					if !ok || message == "" {
-						sendMultiplexError(sessionID, "message is required", out, done)
+					message, _ := raw["message"].(string)
+					if message == "" && len(relayImages(raw["images"])) == 0 {
+						sendMultiplexError(sessionID, "message or images is required", out, done)
 						continue
 					}
 					cmd["message"] = message
+				}
+				if images, ok := raw["images"]; ok {
+					cmd["images"] = images
 				}
 				s.routeMultiplexCommand(ctx, sessionID, cmd, out, done)
 			}
@@ -164,7 +167,8 @@ func (s *Server) routeMultiplexCommand(ctx context.Context, sessionID string, cm
 		case "prompt", "steer", "follow_up":
 			commandType, _ := cmd["type"].(string)
 			message, _ := cmd["message"].(string)
-			if message == "" {
+			images := relayImages(cmd["images"])
+			if message == "" && len(images) == 0 {
 				sendMultiplexError(sessionID, "message is required", out, done)
 				return
 			}
@@ -172,7 +176,7 @@ func (s *Server) routeMultiplexCommand(ctx context.Context, sessionID string, cm
 				sendMultiplexError(sessionID, "hub run capacity is busy or this relay already has an active run", out, done)
 				return
 			}
-			queued = ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: message, Delivery: externalPromptDelivery(commandType)}
+			queued = ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: message, Images: images, Delivery: externalPromptDelivery(commandType)}
 		}
 		if !s.external.enqueue(sessionID, queued) {
 			if cmd["type"] == "prompt" {

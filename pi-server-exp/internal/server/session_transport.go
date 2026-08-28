@@ -39,11 +39,12 @@ func (t relayTransport) Send(command RPCCommand) error {
 		return nil
 	case "prompt", "steer", "follow_up":
 		message, _ := command["message"].(string)
-		if message == "" {
-			return fmt.Errorf("message is required")
+		images := relayImages(command["images"])
+		if message == "" && len(images) == 0 {
+			return fmt.Errorf("message or images is required")
 		}
 		commandType, _ := command["type"].(string)
-		if !t.external.enqueue(t.id, ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: message, Delivery: externalPromptDelivery(commandType)}) {
+		if !t.external.enqueue(t.id, ExternalCommand{ID: NewSessionID(), Type: "prompt", Message: message, Images: images, Delivery: externalPromptDelivery(commandType)}) {
 			return fmt.Errorf("relay is unavailable: session may be stale or stopped")
 		}
 		return nil
@@ -102,6 +103,21 @@ func (t relayTransport) Send(command RPCCommand) error {
 		return fmt.Errorf("relay transport does not support %q; supported commands: prompt, steer, follow-up, abort, set_model, set_thinking_level, extension_ui_response", command["type"])
 	}
 }
+func relayImages(value any) []any {
+	switch images := value.(type) {
+	case []any:
+		return append([]any(nil), images...)
+	case []map[string]any:
+		out := make([]any, len(images))
+		for i := range images {
+			out[i] = images[i]
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 func relayStringSlice(value any) []string {
 	switch values := value.(type) {
 	case []string:

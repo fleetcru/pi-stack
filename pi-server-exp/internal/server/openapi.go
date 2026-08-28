@@ -39,6 +39,7 @@ func schemas() map[string]any {
 		return m
 	}
 	return map[string]any{
+		"Device": obj(map[string]any{"id": str(), "name": str(), "createdAt": str(), "lastSeen": str(), "revokedAt": str()}, "id", "name"),
 		"Error": obj(map[string]any{
 			"error":     str(),
 			"code":      str(),
@@ -78,7 +79,7 @@ func schemas() map[string]any {
 		"FileInfo":              obj(map[string]any{"name": str(), "path": str(), "isDir": schemaBool(), "size": map[string]string{"type": "integer"}}, "name", "path", "isDir"),
 		"FileContent":           obj(map[string]any{"path": str(), "mimeType": str(), "encoding": str(), "truncated": schemaBool(), "content": str(), "size": map[string]string{"type": "integer"}, "binary": schemaBool()}, "path"),
 		"ImageContent":          obj(map[string]any{"type": map[string]any{"type": "string", "const": "image"}, "data": str(), "mimeType": str()}, "type", "data", "mimeType"),
-		"PromptRequest":         obj(map[string]any{"message": str(), "streamingBehavior": map[string]any{"type": "string", "enum": []string{"steer", "followUp"}}, "images": arr(ref("ImageContent"))}, "message"),
+		"PromptRequest":         obj(map[string]any{"message": str(), "streamingBehavior": map[string]any{"type": "string", "enum": []string{"steer", "followUp"}}, "images": arr(map[string]any{"oneOf": []any{ref("ImageContent"), obj(map[string]any{"base64": str(), "mimeType": str()}, "base64", "mimeType")}})}),
 		"ExtensionUIResponse":   obj(map[string]any{"id": str(), "cancelled": schemaBool(), "value": str(), "confirmed": schemaBool(), "selections": arr(str()), "comment": str(), "responseKind": map[string]any{"type": "string", "enum": []string{"selection", "freeform"}}}, "id"),
 		"SessionMetadataUpdate": obj(map[string]any{"project": str(), "title": str(), "taskType": str(), "owner": str(), "labels": arr(str()), "metadata": map[string]any{"type": "object", "additionalProperties": str()}}),
 		"GitFileChange":         obj(map[string]any{"path": str(), "status": str(), "additions": map[string]string{"type": "integer"}, "deletions": map[string]string{"type": "integer"}}, "path", "status"),
@@ -103,6 +104,9 @@ func paths() map[string]any {
 	get := func(path, summary string) { p[path] = map[string]any{"get": op(summary, "RPCResponse", "")} }
 	post := func(path, summary, body string) { p[path] = map[string]any{"post": op(summary, "RPCResponse", body)} }
 	p["/healthz"] = map[string]any{"get": op("Health check", "RPCResponse", "")}
+	p["/v1/diagnostics"] = map[string]any{"get": op("Operational diagnostics", "RPCResponse", "")}
+	p["/v1/devices"] = map[string]any{"get": op("List trusted devices", "RPCResponse", ""), "post": op("Create trusted device credential", "RPCResponse", "")}
+	p["/v1/devices/{id}"] = map[string]any{"delete": op("Revoke trusted device credential", "RPCResponse", "")}
 	p["/v1/scheduler"] = map[string]any{"get": op("Scheduler admission status", "RPCResponse", "")}
 	p["/openapi.json"] = map[string]any{"get": op("OpenAPI document", "RPCResponse", "")}
 	p["/v1/capabilities"] = map[string]any{"get": op("API capabilities", "Capabilities", "")}

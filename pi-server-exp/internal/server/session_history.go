@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 )
@@ -312,19 +313,50 @@ func (s *Server) invalidateHistoryCache(sessionID string) {
 
 const idempotencyTTL = 60 * time.Second
 
-// checkIdempotency returns true if this key was already seen within the TTL
-// window. If not, it records the key and returns false.
+func (s *Server) loadIdempotencyLocked() {
+	if s.idempotency != nil {
+		return
+	}
+	s.idempotency = make(map[string]time.Time)
+	data, err := os.ReadFile(filepath.Join(s.cfg.DataDir, "idempotency.json"))
+	if err != nil {
+		return
+	}
+	var persisted map[string]time.Time
+	if json.Unmarshal(data, &persisted) == nil {
+		now := time.Now()
+		for key, expires := range persisted {
+			if expires.After(now) {
+				s.idempotency[key] = expires
+			}
+		}
+	}
+}
+
+func (s *Server) persistIdempotencyLocked() {
+	if s.idempotency == nil {
+		return
+	}
+	if err := writeJSONAtomic(filepath.Join(s.cfg.DataDir, "idempotency.json"), s.idempotency); err != nil {
+		s.logger.Warn("failed to persist idempotency keys", "error", err)
+	}
+}
+
+// idempotencySeen reports whether a key was recorded within the TTL window.
 func (s *Server) idempotencySeen(key string) bool {
 	s.idempotencyMu.Lock()
 	defer s.idempotencyMu.Unlock()
-	if s.idempotency == nil {
-		return false
-	}
+	s.loadIdempotencyLocked()
 	now := time.Now()
+	changed := false
 	for k, exp := range s.idempotency {
 		if now.After(exp) {
 			delete(s.idempotency, k)
+			changed = true
 		}
+	}
+	if changed {
+		s.persistIdempotencyLocked()
 	}
 	exp, ok := s.idempotency[key]
 	return ok && now.Before(exp)
@@ -333,28 +365,33 @@ func (s *Server) idempotencySeen(key string) bool {
 func (s *Server) recordIdempotency(key string) {
 	s.idempotencyMu.Lock()
 	defer s.idempotencyMu.Unlock()
-	if s.idempotency == nil {
-		s.idempotency = make(map[string]time.Time)
-	}
+	s.loadIdempotencyLocked()
 	s.idempotency[key] = time.Now().Add(idempotencyTTL)
+	s.persistIdempotencyLocked()
 }
 
+// checkIdempotency atomically checks and records a key. It is used by local
+// command endpoints so a retry from another paired device cannot submit the
+// same command twice after a daemon restart.
 func (s *Server) checkIdempotency(key string) bool {
 	s.idempotencyMu.Lock()
 	defer s.idempotencyMu.Unlock()
-	if s.idempotency == nil {
-		s.idempotency = make(map[string]time.Time)
-	}
+	s.loadIdempotencyLocked()
 	now := time.Now()
-	// Evict expired entries opportunistically.
+	changed := false
 	for k, exp := range s.idempotency {
 		if now.After(exp) {
 			delete(s.idempotency, k)
+			changed = true
 		}
 	}
 	if exp, ok := s.idempotency[key]; ok && now.Before(exp) {
+		if changed {
+			s.persistIdempotencyLocked()
+		}
 		return true
 	}
 	s.idempotency[key] = now.Add(idempotencyTTL)
+	s.persistIdempotencyLocked()
 	return false
 }
