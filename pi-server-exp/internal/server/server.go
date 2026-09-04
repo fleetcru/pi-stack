@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ type Server struct {
 	historyIndexPaths map[string]string
 	historyOwnerMu    sync.Mutex
 	historyOwners     map[string]string
+	historyOwnerLocks map[string]*os.File
 	stateCacheMu      sync.Mutex
 	stateCache        map[string]cachedSessionState
 	pendingTitleMu    sync.Mutex
@@ -82,6 +84,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		historyIndexes:    map[string]historyIndex{},
 		historyIndexPaths: map[string]string{},
 		historyOwners:     map[string]string{},
+		historyOwnerLocks: map[string]*os.File{},
 		stateCache:        map[string]cachedSessionState{},
 		pendingTitle:      map[string]bool{},
 		resolvedRoots:     resolveAllowedRoots(cfg.AllowedRoots),
@@ -119,14 +122,9 @@ func New(cfg Config, logger *slog.Logger) *Server {
 	if err := cleanupEventJournals(cfg.DataDir, activeJournalIDs); err != nil {
 		logger.Warn("failed to clean up event journals", "error", err)
 	}
-	// Relay specs from a previous run have no live bridge after restart.
-	// Remove them so clients don't see sessions they can't interact with.
-	for _, spec := range s.sessions.ListSpecs() {
-		if spec.Transport == "relay" {
-			logger.Info("removing stale relay session spec", "id", spec.ID)
-			_ = s.sessions.Delete(spec.ID)
-		}
-	}
+	// Keep relay specs across restart. The bridge may reconnect shortly after the
+	// daemon; inventory marks an unconnected relay as unavailable instead of
+	// deleting the durable identity and confusing clients.
 	for _, spec := range s.sessions.ListSpecs() {
 		if spec.Transport == "rpc" {
 			if err := s.reserveHistoryOwner(spec); err != nil {

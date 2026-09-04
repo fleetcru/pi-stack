@@ -67,6 +67,7 @@ func (s *Server) sessionWebSocket(w http.ResponseWriter, r *http.Request, p *PiP
 		for {
 			select {
 			case msg := <-out:
+				_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				if err := codec.WriteWebSocket(conn, msg); err != nil {
 					return
 				}
