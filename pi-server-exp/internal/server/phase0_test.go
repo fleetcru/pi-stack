@@ -310,6 +310,7 @@ func TestSessionInventoryLocalDefault(t *testing.T) {
 	s := newTestServer(t, "")
 	spec := SessionSpec{ID: "s1", CWD: s.cfg.CWD, Status: "created", Project: "p", Title: "t", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 	p := NewPiProcess(spec, s.cfg, s.logger)
+	t.Cleanup(func() { _ = p.Close(context.Background()) })
 	if err := s.sessions.Add(p, spec); err != nil {
 		t.Fatal(err)
 	}

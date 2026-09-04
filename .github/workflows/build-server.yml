@@ -76,6 +76,32 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # Windows-native test run. Linux CI cannot catch Windows-only failures:
+  # unclosed file handles block TempDir cleanup on Windows (file-in-use errors)
+  # but unlink silently on Linux. Race detector needs cgo (a C toolchain),
+  # which the standard windows runner lacks, so run without -race here.
+  test-windows:
+    name: Test (windows-latest)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: pi-server-exp
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: pi-server-exp/go.mod
+          cache-dependency-path: pi-server-exp/go.sum
+
+      - name: Test
+        run: go test ./... -count=1
+
+      - name: Vet
+        run: go vet ./...
+
   release:
     name: Create GitHub release
     if: startsWith(github.ref, 'refs/tags/server-v') || github.event_name == 'workflow_dispatch'

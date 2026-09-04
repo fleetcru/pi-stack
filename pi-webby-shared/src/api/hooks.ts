@@ -380,6 +380,7 @@ export function useActiveSessionSocket(
   const seenEventIdsRef = useRef<Map<number, boolean>>(new Map())
   const flushTimerRef = useRef<number | undefined>(undefined)
   const bufferOverflowRef = useRef(false)
+  const resyncingRef = useRef(false)
 
   useEffect(() => {
     let disposed = false
@@ -406,6 +407,12 @@ export function useActiveSessionSocket(
       onStatusChange: setStatus,
       onEvent: (event) => {
         if (disposed) return
+        // A successfully delivered event means the gap/overflow has recovered;
+        // clear the stale resync error so the UI stops warning after recovery.
+        if (resyncingRef.current) {
+          resyncingRef.current = false
+          setError(undefined)
+        }
         const id = event._daemonEventId
         if (typeof id === "number") {
           if (seenEventIdsRef.current.has(id)) return
@@ -454,6 +461,7 @@ export function useActiveSessionSocket(
           }
           if (!bufferOverflowRef.current) {
             bufferOverflowRef.current = true
+            resyncingRef.current = true
             setError(new Error("Session event buffer overflow; restoring conversation history"))
             setHealth((current) => ({ ...current, resynchronizing: true }))
             void queryClient.invalidateQueries({
@@ -478,6 +486,7 @@ export function useActiveSessionSocket(
       onGap: (expectedAfter, received) => {
         if (disposed) return
         setError(new Error(`Session event history gap detected (${expectedAfter} → ${received}); resynchronizing conversation`))
+        resyncingRef.current = true
         setHealth((current) => ({ ...current, gap: { expectedAfter, received }, resynchronizing: true }))
         void queryClient.invalidateQueries({
           queryKey: ["pi-server", client.cacheScope, "sessions", activeSessionId, "history"],

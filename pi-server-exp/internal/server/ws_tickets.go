@@ -155,7 +155,7 @@ func (s *Server) authorizeSessionWS(w http.ResponseWriter, r *http.Request, sess
 		writeErrorCode(w, r, http.StatusUnauthorized, CodeUnauthorized, "unauthorized")
 		return false
 	}
-	code := s.wsTickets.consume(ticket, sessionID, "")
+	code := s.wsTickets.consume(ticket, sessionID, tokenFingerprint(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")))
 	if code != "" {
 		msg := "invalid websocket ticket"
 		status := http.StatusUnauthorized

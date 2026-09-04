@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -36,6 +37,7 @@ func TestExtensionUIRequiresResponseClassifiesAskUser(t *testing.T) {
 func TestLocalProcessTracksPendingExtensionUIRequest(t *testing.T) {
 	s := newTestServer(t, "")
 	p := NewPiProcess(SessionSpec{ID: "local", CWD: s.cfg.CWD}, s.cfg, s.logger)
+	t.Cleanup(func() { _ = p.Close(context.Background()) })
 	p.dispatch(RPCEvent{"type": "extension_ui_request", "method": "select", "id": "select-1", "title": "Choose"})
 
 	status := p.Status()
@@ -54,6 +56,7 @@ func TestLocalProcessTracksPendingExtensionUIRequest(t *testing.T) {
 func TestLocalProcessRejectsStaleUIResponses(t *testing.T) {
 	s := newTestServer(t, "")
 	p := NewPiProcess(SessionSpec{ID: "local", CWD: s.cfg.CWD}, s.cfg, s.logger)
+	t.Cleanup(func() { _ = p.Close(context.Background()) })
 	p.dispatch(RPCEvent{"type": "extension_ui_request", "method": "input", "id": "input-1"})
 	writer := &testWriteCloser{}
 	p.mu.Lock()

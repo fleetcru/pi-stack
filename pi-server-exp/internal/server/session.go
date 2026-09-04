@@ -287,7 +287,10 @@ func (r *SessionRegistry) CloseAll(ctx context.Context) {
 // checkCanStart atomically verifies that starting a new process won't exceed
 // MaxSessions. Called from ensureSessionCapacity before the process auto-starts.
 func (r *SessionRegistry) checkCanStart() bool {
-	if r.maxSessions <= 0 {
+	r.mu.RLock()
+	maxSessions := r.maxSessions
+	r.mu.RUnlock()
+	if maxSessions <= 0 {
 		return true
 	}
 	// Copy process references under the lock, then call Status() outside
@@ -305,5 +308,5 @@ func (r *SessionRegistry) checkCanStart() bool {
 			count++
 		}
 	}
-	return count < r.maxSessions
+	return count < maxSessions
 }

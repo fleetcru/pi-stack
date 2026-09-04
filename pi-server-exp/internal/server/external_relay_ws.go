@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -132,9 +133,13 @@ func isExternalRelayWSRequest(r *http.Request) bool {
 // relayWSAuthenticated accepts the `pi-relay.<token>` subprotocol credential.
 // The query parameter fallback was removed — tokens must be sent via the
 // Sec-WebSocket-Protocol header to avoid leaking credentials in logs.
+const relayProtocolPrefix = "pi-relay."
+
 func relayWSAuthenticated(r *http.Request, token string) bool {
 	for _, protocol := range strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
-		if strings.TrimSpace(protocol) == "pi-relay."+token {
+		trimmed := strings.TrimSpace(protocol)
+		if strings.HasPrefix(trimmed, relayProtocolPrefix) &&
+			subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(trimmed, relayProtocolPrefix)), []byte(token)) == 1 {
 			return true
 		}
 	}

@@ -62,6 +62,7 @@ func TestHistoryOwnershipRejectsSamePathAndReleases(t *testing.T) {
 	if err := s.reserveHistoryOwner(second); err != nil {
 		t.Fatalf("history ownership was not released: %v", err)
 	}
+	t.Cleanup(func() { s.releaseHistoryOwner(second) })
 }
 
 func TestExternalRegisterRejectsManagedSessionID(t *testing.T) {

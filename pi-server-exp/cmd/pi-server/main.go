@@ -223,7 +223,7 @@ func writeBridgeConfig(cfg server.Config) error {
 func bridgeAddress(addr string) string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil || port == "" {
-		return "http://127.0.0.1:" + port
+		port = "3141"
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
 		host = firstLANIPv4()

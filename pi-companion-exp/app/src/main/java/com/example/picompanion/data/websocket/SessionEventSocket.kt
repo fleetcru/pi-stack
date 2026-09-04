@@ -125,6 +125,11 @@ class SessionEventSocket(
             if (generation.get() == connectionId) eventSequence.process(jsonObj).forEach(::emitEvent)
           } catch (e: Exception) {
             Log.w("SessionEventSocket", "Failed to decode MessagePack: ${e.message}")
+            // Surface a recovery signal so the sequence tracker / UI can react
+            // instead of silently losing the frame.
+            if (generation.get() == connectionId) {
+              emitEvent(SocketEvent.EventsLost(expectedAfter = -1, received = -1))
+            }
           }
         }
       }

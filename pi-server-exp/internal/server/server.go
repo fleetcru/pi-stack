@@ -94,6 +94,9 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		startedAt:         time.Now(),
 		admin:             newAdminState(cfg),
 	}
+	if len(s.resolvedRoots) == 0 {
+		s.resolvedRoots = resolveAllowedRoots([]string{cfg.CWD})
+	}
 	s.httpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
 			return http.ErrUseLastResponse

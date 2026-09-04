@@ -804,6 +804,18 @@ func (s *Server) gitWriteOperation(w http.ResponseWriter, r *http.Request, spec 
 	s.gitWorktreeMutation(w, r, spec, sessionID)
 }
 
+// validateGitRef rejects refnames that git could parse as options (leading "-")
+// and delegates full validation to `git check-ref-format --branch`.
+func (s *Server) validateGitRef(dir, ref string) error {
+	if ref == "" || strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("invalid ref name")
+	}
+	if _, err := s.runGit(context.Background(), dir, "check-ref-format", "--branch", ref); err != nil {
+		return fmt.Errorf("invalid ref name")
+	}
+	return nil
+}
+
 func (s *Server) gitWorktreeMutation(w http.ResponseWriter, r *http.Request, spec SessionSpec, sessionID string) {
 	var req gitWorktreeRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
@@ -826,10 +838,22 @@ func (s *Server) gitWorktreeMutation(w http.ResponseWriter, r *http.Request, spe
 			return
 		}
 		if req.ExistingBranch {
+			if err := s.validateGitRef(spec.CWD, req.Branch); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
 			args = append(args, path, req.Branch)
 		} else {
+			if err := s.validateGitRef(spec.CWD, req.Branch); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
 			args = append(args, "-b", req.Branch, path)
 			if req.StartPoint != "" {
+				if err := s.validateGitRef(spec.CWD, req.StartPoint); err != nil {
+					writeError(w, http.StatusBadRequest, err)
+					return
+				}
 				args = append(args, req.StartPoint)
 			}
 		}

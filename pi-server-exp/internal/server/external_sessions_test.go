@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -284,6 +285,7 @@ func TestHistoryCacheInvalidation(t *testing.T) {
 	s := newTestServer(t, "")
 	spec := SessionSpec{ID: "s1", CWD: s.cfg.CWD, Status: "created", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 	p := NewPiProcess(spec, s.cfg, s.logger)
+	t.Cleanup(func() { _ = p.Close(context.Background()) })
 	p.onMessageEnd = func() { s.invalidateHistoryCache("s1") }
 	if err := s.sessions.Add(p, spec); err != nil {
 		t.Fatal(err)

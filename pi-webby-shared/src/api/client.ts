@@ -233,7 +233,10 @@ export class PiServerClient {
         import.meta.env.VITE_PI_SERVER_URL ??
         "http://127.0.0.1:3141"
     )
-    this.token = options.token ?? import.meta.env.VITE_PI_SERVER_AUTH_TOKEN
+    // Note: intentionally no build-time token fallback. Baking
+    // VITE_PI_SERVER_AUTH_TOKEN into the client bundle would ship the bearer
+    // token to anyone who downloads the JS.
+    this.token = options.token
     this.cacheScope = `${this.baseUrl}#${credentialFingerprint(this.token)}`
     this.fetchFn = options.fetch ?? globalThis.fetch.bind(globalThis)
   }
