@@ -27,6 +27,7 @@ import android.net.NetworkCapabilities
 import java.util.concurrent.atomic.AtomicBoolean
 import com.example.picompanion.ui.sessiondetail.SessionHistoryParser
 import com.example.picompanion.ui.sessiondetail.SessionStateCache
+import com.example.picompanion.ui.sessions.SessionInventoryState
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
@@ -62,6 +63,9 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
   /** Start automatic polling when the Home tab is visible. */
   fun startPolling() {
     if (pollingActive.getAndSet(true)) return
+    // Refresh immediately on foreground instead of waiting for the first
+    // polling interval.
+    if (isNetworkAvailable()) refresh(showLoading = false)
     pollingJob = viewModelScope.launch {
       while (isActive) {
         delay(refreshIntervalMs)
@@ -179,7 +183,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch {
       val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
       when (val result = kotlinx.coroutines.withContext(Dispatchers.IO) { client.openMachineSession(server, machineId) }) {
-        is HttpResult.Success -> onOpened(result.value.id)
+        is HttpResult.Success -> {
+          SessionInventoryState.markStale(server.id)
+          onOpened(result.value.id)
+        }
         is HttpResult.Failure -> {
           onError(result.userMessage)
           refresh(showLoading = false)
@@ -192,7 +199,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch {
       val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
       when (val result = kotlinx.coroutines.withContext(Dispatchers.IO) { client.attachGlobalSession(server, globalId) }) {
-        is HttpResult.Success -> onAttached(result.value.id)
+        is HttpResult.Success -> {
+          SessionInventoryState.markStale(server.id)
+          onAttached(result.value.id)
+        }
         is HttpResult.Failure -> refresh()
       }
     }

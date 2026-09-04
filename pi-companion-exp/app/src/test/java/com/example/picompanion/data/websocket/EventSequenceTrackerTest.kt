@@ -91,6 +91,19 @@ class EventSequenceTrackerTest {
   }
 
   @Test
+  fun reusedIdAfterServerRestartIsNotSuppressed() {
+    val tracker = EventSequenceTracker()
+    tracker.beginConnection(null)
+    tracker.process(event(10))
+    tracker.process(event(11))
+
+    // A restarted server begins a fresh sequence and reuses an ID from the
+    // previous duplicate window.
+    assertEquals(1, tracker.process(event(1)).size)
+    assertEquals(1, tracker.process(event(2)).size)
+  }
+
+  @Test
   fun explicitDisconnectClearsDuplicateWindow() {
     val tracker = EventSequenceTracker()
     tracker.beginConnection(null)

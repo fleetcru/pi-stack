@@ -77,12 +77,12 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   let pendingAskLease = "";
 
   /** Reload URL/token configuration so /bridge-reconnect can apply changes
-   * without restarting Pi. The config file is canonical for the relay URL;
-   * the token still prefers the process environment. */
+   * without restarting Pi. The local config file is canonical, with the
+   * environment used as a fallback for older setups. */
   const refreshConfig = (): boolean => {
     const config = loadConfig();
     const nextBaseUrl = (config.relayUrl ?? process.env.PI_EXTERNAL_RELAY_URL)?.replace(/\/$/, "") ?? "";
-    const nextToken = process.env.PI_EXTERNAL_RELAY_TOKEN ?? config.relayToken;
+    const nextToken = config.relayToken ?? process.env.PI_EXTERNAL_RELAY_TOKEN;
     const changed = nextBaseUrl !== baseUrl || nextToken !== token;
     baseUrl = nextBaseUrl;
     token = nextToken;

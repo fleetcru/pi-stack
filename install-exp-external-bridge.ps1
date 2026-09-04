@@ -53,7 +53,10 @@ if ($AuthToken) {
 
 # Write config file for reference
 $configPath = Join-Path $HOME ".pi" | Join-Path -ChildPath "agent" | Join-Path -ChildPath "bridge-config.json"
-@{ relayUrl = $relayUrl; relayToken = if ($AuthToken) { "***" } else { "" } } | ConvertTo-Json | Set-Content $configPath -Encoding utf8
+# Keep the bridge configuration self-contained so a new Pi TUI can connect
+# without depending on inherited environment variables. This file contains the
+# bearer token and should remain in the user's private .pi directory.
+@{ relayUrl = $relayUrl; relayToken = $AuthToken } | ConvertTo-Json | Set-Content $configPath -Encoding utf8
 
 Write-Host ""
 Write-Host "Installed external-session bridge." -ForegroundColor Green

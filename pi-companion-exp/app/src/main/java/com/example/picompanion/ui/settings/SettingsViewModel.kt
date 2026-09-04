@@ -120,7 +120,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
   }
 
   fun updateRememberLastSession(value: Boolean) {
-    viewModelScope.launch { dataStore.updateRememberLastSession(value) }
+    viewModelScope.launch {
+      dataStore.updateRememberLastSession(value)
+      if (!value) dataStore.clearLastSession()
+    }
   }
 
   fun updateReplayEvents(value: Boolean) {

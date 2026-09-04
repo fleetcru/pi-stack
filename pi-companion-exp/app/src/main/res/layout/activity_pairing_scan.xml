@@ -1,69 +1,96 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#080B12">
+    android:background="#000000"
+    android:fitsSystemWindows="true"
+    android:orientation="vertical">
 
-    <com.journeyapps.barcodescanner.DecoratedBarcodeView
-        android:id="@+id/zxing_barcode_scanner"
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        app:zxing_preview_scaling_strategy="centerCrop"
-        app:zxing_use_texture_view="false" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
+        android:layout_height="120dp"
+        android:background="#000000"
         android:paddingStart="16dp"
-        android:paddingTop="16dp"
-        android:paddingEnd="16dp"
-        android:paddingBottom="12dp"
-        android:background="#99080B12">
+        android:paddingEnd="16dp">
 
-        <Button
+        <ImageButton
             android:id="@+id/pairing_scan_cancel"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="start|center_vertical"
+            android:background="@drawable/pairing_scan_button_dark"
+            android:contentDescription="@string/pairing_scan_back_description"
+            android:padding="12dp"
+            android:src="@drawable/ic_pairing_scan_back" />
+
+        <TextView
             android:layout_width="wrap_content"
-            android:layout_height="44dp"
-            android:backgroundTint="#273045"
-            android:text="@string/pairing_scan_cancel"
-            android:textAllCaps="false"
-            android:textColor="#F5F7FF" />
-
-        <LinearLayout
-            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
+            android:layout_gravity="center"
+            android:text="@string/pairing_scan_title"
+            android:textColor="#FFFFFF"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginStart="72dp"
+            android:layout_marginEnd="72dp"
+            android:layout_marginBottom="10dp"
             android:gravity="center"
-            android:orientation="vertical">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Pair device"
-                android:textColor="#F5F7FF"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:text="Scan the code from Pi Server Admin"
-                android:textColor="#C4CAD8"
-                android:textSize="11sp" />
-        </LinearLayout>
+            android:maxLines="2"
+            android:text="@string/pairing_scan_subtitle"
+            android:textColor="#777777"
+            android:textSize="12sp" />
 
         <Button
             android:id="@+id/pairing_scan_torch"
             android:layout_width="wrap_content"
-            android:layout_height="44dp"
-            android:backgroundTint="#7C9CFF"
+            android:layout_height="48dp"
+            android:layout_gravity="end|center_vertical"
+            android:background="@drawable/pairing_scan_button_dark"
+            android:minWidth="0dp"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
             android:text="@string/pairing_scan_flash_on"
             android:textAllCaps="false"
-            android:textColor="#081027" />
-    </LinearLayout>
-</FrameLayout>
+            android:textColor="#FFFFFF"
+            android:textSize="13sp" />
+    </FrameLayout>
+
+    <com.example.picompanion.ui.settings.PairingScanSquareLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="16dp"
+        android:background="@drawable/pairing_scan_camera"
+        android:clipToOutline="true">
+
+        <com.journeyapps.barcodescanner.DecoratedBarcodeView
+            android:id="@+id/zxing_barcode_scanner"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            app:zxing_preview_scaling_strategy="centerCrop"
+            app:zxing_use_texture_view="false" />
+
+        <com.example.picompanion.ui.settings.PairingScanOverlayView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+    </com.example.picompanion.ui.settings.PairingScanSquareLayout>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="24dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="24dp"
+        android:gravity="center"
+        android:text="@string/pairing_scan_hint"
+        android:textColor="#777777"
+        android:textSize="14sp" />
+</LinearLayout>

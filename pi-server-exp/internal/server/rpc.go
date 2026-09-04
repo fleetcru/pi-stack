@@ -275,6 +275,13 @@ func (p *PiProcess) Subscribe() (<-chan RPCEvent, func()) {
 
 func (p *PiProcess) Close(ctx context.Context) error {
 	defer p.releaseAdmission()
+	defer func() {
+		p.mu.Lock()
+		journal := p.journal
+		p.journal = nil
+		p.mu.Unlock()
+		_ = journal.close()
+	}()
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()

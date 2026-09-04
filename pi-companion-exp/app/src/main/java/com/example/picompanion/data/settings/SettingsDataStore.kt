@@ -39,6 +39,8 @@ class SettingsDataStore(private val context: Context) {
     val SHOW_TOOL_EVENTS = booleanPreferencesKey("show_tool_events")
     val SHOW_DAEMON_EVENTS = booleanPreferencesKey("show_daemon_events")
     val DEFAULT_PROJECT_ROOT = stringPreferencesKey("default_project_root")
+    val LAST_SESSION_SERVER_ID = stringPreferencesKey("last_session_server_id")
+    val LAST_SESSION_ID = stringPreferencesKey("last_session_id")
   }
 
   private val defaultSettings = AppSettings()
@@ -64,6 +66,8 @@ class SettingsDataStore(private val context: Context) {
       showToolEvents = prefs[Keys.SHOW_TOOL_EVENTS] ?: true,
       showDaemonEvents = prefs[Keys.SHOW_DAEMON_EVENTS] ?: true,
       defaultProjectRoot = prefs[Keys.DEFAULT_PROJECT_ROOT] ?: "",
+      lastSessionServerId = prefs[Keys.LAST_SESSION_SERVER_ID] ?: "",
+      lastSessionId = prefs[Keys.LAST_SESSION_ID] ?: "",
     )
   }
 
@@ -146,5 +150,19 @@ class SettingsDataStore(private val context: Context) {
 
   suspend fun updateDefaultProjectRoot(value: String) {
     context.dataStore.edit { it[Keys.DEFAULT_PROJECT_ROOT] = value }
+  }
+
+  suspend fun setLastSession(serverId: String, sessionId: String) {
+    context.dataStore.edit {
+      it[Keys.LAST_SESSION_SERVER_ID] = serverId
+      it[Keys.LAST_SESSION_ID] = sessionId
+    }
+  }
+
+  suspend fun clearLastSession() {
+    context.dataStore.edit {
+      it.remove(Keys.LAST_SESSION_SERVER_ID)
+      it.remove(Keys.LAST_SESSION_ID)
+    }
   }
 }

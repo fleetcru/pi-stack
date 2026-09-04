@@ -55,12 +55,14 @@ func (s *Server) checkWorker(worker Worker) {
 	resp, err := s.httpClient.Do(req)
 	if err != nil || resp == nil {
 		s.workers.Heartbeat(worker.ID, false)
+		s.releaseDistributedRunsForWorker(worker.ID)
 		return
 	}
 	defer resp.Body.Close()
 	healthy := resp.StatusCode/100 == 2
 	s.workers.Heartbeat(worker.ID, healthy)
 	if !healthy {
+		s.releaseDistributedRunsForWorker(worker.ID)
 		return
 	}
 	var body struct {

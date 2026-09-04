@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -36,7 +37,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Surface
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -53,11 +56,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.example.picompanion.data.model.ServerSession
 import com.example.picompanion.ui.components.DirectoryBrowserSheet
 import com.example.picompanion.ui.components.StatusPill
 import com.example.picompanion.ui.settings.SettingsViewModel
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionsScreen(
   onSessionClick: (String) -> Unit,
@@ -74,6 +82,18 @@ fun SessionsScreen(
   var searchQuery by remember { mutableStateOf("") }
   var showBrowser by remember { mutableStateOf(false) }
   var actionSession by remember { mutableStateOf<ServerSession?>(null) }
+  val activeListState = rememberLazyListState()
+  val machineListState = rememberLazyListState()
+  val globalListState = rememberLazyListState()
+
+  val lifecycleOwner = LocalLifecycleOwner.current
+  DisposableEffect(lifecycleOwner, viewModel) {
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshIfStale()
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  }
 
   // Sessions created from the directory picker still navigate through state.
   // Machine/global opens use their request callback directly below so two quick
@@ -122,7 +142,7 @@ fun SessionsScreen(
         )
       }
       IconButton(
-        onClick = { viewModel.refresh() },
+        onClick = { viewModel.refresh(force = true) },
         modifier = Modifier
           .size(36.dp)
           .background(
@@ -214,7 +234,7 @@ fun SessionsScreen(
               textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(16.dp))
-            OutlinedButton(onClick = { viewModel.refresh() }) {
+            OutlinedButton(onClick = { viewModel.refresh(force = true) }) {
               Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
               Spacer(Modifier.width(6.dp))
               Text("Retry")
@@ -226,6 +246,12 @@ fun SessionsScreen(
       is SessionsUiState.Content -> {
         val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
 
+        PullToRefreshBox(
+          isRefreshing = state.refreshing,
+          onRefresh = { viewModel.refresh(force = true) },
+          modifier = Modifier.fillMaxSize(),
+        ) {
+          Column(Modifier.fillMaxSize()) {
         // Tab row
         Row(
           Modifier
@@ -264,6 +290,8 @@ fun SessionsScreen(
               }
             }
 
+            val sessionGroups = remember(filteredSessions) { groupSessions(filteredSessions) }
+
             if (filteredSessions.isEmpty()) {
               EmptySessionsMessage(
                 title = if (searchQuery.isNotBlank()) "No matches for \"$searchQuery\"" else "No active sessions",
@@ -271,21 +299,27 @@ fun SessionsScreen(
               )
             } else {
               LazyColumn(
+                state = activeListState,
                 modifier = Modifier
                   .fillMaxWidth()
                   .weight(1f)
                   .padding(top = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
               ) {
-                items(filteredSessions, key = { it.id }, contentType = { "session_item" }) { session ->
-                  SessionListItem(
-                    session = session,
-                    isSelected = false,
-                    onClick = { onSessionClick(session.id) },
-                    onLongClick = { actionSession = session },
-                    sharedTransitionScope = sharedTransitionScope,
-                    animatedVisibilityScope = animatedVisibilityScope,
-                  )
+                sessionGroups.forEach { group ->
+                  item(key = "section-${group.title}", contentType = "session_section") {
+                    SessionGroupHeader(group.title)
+                  }
+                  items(group.sessions, key = { "session-${it.id}" }, contentType = { "session_item" }) { session ->
+                    SessionListItem(
+                      session = session,
+                      isSelected = false,
+                      onClick = { onSessionClick(session.id) },
+                      onLongClick = { actionSession = session },
+                      sharedTransitionScope = sharedTransitionScope,
+                      animatedVisibilityScope = animatedVisibilityScope,
+                    )
+                  }
                 }
               }
             }
@@ -307,6 +341,7 @@ fun SessionsScreen(
               )
             } else {
               LazyColumn(
+                state = machineListState,
                 modifier = Modifier
                   .fillMaxWidth()
                   .weight(1f)
@@ -341,6 +376,7 @@ fun SessionsScreen(
               )
             } else {
               LazyColumn(
+                state = globalListState,
                 modifier = Modifier
                   .fillMaxWidth()
                   .weight(1f)
@@ -355,6 +391,8 @@ fun SessionsScreen(
                 }
               }
             }
+          }
+        }
           }
         }
       }
@@ -389,6 +427,17 @@ fun SessionsScreen(
       showBrowser = false
       viewModel.createSession(cwd = cwd, prompt = prompt, count = count)
     },
+  )
+}
+
+@Composable
+private fun SessionGroupHeader(title: String) {
+  Text(
+    text = title,
+    style = MaterialTheme.typography.titleSmall,
+    fontWeight = FontWeight.Bold,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
   )
 }
 

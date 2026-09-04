@@ -23,6 +23,15 @@ func TestDeviceRegistryCreatesAuthenticatesAndRevokes(t *testing.T) {
 	if _, ok := registry.authenticate(token); ok {
 		t.Fatal("revoked token authenticated")
 	}
+	if !registry.delete(record.ID) {
+		t.Fatal("device delete failed")
+	}
+	if registry.delete(record.ID) {
+		t.Fatal("deleted device could be deleted twice")
+	}
+	if len(registry.list()) != 0 {
+		t.Fatal("deleted device remained in registry")
+	}
 }
 
 func TestDeviceRegistryRestoresHashedCredentials(t *testing.T) {

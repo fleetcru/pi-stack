@@ -28,7 +28,10 @@ internal class SessionHistoryState {
     val previousOrders = (historicalItems + liveItems)
       .filter { it.order > 0 }
       .associate { historyItemId(it) to it.order }
-    historicalItems = (if (appendOld) page + historicalItems else page)
+    // Keep already-loaded older pages during a refresh. The server returns a
+    // newest window, so replacing the cache would make older rows get merged
+    // after the newest page and visibly reorder the conversation.
+    historicalItems = (page + historicalItems)
       .distinctBy(::historyItemId)
       .map { item -> previousOrders[historyItemId(item)]?.let { item.withOrder(it) } ?: item }
 
@@ -70,7 +73,12 @@ internal class SessionHistoryState {
         if (item is SessionTimelineItem.Tool || merged[id] == null) merged[id] = item
       }
     }
-    return merged.values.map(stamp)
+    // New rows receive orders during stamping. Sort after stamping so a
+    // refreshed newest page cannot be placed before cached older rows merely
+    // because it was inserted into the map first.
+    return merged.values.map(stamp).let { stamped ->
+      if (stamped.all { it.order > 0 }) stamped.sortedBy { it.order } else stamped
+    }
   }
 
   private fun SessionTimelineItem.withOrder(order: Long): SessionTimelineItem = when (this) {

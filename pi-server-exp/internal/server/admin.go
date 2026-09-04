@@ -156,7 +156,11 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 			writeErrorText(w, http.StatusForbidden, "invalid admin CSRF token or origin")
 			return
 		}
-		s.adminRevokeDevice(w, r)
+		if strings.HasSuffix(r.URL.Path, "/purge") {
+			s.adminDeleteDevice(w, r)
+		} else {
+			s.adminRevokeDevice(w, r)
+		}
 	case r.Method == http.MethodPut && r.URL.Path == "/admin/api/settings":
 		if !s.validAdminMutation(r, session) {
 			writeErrorText(w, http.StatusForbidden, "invalid admin CSRF token or origin")
@@ -327,6 +331,19 @@ func (s *Server) adminRevokeDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"revoked": id})
+}
+
+func (s *Server) adminDeleteDevice(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/admin/api/devices/"), "/purge")
+	if id == "" || strings.Contains(id, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	if !s.devices.delete(id) {
+		writeErrorText(w, http.StatusNotFound, "device not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
 }
 
 func (s *Server) adminPutSettings(w http.ResponseWriter, r *http.Request) {

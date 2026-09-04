@@ -112,6 +112,20 @@ func (s *Server) releaseDistributedRun(sessionID string) {
 	}
 }
 
+func (s *Server) releaseDistributedRunsForWorker(workerID string) {
+	s.distributedMu.Lock()
+	ids := make([]string, 0)
+	for id, reservation := range s.distributedRuns {
+		if reservation.WorkerID == workerID {
+			ids = append(ids, id)
+		}
+	}
+	s.distributedMu.Unlock()
+	for _, id := range ids {
+		s.releaseDistributedRun(id)
+	}
+}
+
 // setDistributedRunMetadata enriches a persisted reservation after the worker
 // has assigned its remote session identifier.
 func (s *Server) setDistributedRunMetadata(sessionID, kind, remoteSessionID string) {
@@ -210,6 +224,7 @@ func (s *Server) subscribeRemoteRun(worker Worker, remoteSessionID, hubSessionID
 		for s.distributedRunActive(hubSessionID) {
 			if generation != 0 && s.workers.CurrentGeneration(worker.ID) != generation {
 				s.logger.Info("stopping stale remote lifecycle subscription", "worker", worker.ID, "session", hubSessionID, "generation", generation)
+				s.releaseDistributedRun(hubSessionID)
 				return
 			}
 			path := "/v1/sessions/" + url.PathEscape(remoteSessionID) + "/ws"

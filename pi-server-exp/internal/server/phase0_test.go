@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -227,6 +228,7 @@ func TestWSTicketHTTP(t *testing.T) {
 	// seed a local session spec without starting pi
 	spec := SessionSpec{ID: "local-sess", CWD: s.cfg.CWD, Status: "created", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
 	p := NewPiProcess(spec, s.cfg, s.logger)
+	defer p.Close(context.Background())
 	if err := s.sessions.Add(p, spec); err != nil {
 		t.Fatal(err)
 	}

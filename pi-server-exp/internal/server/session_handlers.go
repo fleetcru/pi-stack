@@ -51,6 +51,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	if err := s.reserveHistoryOwner(spec); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
 	p := NewPiProcess(spec, s.cfg, s.logger)
 	p.onMessageEnd = func() {
 		s.invalidateHistoryCache(spec.ID)
@@ -63,6 +67,8 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		maxSessions = int(s.maxSessionsAtomicValue())
 	}
 	if err := s.sessions.AddIfCapacity(p, spec, maxSessions); err != nil {
+		s.releaseHistoryOwner(spec)
+		_ = p.Close(context.Background())
 		s.rollbackCreatedSession(spec)
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -71,7 +77,9 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
 		defer cancel()
 		if err := p.Start(ctx); err != nil {
+			_ = p.Close(context.Background())
 			_ = s.sessions.Delete(spec.ID)
+			s.releaseHistoryOwner(spec)
 			s.rollbackCreatedSession(spec)
 			writeError(w, http.StatusBadGateway, err)
 			return
@@ -125,6 +133,7 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	s.releaseHistoryOwner(spec)
 	if err := removeEventJournal(s.cfg.DataDir, id); err != nil {
 		s.logger.Warn("failed to remove session event journal", "session", id, "error", err)
 	}
@@ -296,6 +305,9 @@ func (s *Server) getSession(id string) (*PiProcess, bool) {
 	}
 	spec, ok := s.sessions.GetSpec(id)
 	if !ok || spec.Transport == "relay" {
+		return nil, false
+	}
+	if err := s.reserveHistoryOwner(spec); err != nil {
 		return nil, false
 	}
 	p := NewPiProcess(spec, s.cfg, s.logger)

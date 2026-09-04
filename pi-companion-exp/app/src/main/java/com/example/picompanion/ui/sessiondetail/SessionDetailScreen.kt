@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
@@ -54,6 +55,10 @@ import java.io.File
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.picompanion.data.model.ServerSession
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -92,8 +97,45 @@ fun SessionDetailScreen(
   var filesOpen by rememberSaveable { mutableStateOf(false) }
   var attachments by remember { mutableStateOf<List<android.net.Uri>>(emptyList()) }
   val context = androidx.compose.ui.platform.LocalContext.current
-  val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-    if (uri != null) attachments = attachments + uri
+  val lifecycleOwner = LocalLifecycleOwner.current
+  DisposableEffect(lifecycleOwner, viewModel) {
+    val observer = LifecycleEventObserver { _, event ->
+      when (event) {
+        Lifecycle.Event.ON_START -> viewModel.onForeground()
+        Lifecycle.Event.ON_STOP -> viewModel.onBackground()
+        else -> Unit
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose {
+      lifecycleOwner.lifecycle.removeObserver(observer)
+      viewModel.onBackground()
+    }
+  }
+  val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+    if (uris.isNotEmpty()) {
+      // ACTION_GET_CONTENT grants temporary access to provider URIs. Copy the
+      // files immediately so the async send does not lose that permission.
+      scope.launch {
+        val imported = withContext(kotlinx.coroutines.Dispatchers.IO) {
+          uris.mapNotNull { uri ->
+            runCatching {
+              val file = File(
+                context.cacheDir,
+                "prompt-images/picker-${java.util.UUID.randomUUID()}.jpg",
+              ).also { it.parentFile?.mkdirs() }
+              context.contentResolver.openInputStream(uri)?.use { input ->
+                file.outputStream().use { output -> input.copyTo(output) }
+              } ?: return@runCatching null
+              // The app reads these files itself. A file URI avoids depending
+              // on a temporary provider grant during the later send operation.
+              android.net.Uri.fromFile(file)
+            }.getOrNull()
+          }
+        }
+        attachments = (attachments + imported).distinct()
+      }
+    }
   }
   var pendingCameraUri by remember { mutableStateOf<android.net.Uri?>(null) }
   val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
@@ -101,6 +143,7 @@ fun SessionDetailScreen(
     pendingCameraUri = null
   }
   val sessionCwd by viewModel.sessionCwd.collectAsStateWithLifecycle()
+  val sessionTitle by viewModel.sessionTitle.collectAsStateWithLifecycle()
   val extensionRequest by viewModel.extensionRequest.collectAsStateWithLifecycle()
   val modelControls by viewModel.modelControls.collectAsStateWithLifecycle()
   val relayHealth by viewModel.relayHealth.collectAsStateWithLifecycle()
@@ -172,7 +215,7 @@ fun SessionDetailScreen(
       onFiles = { filesOpen = true },
       onModelControls = { actionsOpen = true; actionsTab = 0; viewModel.loadModelControls() },
       modelControls = modelControls,
-      title = viewModel.sessionTitle.collectAsStateWithLifecycle().value,
+      title = sessionTitle,
       sharedTransitionScope = sharedTransitionScope,
       animatedVisibilityScope = animatedVisibilityScope,
 
@@ -278,7 +321,7 @@ fun SessionDetailScreen(
                   modifier = Modifier.weight(1f),
                 )
                 androidx.compose.material3.TextButton(
-                  onClick = { viewModel.loadOlderHistory() },
+                  onClick = viewModel::retryHistory,
                   contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                 ) {
                   Text("Retry", style = MaterialTheme.typography.labelSmall)
@@ -351,7 +394,7 @@ fun SessionDetailScreen(
           SendState.Accepted -> "Queued for Pi…"
           SendState.Delivered -> "Delivered to Pi…"
           SendState.Running -> "Pi responding…"
-          is SendState.Failed -> "Send failed — try again"
+          is SendState.Failed -> "Send failed: ${(sendState as SendState.Failed).message}"
           SendState.Idle -> null
         },
         onAbort = { viewModel.abort() },

@@ -585,9 +585,19 @@ func (s *Server) externalRegister(w http.ResponseWriter, r *http.Request) {
 		writeErrorText(w, http.StatusBadRequest, "valid id and bridgeId required")
 		return
 	}
+	if existing, ok := s.sessions.GetSpec(input.ID); ok && existing.Transport != "relay" {
+		writeErrorText(w, http.StatusConflict, "session is already owned by a managed RPC process")
+		return
+	}
+	ownerSpec := SessionSpec{ID: input.ID, SessionPath: input.SessionPath}
+	if err := s.reserveHistoryOwner(ownerSpec); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
 	external, lease := s.external.register(input.ID, input.CWD, input.Title, input.SessionPath, input.BridgeID)
 	_, err := s.sessions.RegisterSpec(SessionSpec{ID: external.ID, CWD: external.CWD, Title: external.Title, Status: external.Status, Managed: false, Transport: "relay", SessionPath: external.SessionPath})
 	if err != nil {
+		s.releaseHistoryOwner(ownerSpec)
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}

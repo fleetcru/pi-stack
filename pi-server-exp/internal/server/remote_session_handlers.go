@@ -20,7 +20,7 @@ func (s *Server) createRemoteSession(w http.ResponseWriter, r *http.Request, wor
 		return
 	}
 	base.Path = "/v1/sessions"
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<20))
 	if err != nil {
 		writeError(w, 413, err)
 		return

@@ -18,6 +18,7 @@ import com.example.picompanion.data.repository.SessionsRepository
 import com.example.picompanion.data.websocket.SocketEvent
 import com.example.picompanion.data.model.ExtensionUiRequest
 import com.example.picompanion.data.model.parseExtensionUiRequest
+import com.example.picompanion.ui.sessions.SessionInventoryState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -29,6 +30,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Instant
 import java.util.UUID
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -154,6 +156,12 @@ class SessionDetailViewModel(
   private var relayHealthJob: Job? = null
   private var reconnectAttempt = 0
   @Volatile private var closed = false
+  @Volatile private var appInForeground = true
+  @Volatile private var replayEventsSinceLastSeen = true
+  private var launchConnectionAttempt = true
+  @Volatile private var sessionRuntimeStatus: String? = null
+  @Volatile private var hasSessionMetadata = false
+  @Volatile private var inventorySnapshotDirty = false
   // Turn counter: incremented when message_end or agent_end fires. Prevents
   // stale runtime_state events from a previous turn from re-enabling the
   // thinking spinner after the turn is already complete.
@@ -167,6 +175,7 @@ class SessionDetailViewModel(
   private var networkCallbackRegistered = false
   private val networkCallback = object : ConnectivityManager.NetworkCallback() {
     override fun onAvailable(network: Network) {
+      if (!appInForeground) return
       // Cancel any pending backoff delay so reconnection starts immediately
       // when Wi-Fi returns, instead of waiting for the timer to fire.
       reconnectJob?.cancel()
@@ -175,8 +184,12 @@ class SessionDetailViewModel(
       scheduleReconnect()
     }
     override fun onLost(network: Network) {
-      // Wi-Fi lost: mark disconnected and stop pending reconnect attempts.
-      // The next onAvailable will trigger reconnection when Wi-Fi returns.
+      // Only treat this as a full loss when Android no longer reports a
+      // validated active network. Wi-Fi-to-cellular handoff can emit onLost
+      // while the replacement network is already usable.
+      val active = connectivityManager.activeNetwork
+      val capabilities = active?.let(connectivityManager::getNetworkCapabilities)
+      if (capabilities?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true) return
       reconnectJob?.cancel()
       reconnectJob = null
       _connectionState.value = ConnectionState.Disconnected("Network lost")
@@ -298,6 +311,7 @@ class SessionDetailViewModel(
     viewModelScope.launch {
       _connectionState.value = ConnectionState.Connecting
       val appSettings = settingsDataStore.settingsFlow.first()
+      replayEventsSinceLastSeen = appSettings.replayEventsSinceLastSeen
       val server = appSettings.activeServer
 
       if (server == null || !server.isConfigured) {
@@ -326,7 +340,18 @@ class SessionDetailViewModel(
       // Ticket acquisition runs alongside metadata/history startup. Resume from
       // the cached cursor when available; fresh sessions intentionally skip replay
       // because durable history is loading in parallel.
-      openTicketedStream(server, lastEventId.takeIf { it > 0 } ?: Long.MAX_VALUE)
+      val since = if (replayEventsSinceLastSeen) {
+        lastEventId.takeIf { it > 0 } ?: Long.MAX_VALUE
+      } else {
+        Long.MAX_VALUE
+      }
+      val shouldConnect = !launchConnectionAttempt || appSettings.reconnectOnLaunch
+      launchConnectionAttempt = false
+      if (shouldConnect) {
+        openTicketedStream(server, since)
+      } else {
+        _connectionState.value = ConnectionState.Disconnected("Reconnect on launch is disabled")
+      }
     }
   }
 
@@ -376,6 +401,7 @@ class SessionDetailViewModel(
     _sessionTitle.value = cached.title
     _sessionProject.value = cached.project
     _sessionCwd.value = cached.cwd
+    hasSessionMetadata = true
     lastEventId = cached.lastEventId
     timelineSeq = cached.items.maxOfOrNull { item -> when (item) {
       is SessionTimelineItem.Chat -> item.order
@@ -414,6 +440,11 @@ class SessionDetailViewModel(
     viewModelScope.launch { loadHistory(historyState.nextOffset, appendOld = true) }
   }
 
+  fun retryHistory() {
+    if (_loadingOlderHistory.value) return
+    viewModelScope.launch { loadHistory() }
+  }
+
   private suspend fun loadHistory(offset: Int = 0, appendOld: Boolean = false) {
     // Queue concurrent refreshes instead of silently dropping one while a
     // previous history request is still in flight.
@@ -421,7 +452,7 @@ class SessionDetailViewModel(
     historyMutex.withLock {
       // Skip if a newer connect() has started — this stale request would
       // overwrite fresh history with data from a previous connection.
-      if (!appendOld && generation != historyGeneration) return
+      if (generation != historyGeneration) return
       if (appendOld) _loadingOlderHistory.value = true
       try {
         when (val result = repository.getSessionMessages(sessionId, offset = offset, limit = if (appendOld) 75 else 40)) {
@@ -516,12 +547,17 @@ class SessionDetailViewModel(
   }
 
   private suspend fun loadMetadata() {
-    when (val sessions = repository.listSessions()) {
+    // Reuse the server captured during connect. Reading settings again here
+    // adds disk work and can race a server switch while the screen starts.
+    val server = activeServer ?: return
+    when (val sessions = repository.listSessions(server)) {
       is com.example.picompanion.data.api.HttpResult.Success -> {
         sessions.value.firstOrNull { it.id == sessionId }?.let {
           _sessionTitle.value = it.title.orEmpty()
           _sessionProject.value = it.project.orEmpty()
           _sessionCwd.value = it.cwd.orEmpty()
+          sessionRuntimeStatus = it.status
+          hasSessionMetadata = true
         }
       }
       is com.example.picompanion.data.api.HttpResult.Failure -> {
@@ -545,16 +581,24 @@ class SessionDetailViewModel(
       }
       // Capture the server AFTER the delay so we use the latest config,
       // not a stale reference from before the delay.
+      if (!appInForeground) return@launch
       val server = activeServer ?: return@launch
       reconnectAttempt++
       _connectionState.value = ConnectionState.Connecting
       // Replay missed events immediately. Do not block reconnection on a full
       // get_messages RPC round trip; the timeline already has its history.
-      openTicketedStream(server, lastEventId.takeIf { it > 0 })
+      val since = if (replayEventsSinceLastSeen) lastEventId.takeIf { it > 0 } else Long.MAX_VALUE
+      openTicketedStream(server, since)
     }
   }
 
   private suspend fun handleEvent(raw: JsonObject, type: String) {
+    when (type) {
+      "message_start", "message_update", "message_end",
+      "tool_execution_start", "tool_execution_update", "tool_execution_end",
+      "file_change", "agent_start", "agent_end", "agent_settled" ->
+        inventorySnapshotDirty = true
+    }
     // Log all event types for debugging
     if (BuildConfig.DEBUG) android.util.Log.d("SessionWS", "Event type: $type, keys: ${raw.keys}")
 
@@ -765,6 +809,7 @@ class SessionDetailViewModel(
         return
       }
       "agent_start", "agent_end", "agent_settled", "turn_start", "turn_end" -> {
+        if (type == "agent_start") sessionRuntimeStatus = "working"
         if (type == "agent_start" && pendingPromptIds.isNotEmpty()) {
           _sendState.value = SendState.Running
           setAgentWorking(true)
@@ -774,6 +819,7 @@ class SessionDetailViewModel(
         // the server's relay admission lifecycle.
         val relaySession = externalSession == true
         if (type == "agent_settled" || (type == "agent_end" && !relaySession)) {
+          sessionRuntimeStatus = "idle"
           pendingPromptIds.clear()
           promptReconcileJob?.cancel()
           promptReconcileJob = null
@@ -786,6 +832,7 @@ class SessionDetailViewModel(
       // Runtime state transitions from the server (authoritative source of truth)
       "runtime_state" -> {
         val state = raw.getString("runtimeState")
+        if (!state.isNullOrBlank()) sessionRuntimeStatus = state
         // Capture the generation at event time. If a message_end or agent_end
         // fires between now and when this state is applied, the generation
         // will have advanced and we skip re-enabling the spinner.
@@ -1035,6 +1082,13 @@ class SessionDetailViewModel(
 
   private var lastSendTime = 0L
 
+  private fun openAttachmentStream(context: Context, uri: Uri): java.io.InputStream? =
+    if (uri.scheme == "file") {
+      uri.path?.let { java.io.FileInputStream(it) }
+    } else {
+      context.contentResolver.openInputStream(uri)
+    }
+
   fun sendPrompt(message: String, imageUris: List<Uri> = emptyList()) {
     if (message.isBlank() && imageUris.isEmpty()) return
     // Debounce rapid-fire sends (double-tap, accidental repeat) to prevent
@@ -1061,13 +1115,19 @@ class SessionDetailViewModel(
               // Downsample large images to prevent OOM and reduce payload size.
               val maxDimension = 1024
               val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-              context.contentResolver.openInputStream(uri)?.use {
+              val boundsRead = openAttachmentStream(context, uri)?.use {
                 BitmapFactory.decodeStream(it, null, options)
-              } ?: error("Could not open image")
+                true
+              } ?: false
+              require(boundsRead) { "Could not open image" }
               require(options.outWidth > 0 && options.outHeight > 0) { "Could not read image dimensions" }
-              val scale = maxOf(1, maxOf(options.outWidth, options.outHeight) / maxDimension)
+              // Round up so every decoded dimension is at most maxDimension.
+              // Integer division otherwise leaves 1025..2047px images at full
+              // size, making a multi-image request unexpectedly huge.
+              val largestDimension = maxOf(options.outWidth, options.outHeight)
+              val scale = maxOf(1, (largestDimension + maxDimension - 1) / maxDimension)
               val decodeOptions = BitmapFactory.Options().apply { inSampleSize = scale }
-              val bitmap = context.contentResolver.openInputStream(uri)?.use {
+              val bitmap = openAttachmentStream(context, uri)?.use {
                 BitmapFactory.decodeStream(it, null, decodeOptions)
               } ?: error("Could not decode image")
               try {
@@ -1254,6 +1314,9 @@ class SessionDetailViewModel(
         is com.example.picompanion.data.api.HttpResult.Success -> {
           _sessionTitle.value = title
           _sessionProject.value = project
+          hasSessionMetadata = true
+          inventorySnapshotDirty = true
+          publishInventorySnapshot()
           appendItem(SessionTimelineItem.System("Session details saved"))
         }
         is com.example.picompanion.data.api.HttpResult.Failure ->
@@ -1441,21 +1504,29 @@ class SessionDetailViewModel(
 
   fun refresh() {
     if (closed || _refreshing.value) return
+    // Claim the refresh before launching so two rapid taps cannot start
+    // overlapping refresh jobs before the coroutine gets scheduled.
+    _refreshing.value = true
     viewModelScope.launch {
-      _refreshing.value = true
       try {
-        val broken = _connectionState.value is ConnectionState.Disconnected || _connectionState.value is ConnectionState.Error
+        val broken =
+          _connectionState.value is ConnectionState.Disconnected ||
+            _connectionState.value is ConnectionState.Error ||
+            !transport.isConnected()
         if (broken) {
-          // Full reconnection path: reset stuck spinner/send state, flush
-          // buffered deltas, and reopen the stream. Using reconnect() here
-          // left _agentWorking/_sendState stuck, disabling the send button.
+          // A stale/half-open socket is just as unusable as a reported error.
+          // Rebuild the stream and let connect() perform its normal cache,
+          // history, metadata, and relay-health startup work.
           connect()
         } else {
-          // Connection is healthy: just reload the latest history snapshot
-          // without disrupting the live stream.
-          loadMetadata()
-          loadHistory()
-          refreshRelayHealth()
+          // Refresh independent resources together. History still uses its
+          // mutex and generation guard, while the live stream stays open.
+          kotlinx.coroutines.coroutineScope {
+            launch { loadMetadata() }
+            launch { loadHistory() }
+            launch { loadGitChanges() }
+            launch { refreshRelayHealth() }
+          }
         }
       } finally {
         _refreshing.value = false
@@ -1467,6 +1538,36 @@ class SessionDetailViewModel(
     reconnectJob?.cancel()
     transport.disconnect()
     scheduleReconnect(immediate = true)
+  }
+
+  private fun publishInventorySnapshot() {
+    if (!hasSessionMetadata || !inventorySnapshotDirty) return
+    val serverId = activeServer?.id ?: return
+    SessionInventoryState.publishMetadata(
+      SessionInventoryState.MetadataPatch(
+        serverId = serverId,
+        sessionId = sessionId,
+        title = _sessionTitle.value,
+        project = _sessionProject.value,
+        status = sessionRuntimeStatus,
+        updatedAt = Instant.now().toString(),
+      ),
+    )
+    inventorySnapshotDirty = false
+  }
+
+  fun onBackground() {
+    publishInventorySnapshot()
+    appInForeground = false
+    reconnectJob?.cancel()
+    reconnectJob = null
+    transport.disconnect()
+  }
+
+  fun onForeground() {
+    if (closed || appInForeground) return
+    appInForeground = true
+    connect()
   }
 
   override fun onCleared() {

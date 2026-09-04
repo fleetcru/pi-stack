@@ -1,6 +1,12 @@
 <resources>
     <string name="app_name">Pi Companion</string>
     <string name="pairing_scan_cancel">Cancel</string>
+    <string name="pairing_scan_back">‹</string>
+    <string name="pairing_scan_back_description">Back</string>
+    <string name="pairing_scan_title">Pair device</string>
+    <string name="pairing_scan_subtitle">Scan the code from Pi Server Admin</string>
+    <string name="pairing_scan_hint_title">Scan the pairing QR code</string>
+    <string name="pairing_scan_hint">Place the code inside the frame and hold steady</string>
     <string name="pairing_scan_flash_on">Turn on flash</string>
     <string name="pairing_scan_flash_off">Turn off flash</string>
 </resources>

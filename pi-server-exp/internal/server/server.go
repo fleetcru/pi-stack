@@ -34,6 +34,8 @@ type Server struct {
 	historyCache      map[string]historyCacheEntry
 	historyIndexes    map[string]historyIndex
 	historyIndexPaths map[string]string
+	historyOwnerMu    sync.Mutex
+	historyOwners     map[string]string
 	stateCacheMu      sync.Mutex
 	stateCache        map[string]cachedSessionState
 	pendingTitleMu    sync.Mutex
@@ -79,6 +81,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		historyCache:      map[string]historyCacheEntry{},
 		historyIndexes:    map[string]historyIndex{},
 		historyIndexPaths: map[string]string{},
+		historyOwners:     map[string]string{},
 		stateCache:        map[string]cachedSessionState{},
 		pendingTitle:      map[string]bool{},
 		resolvedRoots:     resolveAllowedRoots(cfg.AllowedRoots),
@@ -122,6 +125,13 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		if spec.Transport == "relay" {
 			logger.Info("removing stale relay session spec", "id", spec.ID)
 			_ = s.sessions.Delete(spec.ID)
+		}
+	}
+	for _, spec := range s.sessions.ListSpecs() {
+		if spec.Transport == "rpc" {
+			if err := s.reserveHistoryOwner(spec); err != nil {
+				logger.Warn("session history already owned; session disabled", "session", spec.ID, "error", err)
+			}
 		}
 	}
 	if err := s.devices.load(); err != nil {

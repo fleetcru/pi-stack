@@ -61,7 +61,7 @@ func (s *Server) proxyRemoteSession(w http.ResponseWriter, r *http.Request, id, 
 }
 
 func remoteBodyStartsPrompt(r *http.Request) bool {
-	body, err := io.ReadAll(io.LimitReader(r.Body, (1<<20)+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, (8<<20)+1))
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	if err != nil || len(body) > 1<<20 {
 		return false

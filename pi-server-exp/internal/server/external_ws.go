@@ -15,7 +15,7 @@ func (s *Server) externalSessionWebSocket(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer conn.Close()
-	conn.SetReadLimit(1 << 20) // 1 MiB, matching HTTP body limit
+	conn.SetReadLimit(8 << 20) // 8 MiB, matching prompt HTTP body limit
 	codec := ParseCodec(r.URL.Query().Get("codec"))
 	since, _ := strconv.ParseUint(r.URL.Query().Get("since"), 10, 64)
 	events, replay, unsubscribe, ok := s.external.subscribe(id, since)

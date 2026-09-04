@@ -23,6 +23,8 @@ data class AppSettings(
   val showToolEvents: Boolean = true,
   val showDaemonEvents: Boolean = true,
   val defaultProjectRoot: String = "",
+  val lastSessionServerId: String = "",
+  val lastSessionId: String = "",
 ) {
   val activeServer: ServerEntry?
     get() = servers.find { it.id == activeServerId }

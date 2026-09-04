@@ -11,7 +11,7 @@ func (s *Server) sessionPost(w http.ResponseWriter, r *http.Request) {
 	id, action := splitSessionPath(r.URL.Path)
 	if action == "ui-response" {
 		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-	} else if action == "send" || action == "command" {
+	} else if action == "prompt" || action == "send" || action == "command" {
 		r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
 	}
 	if s.proxyRemoteSession(w, r, id, action) {

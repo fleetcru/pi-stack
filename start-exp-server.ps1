@@ -3,7 +3,9 @@ param(
   [int]$Port = 3142,
   [string]$AuthToken = "",
   [string]$DataDir = (Join-Path $PSScriptRoot ".data" | Join-Path -ChildPath "pi-server"),
-  [switch]$AllowInsecure
+  [switch]$AllowInsecure,
+  [switch]$InstallExternalBridge,
+  [string]$BridgeRelayUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,20 +15,25 @@ if (-not (Test-Path -LiteralPath $serverDir -PathType Container)) {
   throw "pi-server-exp not found at: $serverDir"
 }
 
-# --- Detect Tailscale IP ---
-$tailscaleIp = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-  Where-Object { $_.InterfaceAlias -match "Tailscale" -and $_.AddressState -eq "Preferred" } |
+# --- Detect a reachable home-LAN IP ---
+# Do not use Tailscale, link-local (169.254.x.x), or carrier-grade NAT
+# (100.64.x.x) addresses. Those are not reachable by a phone on home Wi-Fi.
+$lanAddresses = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  Where-Object {
+    $_.AddressState -eq "Preferred" -and
+    $_.IPAddress -match "^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)"
+  }
+$preferredLan = $lanAddresses |
+  Where-Object { $_.InterfaceAlias -match "Wi-Fi|WiFi|Wireless|Ethernet" } |
   Select-Object -First 1 -ExpandProperty IPAddress
-
-if (-not $tailscaleIp) {
-  Write-Warning "Tailscale interface not found. Falling back to LAN detection."
-  $tailscaleIp = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-    Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" -and $_.AddressState -eq "Preferred" } |
-    Select-Object -First 1 -ExpandProperty IPAddress
+$tailscaleIp = if ($preferredLan) {
+  $preferredLan
+} else {
+  $lanAddresses | Select-Object -First 1 -ExpandProperty IPAddress
 }
 
 if (-not $tailscaleIp) {
-  Write-Warning "No network IP detected. Binding to 0.0.0.0 but clients may not reach the server."
+  Write-Warning "No private LAN IP detected. Binding to 0.0.0.0 but clients may not reach the server."
   $tailscaleIp = "127.0.0.1"
 }
 
@@ -64,6 +71,22 @@ if ($AuthToken) {
   } else {
     Remove-Item Env:PI_SERVER_ALLOW_INSECURE -ErrorAction SilentlyContinue
   }
+}
+
+# The bridge belongs in interactive Pi TUI processes, not server-managed RPC
+# processes. Install it globally only when explicitly requested, so future TUI
+# sessions can register with this server without creating duplicate owners.
+if ($InstallExternalBridge) {
+  $installer = Join-Path $PSScriptRoot "install-exp-external-bridge.ps1"
+  if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+    throw "External bridge installer not found: $installer"
+  }
+  $relayUrl = if ($BridgeRelayUrl) { $BridgeRelayUrl.TrimEnd('/') } else { "http://127.0.0.1:$Port" }
+  & powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File $installer `
+    -ServerPort $Port `
+    -RelayUrl $relayUrl `
+    -AuthToken $AuthToken
+  if ($LASTEXITCODE -ne 0) { throw "External bridge installation failed with exit code $LASTEXITCODE" }
 }
 
 # --- Launch ---

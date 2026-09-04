@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"os"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -125,6 +125,16 @@ func (r *deviceRegistry) revoke(id string) bool {
 	}
 	record.RevokedAt = time.Now().UTC()
 	r.devices[id] = record
+	return r.saveLocked() == nil
+}
+
+func (r *deviceRegistry) delete(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.devices[id]; !ok {
+		return false
+	}
+	delete(r.devices, id)
 	return r.saveLocked() == nil
 }
 

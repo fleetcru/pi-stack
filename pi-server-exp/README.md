@@ -12,6 +12,18 @@ Go is the least-headache choice here: simple single-binary deployment, excellent
 go run ./cmd/pi-server --addr 127.0.0.1:3141
 ```
 
+### Windows executable on the LAN
+
+Build and start the server from PowerShell with bearer authentication:
+
+```powershell
+cd C:\Users\basin\Desktop\pi-stack\pi-server-exp
+go build -o .\pi-server.exe .\cmd\pi-server
+$env:PI_SERVER_AUTH_TOKEN="replace-with-a-long-random-token"; .\pi-server.exe --addr 0.0.0.0:3142 --cwd C:\Users\basin\Desktop\pi-stack
+```
+
+The `--addr` and `--cwd` flags are intentional. Values saved by the admin dashboard in `~/.pi/server/admin-config.json` override environment variables, while explicit CLI flags remain authoritative. At startup, an authenticated server also writes the LAN relay URL and bearer token to `~/.pi/agent/bridge-config.json` for the external TUI bridge. Set `PI_SERVER_BRIDGE_URL` when the automatically detected LAN address is not the address the TUI should use. Keep the token and config file private. Use the laptop's LAN IP, such as `http://192.168.1.42:3142`, in Companion. Do not use `0.0.0.0` or `127.0.0.1` as the Companion URL.
+
 ### CLI flags
 
 | Flag | Default | Description |

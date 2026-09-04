@@ -30,6 +30,7 @@ import com.example.picompanion.ui.components.BottomNavBar
 import com.example.picompanion.ui.components.DirectoryBrowserSheet
 import com.example.picompanion.ui.components.NavTab
 import com.example.picompanion.ui.components.SessionDrawer
+import com.example.picompanion.ui.sessions.SessionInventoryState
 import com.example.picompanion.ui.sessions.SessionsScreen
 import com.example.picompanion.ui.settings.SettingsScreen
 import com.example.picompanion.ui.workers.WorkersScreen
@@ -163,6 +164,7 @@ fun ShellScreen(
             }.awaitAll()
           }
           val createdIds = outcomes.mapNotNull { it.first }
+          if (createdIds.isNotEmpty()) SessionInventoryState.markStale(server.id)
           val failures = outcomes.mapNotNull { it.second }
           if (failures.isNotEmpty()) {
             val message = if (createdIds.isEmpty()) failures.first() else "${createdIds.size} of ${outcomes.size} sessions completed without errors"

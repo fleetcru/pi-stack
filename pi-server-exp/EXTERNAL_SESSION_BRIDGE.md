@@ -2,16 +2,27 @@
 
 This bridge makes a normal interactive Pi TUI session visible in pi-server, Webby, and Companion without starting a second Pi process for the same JSONL session.
 
+When pi-server starts with `PI_SERVER_AUTH_TOKEN`, it updates `~/.pi/agent/bridge-config.json` with the detected server URL and token. The TUI bridge reads that file automatically. Use `PI_SERVER_BRIDGE_URL` to override the detected URL.
+
 ## Run a bridged TUI session
 
-Start pi-server-exp first, then in the terminal where you start interactive Pi:
+Start pi-server-exp first, then install the bridge configuration once:
 
 ```powershell
-$env:PI_EXTERNAL_RELAY_URL = "http://127.0.0.1:3142"
-# Set this too when PI_SERVER_AUTH_TOKEN is configured:
-# $env:PI_EXTERNAL_RELAY_TOKEN = "your-server-token"
+cd C:\Users\basin\Desktop\pi-stack
+.\install-exp-external-bridge.ps1 -ServerPort 3142 -RelayUrl "http://127.0.0.1:3142" -AuthToken "your-server-token"
+```
 
-pi --extension "C:\Users\basin\Desktop\pi-stack\pi-server-exp\extensions\external-session-bridge.ts"
+This copies the extension to Pi's user extensions directory and writes
+`~/.pi/agent/bridge-config.json` with the relay URL and token. New Pi TUI
+sessions can then start normally. The config file contains the bearer token,
+so keep the `.pi` directory private. The server executable also refreshes this
+same file on every authenticated startup.
+
+For a one-command server startup plus bridge setup:
+
+```powershell
+.\start-exp-server.ps1 -Port 3142 -AuthToken "your-server-token" -InstallExternalBridge
 ```
 
 You can also run `/bridge-register` in Pi. It asks for the relay URL and then the optional bearer token. Leave the token prompt blank only when the server has no `PI_SERVER_AUTH_TOKEN`.

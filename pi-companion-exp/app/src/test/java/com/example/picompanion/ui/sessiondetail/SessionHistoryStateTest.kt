@@ -5,6 +5,30 @@ import org.junit.Test
 
 class SessionHistoryStateTest {
   @Test
+  fun refreshKeepsCachedOlderRowsBeforeNewerRows() {
+    val state = SessionHistoryState()
+    val older = SessionTimelineItem.Chat("Pi Agent", "older", "2026-08-08T20:00:00Z", false, order = 10)
+    state.restore(listOf(older), offset = 1, older = false)
+    val newer = SessionTimelineItem.Chat("Pi Agent", "newer", "2026-08-08T21:00:00Z", false)
+
+    val merged = state.applyPage(
+      page = listOf(newer),
+      appendOld = false,
+      nextOffset = 1,
+      hasOlder = false,
+      liveItems = listOf(older),
+      stamp = { item ->
+        when (item) {
+          is SessionTimelineItem.Chat -> if (item.order > 0) item else item.copy(order = 11)
+          else -> item
+        }
+      },
+    )
+
+    assertEquals(listOf("older", "newer"), merged.map { (it as SessionTimelineItem.Chat).text })
+  }
+
+  @Test
   fun refreshedHistoryPreservesCachedOrders() {
     val state = SessionHistoryState()
     val cached = SessionTimelineItem.Chat(

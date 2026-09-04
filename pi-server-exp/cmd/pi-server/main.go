@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -86,6 +87,13 @@ func main() {
 	if err := server.ValidateConfig(cfg); err != nil {
 		logger.Error("configuration validation failed", "error", err)
 		os.Exit(1)
+	}
+	if cfg.AuthToken != "" {
+		if err := writeBridgeConfig(cfg); err != nil {
+			logger.Warn("could not update external bridge config", "error", err)
+		} else {
+			logger.Info("external bridge config updated")
+		}
 	}
 
 	// Binding a non-loopback address without an auth token exposes full session
@@ -186,6 +194,93 @@ func parseLogLevel(s string) (clog.Level, error) {
 }
 
 // isTerminal reports whether fd is connected to a terminal.
+type bridgeConfig struct {
+	RelayURL   string `json:"relayUrl"`
+	RelayToken string `json:"relayToken"`
+}
+
+func writeBridgeConfig(cfg server.Config) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	addr := bridgeAddress(cfg.Addr)
+	if override := strings.TrimSpace(os.Getenv("PI_SERVER_BRIDGE_URL")); override != "" {
+		addr = strings.TrimRight(override, "/")
+	}
+	path := filepath.Join(home, ".pi", "agent", "bridge-config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(bridgeConfig{RelayURL: addr, RelayToken: cfg.AuthToken}, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o600)
+}
+
+func bridgeAddress(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		return "http://127.0.0.1:" + port
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		host = firstLANIPv4()
+	}
+	return "http://" + net.JoinHostPort(host, port)
+}
+
+func firstLANIPv4() string {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return "127.0.0.1"
+	}
+
+	// Only choose RFC1918 addresses. Starlink and other ISPs can expose a
+	// carrier-grade NAT address in 100.64.0.0/10, which is not reachable by a
+	// phone on the home's Wi-Fi and must never be written into bridge-config.
+	// Prefer normal Wi-Fi/Ethernet adapters when several private networks exist.
+	bestIP := ""
+	bestScore := -1
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		score := 1
+		name := strings.ToLower(iface.Name)
+		if strings.Contains(name, "wi-fi") || strings.Contains(name, "wifi") ||
+			strings.Contains(name, "wireless") || strings.Contains(name, "ethernet") {
+			score = 3
+		}
+		addrs, _ := iface.Addrs()
+		for _, addr := range addrs {
+			ip, _, err := net.ParseCIDR(addr.String())
+			if err != nil || !isPrivateLANIPv4(ip) {
+				continue
+			}
+			if score > bestScore {
+				bestIP = ip.String()
+				bestScore = score
+			}
+		}
+	}
+	if bestIP != "" {
+		return bestIP
+	}
+	return "127.0.0.1"
+}
+
+func isPrivateLANIPv4(ip net.IP) bool {
+	ip = ip.To4()
+	if ip == nil {
+		return false
+	}
+	return ip[0] == 10 ||
+		(ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31) ||
+		(ip[0] == 192 && ip[1] == 168)
+}
+
 func isTerminal(f *os.File) bool {
 	fi, err := f.Stat()
 	if err != nil {

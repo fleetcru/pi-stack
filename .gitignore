@@ -4,10 +4,10 @@
 *.tmp
 *.err
 *.out
-
+nul
 # Auto-created per-session git worktrees (pi-server createWorktree.enabled)
 .pi-worktrees/
-
+.gocache-audit/
 # ── Root workspace ────────────────────────────────────────
 /node_modules/
 /pnpm-lock.yaml
