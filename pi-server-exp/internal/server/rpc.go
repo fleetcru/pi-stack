@@ -43,6 +43,7 @@ type PiProcess struct {
 	running bool
 	closed  bool
 	done    chan struct{}
+	readers sync.WaitGroup
 
 	seq              uint64
 	waiters          map[string]responseWaiter
@@ -157,8 +158,9 @@ func (p *PiProcess) Start(ctx context.Context) error {
 	p.cmd, p.stdin, p.running, p.done = cmd, stdin, true, make(chan struct{})
 	p.setRuntimeLocked("idle", "process", "Ready")
 	idleEvent := p.runtimeStateEventLocked()
-	go p.readStdout(stdout)
-	go p.readStderr(stderr)
+	p.readers.Add(2)
+	go func() { defer p.readers.Done(); p.readStdout(stdout) }()
+	go func() { defer p.readers.Done(); p.readStderr(stderr) }()
 	p.logger.Info("pi rpc process started", "pid", cmd.Process.Pid, "args", args)
 	p.mu.Unlock()
 	p.dispatch(startingEvent)
@@ -285,6 +287,7 @@ func (p *PiProcess) Subscribe() (<-chan RPCEvent, func()) {
 func (p *PiProcess) Close(ctx context.Context) error {
 	defer p.releaseAdmission()
 	defer func() {
+		p.readers.Wait()
 		p.mu.Lock()
 		journal := p.journal
 		p.journal = nil
@@ -325,6 +328,8 @@ func (p *PiProcess) Close(ctx context.Context) error {
 		_ = cmd.Process.Kill()
 		return ctx.Err()
 	}
+	// The deferred reader wait ensures cmd.Wait/process-exit paths also finish
+	// unwinding before the durable journal is closed.
 	return nil
 }
 
