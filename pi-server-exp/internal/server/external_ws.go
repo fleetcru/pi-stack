@@ -37,6 +37,7 @@ func (s *Server) externalSessionWebSocket(w http.ResponseWriter, r *http.Request
 	write := func(v any) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		return codec.WriteWebSocket(conn, v)
 	}
 	// Companion sends prompts over its session WebSocket. Translate supported

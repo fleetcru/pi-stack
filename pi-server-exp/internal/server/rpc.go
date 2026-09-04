@@ -109,15 +109,16 @@ func (p *PiProcess) Start(ctx context.Context) error {
 		return err
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.running {
+		p.mu.Unlock()
 		return nil
 	}
 	if p.closed {
+		p.mu.Unlock()
 		return errors.New("session closed")
 	}
 	p.setRuntimeLocked("starting", "process", "Starting Pi")
-	p.emitRuntimeStateLocked()
+	startingEvent := p.runtimeStateEventLocked()
 	args := append([]string{"--mode", "rpc"}, p.spec.Args...)
 	for _, extension := range p.cfg.Extensions {
 		if extension != "" {
@@ -131,30 +132,38 @@ func (p *PiProcess) Start(ctx context.Context) error {
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		p.mu.Unlock()
 		return err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		p.mu.Unlock()
 		return err
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		p.mu.Unlock()
 		return err
 	}
 	applyProcessAttrs(cmd)
 	if err := ctx.Err(); err != nil {
+		p.mu.Unlock()
 		return err
 	}
 	if err := cmd.Start(); err != nil {
+		p.mu.Unlock()
 		return err
 	}
 	p.cmd, p.stdin, p.running, p.done = cmd, stdin, true, make(chan struct{})
 	p.setRuntimeLocked("idle", "process", "Ready")
-	p.emitRuntimeStateLocked()
+	idleEvent := p.runtimeStateEventLocked()
 	go p.readStdout(stdout)
 	go p.readStderr(stderr)
-	go p.wait(cmd)
 	p.logger.Info("pi rpc process started", "pid", cmd.Process.Pid, "args", args)
+	p.mu.Unlock()
+	p.dispatch(startingEvent)
+	p.dispatch(idleEvent)
+	go p.wait(cmd)
 	return nil
 }
 
@@ -396,14 +405,15 @@ func (p *PiProcess) readStderr(r io.Reader) {
 func (p *PiProcess) wait(cmd *exec.Cmd) {
 	err := cmd.Wait()
 	p.mu.Lock()
+	var stateEvent RPCEvent
 	if p.cmd == cmd {
 		p.running = false
 		if p.spec.Restart && !p.closed && p.restarts < p.cfg.RestartMax {
 			p.setRuntimeLocked("reconnecting", "process", "Restarting Pi")
-			p.emitRuntimeStateLocked()
+			stateEvent = p.runtimeStateEventLocked()
 		} else {
 			p.setRuntimeLocked("stopped", "process", "Pi process stopped")
-			p.emitRuntimeStateLocked()
+			stateEvent = p.runtimeStateEventLocked()
 		}
 		p.stdin = nil
 		p.cmd = nil
@@ -422,6 +432,9 @@ func (p *PiProcess) wait(cmd *exec.Cmd) {
 	}
 	attempt := p.restarts
 	p.mu.Unlock()
+	if stateEvent != nil {
+		p.dispatch(stateEvent)
+	}
 	// A process exit terminates the admitted run even if Pi could not emit its
 	// normal agent_end/agent_settled event.
 	p.releaseAdmission()
@@ -602,10 +615,9 @@ func (p *PiProcess) setRuntimeLocked(state, reason, detail string) {
 
 // emitRuntimeStateLocked broadcasts the current runtime state to WS subscribers
 // and the event ring. Called from Start()/wait() which bypass dispatch().
-// Caller must hold p.mu (write lock). Reads state under the held lock,
-// then schedules dispatch() in a goroutine so it can re-acquire the lock
-// after the caller releases it.
-func (p *PiProcess) emitRuntimeStateLocked() {
+// Caller must hold p.mu (write lock). Reads state under the held lock and
+// returns a detached event for dispatch after the caller releases the lock.
+func (p *PiProcess) runtimeStateEventLocked() RPCEvent {
 	// Capture state while the caller still holds the write lock.
 	event := RPCEvent{
 		"type":          "runtime_state",
@@ -619,10 +631,7 @@ func (p *PiProcess) emitRuntimeStateLocked() {
 	if p.runtimeError != "" {
 		event["runtimeError"] = p.runtimeError
 	}
-	// dispatch() acquires p.mu, so schedule it to run after the caller
-	// releases the lock. The captured event values are safe to read without
-	// the lock.
-	go p.dispatch(event)
+	return event
 }
 
 func (p *PiProcess) updateRuntimeFromEventLocked(ev RPCEvent) {
