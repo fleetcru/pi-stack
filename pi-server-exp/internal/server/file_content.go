@@ -90,6 +90,14 @@ func (s *Server) writeFileContent(w http.ResponseWriter, r *http.Request, reques
 		return
 	}
 	defer f.Close()
+	// Re-check the opened file against the validated path. This closes the
+	// validation/open race for the common case where a path component is
+	// replaced between EvalSymlinks and Open (including junction/symlink swaps).
+	openedInfo, err := f.Stat()
+	if err != nil || !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+		writeErrorCode(w, r, http.StatusForbidden, CodePathNotAllowed, "file changed while opening")
+		return
+	}
 
 	limit := maxFileContentBytes
 	buf := make([]byte, limit+1)

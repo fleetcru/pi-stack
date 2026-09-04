@@ -36,7 +36,8 @@ export function ServerConnectionsDialog({
     const normalized = baseUrl.trim().replace(/\/+$/, "")
     if (!normalized) return
     try {
-      new URL(normalized)
+      const url = new URL(normalized)
+      if (!["http:", "https:"].includes(url.protocol) || !url.hostname) return
     } catch {
       return // invalid URL
     }
@@ -96,6 +97,12 @@ export function ServerConnectionsDialog({
             } catch { /* ignore invalid URL while typing */ }
             return false
           })() && <p className="text-xs text-amber-600 dark:text-amber-400">HTTP sends your token in plaintext. Use HTTPS for remote servers.</p>}
+          {baseUrl.trim() && (() => {
+            try {
+              const url = new URL(baseUrl.trim())
+              return !["http:", "https:"].includes(url.protocol) || !url.hostname
+            } catch { return true }
+          })() && <p className="text-xs text-destructive">Enter a valid HTTP or HTTPS server URL.</p>}
           <Input value={token} onChange={(event) => setToken(event.target.value)} placeholder="Auth token (raw value; do not include Bearer)" type="password" />
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             <Checkbox checked={rememberToken} onCheckedChange={(checked: boolean) => setRememberToken(checked)} />

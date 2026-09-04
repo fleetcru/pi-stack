@@ -68,8 +68,10 @@ class SessionEventSocket(
       val uri = java.net.URI(baseUrl)
       val wsScheme = when (uri.scheme) {
         "https" -> "wss"
-        else -> "ws"
+        "http" -> "ws"
+        else -> throw IllegalArgumentException("Server URL must use http or https")
       }
+      if (uri.host.isNullOrBlank()) throw IllegalArgumentException("Server URL must include a host")
       val ticketUri = java.net.URI(wsPath)
       val path = if (ticketUri.isAbsolute) ticketUri.path else wsPath.substringBefore('?')
       val existingQuery = if (ticketUri.isAbsolute) ticketUri.rawQuery else wsPath.substringAfter('?', "")
