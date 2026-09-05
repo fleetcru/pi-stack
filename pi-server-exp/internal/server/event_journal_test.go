@@ -9,7 +9,7 @@ import (
 
 func TestEventJournalRestoresAndCompacts(t *testing.T) {
 	dataDir := t.TempDir()
-	journal, restored, lastID, err := openEventJournal(dataDir, "session/one")
+	journal, restored, lastID, err := openEventJournal(dataDir, "session/one", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func TestEventJournalRestoresAndCompacts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reopened, restored, lastID, err := openEventJournal(dataDir, "session/one")
+	reopened, restored, lastID, err := openEventJournal(dataDir, "session/one", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
