@@ -91,10 +91,22 @@ export class IncrementalTimeline {
   private lastEvent: Record<string, unknown> | undefined
 
   update(events: Array<Record<string, unknown>>, maxItems = adaptiveTimelineLimit()): TimelineItem[] {
-    // Callers append to the event array. A shorter array means it was replaced
-    // during recovery, so rebuild; otherwise the processed cursor is O(1).
+    // Appends use the cursor directly. For a bounded replay window, verify the
+    // previous tail first and only search when the window has shifted.
     let start = this.processed
-    if (events.length < this.processed) { this.reset(); start = 0 }
+    if (this.lastEvent) {
+      const expected = events[this.processed - 1]
+      const expectedMatches = this.lastEventId === undefined
+        ? expected === this.lastEvent
+        : expected?._daemonEventId === this.lastEventId
+      if (!expectedMatches) {
+        const previous = this.lastEventId === undefined
+          ? events.findIndex((event) => event === this.lastEvent)
+          : events.findIndex((event) => event._daemonEventId === this.lastEventId)
+        if (previous >= 0) start = previous + 1
+        else { this.reset(); start = 0 }
+      }
+    } else if (events.length < this.processed) { this.reset(); start = 0 }
     for (let index = start; index < events.length; index += 1) this.apply(events[index], index)
     this.processed = events.length
     this.lastEvent = events.at(-1)
