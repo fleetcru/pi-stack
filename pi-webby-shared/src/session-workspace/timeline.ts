@@ -152,6 +152,7 @@ export class IncrementalTimeline {
         if (!this.activeAssistant) {
           this.activeAssistant = { id: `assistant-${event._daemonEventId ?? index}`, kind: "assistant", text: "", streaming: true, taskId, runId }
           this.items.push(this.activeAssistant)
+          this.activeAssistantIndex = this.items.length - 1
         } else {
           // Replace the object (new reference) so memoized row components
           // re-render on each delta instead of bailing out on the same ref.
