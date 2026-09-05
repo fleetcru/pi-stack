@@ -24,6 +24,7 @@ while [[ $# -gt 0 ]]; do
       echo "  -t, --token      Auth token (omit for no auth)"
       echo "  -d, --data-dir   Data directory (default: .data/pi-server)"
       echo "      --allow-insecure  Bind to the network without a token"
+      echo "      --open-admin      Open Admin after the server is ready"
       exit 0 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
@@ -117,9 +118,17 @@ echo ""
 
 if [[ "$OPEN_ADMIN" == "1" ]]; then
   ADMIN_URL="http://127.0.0.1:${PORT}/admin/"
-  if command -v xdg-open >/dev/null 2>&1; then xdg-open "$ADMIN_URL" >/dev/null 2>&1 &
-  elif command -v open >/dev/null 2>&1; then open "$ADMIN_URL" >/dev/null 2>&1 &
-  else echo "  Admin:      $ADMIN_URL"; fi
+  (
+    for _ in $(seq 1 60); do
+      if curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1; then
+        if command -v xdg-open >/dev/null 2>&1; then xdg-open "$ADMIN_URL" >/dev/null 2>&1
+        elif command -v open >/dev/null 2>&1; then open "$ADMIN_URL" >/dev/null 2>&1
+        else echo "  Admin:      $ADMIN_URL"; fi
+        exit 0
+      fi
+      sleep 0.5
+    done
+  ) &
   echo "  Pairing:    Create a trusted device in Admin, then scan its QR from Companion."
 fi
 
