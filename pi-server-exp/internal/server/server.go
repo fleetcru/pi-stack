@@ -18,6 +18,7 @@ type Server struct {
 	cfg               Config
 	maxSessionsAtomic int64 // atomic; mirrors cfg.MaxSessions for lock-free reads
 	logger            *slog.Logger
+	metrics           *requestMetrics
 	httpSrv           *http.Server
 	sessions          *SessionRegistry
 	admission         *TaskAdmission
@@ -70,6 +71,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		cfg:               cfg,
 		maxSessionsAtomic: int64(cfg.MaxSessions),
 		logger:            logger,
+		metrics:           newRequestMetrics(),
 		sessions:          NewSessionRegistry(filepath.Join(cfg.DataDir, "sessions.json"), cfg.MaxSessions),
 		admission:         NewTaskAdmissionWithQueue(cfg.MaxActiveRuns, cfg.MaxRunsPerSession, cfg.MaxRunsPerWorker, cfg.MaxQueuedRuns),
 		workers:           NewWorkerRegistry(filepath.Join(cfg.DataDir, "workers.json")),
@@ -180,7 +182,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 	}
 	s.httpSrv = &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           requestIDMiddleware(loggingMiddleware(logger, corsMiddleware(cfg.AllowedOrigins, authMiddlewareWithDevices(cfg.AuthToken, s.devices, recoverMiddleware(s.routes()))))),
+		Handler:           requestIDMiddleware(loggingMiddleware(logger, metricsMiddleware(s.metrics, corsMiddleware(cfg.AllowedOrigins, authMiddlewareWithDevices(cfg.AuthToken, s.devices, recoverMiddleware(s.routes())))))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,
