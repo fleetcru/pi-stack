@@ -84,15 +84,15 @@ class PiServerClient(
 
   /** Fetch only the most recent sessions for the home screen. */
   fun listRecentSessions(server: ServerEntry, limit: Int = 50): HttpResult<SessionListResponse> {
-    val result = listSessions(server)
-    // Client-side limit: keep only the most recently updated sessions.
-    return when (result) {
-      is HttpResult.Success -> {
-        val sorted = result.value.sessions.sortedByDescending { it.updatedAt.orEmpty() }
-        HttpResult.Success(result.value.copy(sessions = sorted.take(limit)))
-      }
-      is HttpResult.Failure -> result
-    }
+    // Limit at the daemon so Home does not repeatedly download and sort an
+    // unbounded inventory merely to display its recent entries.
+    val boundedLimit = limit.coerceIn(1, 200)
+    return doGet(
+      server,
+      "/v1/sessions?scope=all&include=state&limit=$boundedLimit",
+      emptyMap(),
+      SessionListResponse.serializer(),
+    )
   }
 
   fun listGlobalSessions(server: ServerEntry): HttpResult<GlobalSessionListResponse> =
