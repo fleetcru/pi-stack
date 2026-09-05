@@ -4,6 +4,7 @@ param(
   [string]$AuthToken = "",
   [string]$DataDir = (Join-Path $PSScriptRoot ".data" | Join-Path -ChildPath "pi-server"),
   [switch]$AllowInsecure,
+  [switch]$OpenAdmin,
   [switch]$InstallExternalBridge,
   [string]$BridgeRelayUrl = ""
 )
@@ -100,6 +101,11 @@ Write-Host "  Origins:   $origins"
 if ($AuthToken) { Write-Host "  Auth:      configured" }
 else { Write-Host "  Auth:      none (Tailscale/trusted LAN)" -ForegroundColor Yellow }
 Write-Host ""
+
+if ($OpenAdmin) {
+  Start-Process "http://127.0.0.1:$Port/admin/"
+  Write-Host "  Opened Pi Server Admin. Create a trusted device there, then scan its QR from Companion." -ForegroundColor Green
+}
 
 Set-Location $serverDir
 go run ./cmd/pi-server
