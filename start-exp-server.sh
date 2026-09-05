@@ -5,6 +5,7 @@ set -euo pipefail
 PORT="${PORT:-3142}"
 AUTH_TOKEN="${AUTH_TOKEN:-}"
 ALLOW_INSECURE="${ALLOW_INSECURE:-0}"
+OPEN_ADMIN="${OPEN_ADMIN:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_DIR="$SCRIPT_DIR/pi-server-exp"
 DATA_DIR="${DATA_DIR:-$SCRIPT_DIR/.data/pi-server}"
@@ -16,6 +17,7 @@ while [[ $# -gt 0 ]]; do
     -t|--token)      AUTH_TOKEN="$2"; shift 2 ;;
     -d|--data-dir)   DATA_DIR="$2"; shift 2 ;;
     --allow-insecure) ALLOW_INSECURE=1; shift ;;
+    --open-admin) OPEN_ADMIN=1; shift ;;
     -h|--help)
       echo "Usage: start-exp-server.sh [-p PORT] [-t AUTH_TOKEN] [-d DATA_DIR]"
       echo "  -p, --port       Server port (default: 3142)"
@@ -112,6 +114,14 @@ else
   printf "  Auth:      none \033[33m(trusted network only)\033[0m\n"
 fi
 echo ""
+
+if [[ "$OPEN_ADMIN" == "1" ]]; then
+  ADMIN_URL="http://127.0.0.1:${PORT}/admin/"
+  if command -v xdg-open >/dev/null 2>&1; then xdg-open "$ADMIN_URL" >/dev/null 2>&1 &
+  elif command -v open >/dev/null 2>&1; then open "$ADMIN_URL" >/dev/null 2>&1 &
+  else echo "  Admin:      $ADMIN_URL"; fi
+  echo "  Pairing:    Create a trusted device in Admin, then scan its QR from Companion."
+fi
 
 cd "$SERVER_DIR"
 exec go run ./cmd/pi-server
