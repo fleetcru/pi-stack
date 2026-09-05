@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRequestBodyLimitMiddlewareRejectsOversizeBody(t *testing.T) {
@@ -39,7 +40,7 @@ func TestPrometheusMetricsExportsRequestCounters(t *testing.T) {
 		metrics:   newRequestMetrics(),
 		sessions:  NewSessionRegistry("", 0),
 		workers:   NewWorkerRegistry(""),
-		startedAt: testNow(),
+		startedAt: time.Now(),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
