@@ -2,6 +2,8 @@
 
 This repository contains three projects forming a multi-device Pi coding-agent ecosystem. This document is for AI agents and developers working on the codebase.
 
+> **Read `docs/` first** — it contains per-file guides for every project (start with `docs/README.md`). After making changes to any project, update the corresponding doc in `docs/` so it stays accurate.
+
 ## Architecture
 
 ```
