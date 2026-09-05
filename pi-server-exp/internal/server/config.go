@@ -36,6 +36,7 @@ type Config struct {
 	RestartBackoff        time.Duration
 	EventHistoryMax       int
 	EventHistoryBytes     int
+	EventJournalSyncInterval time.Duration
 	MaxWatches            int
 	LogLevel              slog.Level
 	ConfigSources         map[string]string
@@ -105,6 +106,7 @@ func ConfigFromEnv() Config {
 		RestartBackoff:        envDuration("PI_SERVER_RESTART_BACKOFF", time.Second),
 		EventHistoryMax:       envInt("PI_SERVER_EVENT_HISTORY_MAX", 100),
 		EventHistoryBytes:     envInt("PI_SERVER_EVENT_HISTORY_BYTES", 2<<20),
+		EventJournalSyncInterval: envDuration("PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL", 0),
 		MaxWatches:            envInt("PI_SERVER_MAX_WATCHES", 2048),
 		LogLevel:              slog.LevelInfo,
 		ConfigSources:         defaultConfigSources(),
@@ -138,7 +140,7 @@ func markEnvironmentSources(sources map[string]string) {
 		"maxRunsPerSession": "PI_SERVER_MAX_RUNS_PER_SESSION", "maxRunsPerWorker": "PI_SERVER_MAX_RUNS_PER_WORKER",
 		"maxQueuedRuns": "PI_SERVER_MAX_QUEUED_RUNS", "distributedRunTimeout": "PI_SERVER_DISTRIBUTED_RUN_TIMEOUT",
 		"restartMax": "PI_SERVER_RESTART_MAX", "restartBackoff": "PI_SERVER_RESTART_BACKOFF",
-		"eventHistoryMax": "PI_SERVER_EVENT_HISTORY_MAX", "eventHistoryBytes": "PI_SERVER_EVENT_HISTORY_BYTES",
+		"eventHistoryMax": "PI_SERVER_EVENT_HISTORY_MAX", "eventHistoryBytes": "PI_SERVER_EVENT_HISTORY_BYTES", "eventJournalSyncInterval": "PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL",
 		"maxWatches": "PI_SERVER_MAX_WATCHES", "debug": "PI_SERVER_DEBUG",
 	}
 	for key, envKey := range keys {
