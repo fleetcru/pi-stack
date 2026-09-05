@@ -28,7 +28,12 @@ type persistedEventRecord struct {
 }
 
 // syncInterval controls fsync batching. Zero preserves strict per-event durability.
-func openEventJournal(dataDir, sessionID string, syncInterval time.Duration) (*eventJournal, []EventRecord, uint64, error) {
+// The optional form preserves compatibility with existing callers and tests.
+func openEventJournal(dataDir, sessionID string, syncIntervals ...time.Duration) (*eventJournal, []EventRecord, uint64, error) {
+	var syncInterval time.Duration
+	if len(syncIntervals) > 0 {
+		syncInterval = syncIntervals[0]
+	}
 	if syncInterval < 0 { syncInterval = 0 }
 	if dataDir == "" {
 		return nil, nil, 0, nil
