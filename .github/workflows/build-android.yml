@@ -17,8 +17,6 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
 
     steps:
       - name: Checkout
@@ -34,10 +32,26 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x pi-companion-exp/gradlew
 
-      - name: Decode keystore
-        if: ${{ env.HAS_KEYSTORE == 'true' }}
+      - name: Validate release signing configuration
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
+          set -euo pipefail
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::$name must be configured before publishing a release APK"
+              exit 1
+            fi
+          done
+
+      - name: Decode keystore
+        run: |
+          set -euo pipefail
           echo "$KEYSTORE_BASE64" | base64 -d > /tmp/release.jks
+          test -s /tmp/release.jks
           echo "KEYSTORE_PATH=/tmp/release.jks" >> "$GITHUB_ENV"
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -64,6 +78,11 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           VERSION_NAME: ${{ steps.version.outputs.name }}
           VERSION_CODE: ${{ steps.version.outputs.code }}
+
+      - name: Verify release APK signing
+        run: |
+          set -euo pipefail
+          "${ANDROID_HOME}/build-tools/$(ls "${ANDROID_HOME}/build-tools" | sort -V | tail -1)/apksigner" verify --verbose --print-certs pi-companion-exp/app/build/outputs/apk/release/*.apk
 
       - name: Verify MessagePack runtime classes
         run: |

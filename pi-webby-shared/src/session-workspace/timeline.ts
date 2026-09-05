@@ -84,19 +84,28 @@ export class IncrementalTimeline {
   private items: TimelineItem[] = []
   private toolIndexes = new Map<string, number>()
   private activeAssistant: TextItem | undefined
+  private activeAssistantIndex = -1
   private runs = new Map<string, TimelineRun>()
   private processed = 0
   private lastEventId: unknown
   private lastEvent: Record<string, unknown> | undefined
 
   update(events: Array<Record<string, unknown>>, maxItems = adaptiveTimelineLimit()): TimelineItem[] {
+    // Appends use the cursor directly. For a bounded replay window, verify the
+    // previous tail first and only search when the window has shifted.
     let start = this.processed
     if (this.lastEvent) {
-      const previous = this.lastEventId === undefined
-        ? events.findIndex((event) => event === this.lastEvent)
-        : events.findIndex((event) => event._daemonEventId === this.lastEventId)
-      if (previous >= 0) start = previous + 1
-      else { this.reset(); start = 0 }
+      const expected = events[this.processed - 1]
+      const expectedMatches = this.lastEventId === undefined
+        ? expected === this.lastEvent
+        : expected?._daemonEventId === this.lastEventId
+      if (!expectedMatches) {
+        const previous = this.lastEventId === undefined
+          ? events.findIndex((event) => event === this.lastEvent)
+          : events.findIndex((event) => event._daemonEventId === this.lastEventId)
+        if (previous >= 0) start = previous + 1
+        else { this.reset(); start = 0 }
+      }
     } else if (events.length < this.processed) { this.reset(); start = 0 }
     for (let index = start; index < events.length; index += 1) this.apply(events[index], index)
     this.processed = events.length
@@ -109,6 +118,7 @@ export class IncrementalTimeline {
         retained.unshift(this.activeAssistant)
       }
       this.items = retained
+      this.activeAssistantIndex = this.activeAssistant ? this.items.indexOf(this.activeAssistant) : -1
       this.reindexTools()
       this.pruneRuns()
     }
@@ -122,6 +132,7 @@ export class IncrementalTimeline {
     this.toolIndexes.clear()
     this.runs.clear()
     this.activeAssistant = undefined
+    this.activeAssistantIndex = -1
     this.processed = 0
     this.lastEventId = undefined
     this.lastEvent = undefined
@@ -145,6 +156,7 @@ export class IncrementalTimeline {
       } else if (message?.role === "assistant") {
         this.activeAssistant = { id, kind: "assistant", text: "", streaming: true, taskId, runId }
         this.items.push(this.activeAssistant)
+        this.activeAssistantIndex = this.items.length - 1
       }
     } else if (event.type === "message_update") {
       const delta = event.assistantMessageEvent as { type?: string; delta?: string } | undefined
@@ -152,21 +164,21 @@ export class IncrementalTimeline {
         if (!this.activeAssistant) {
           this.activeAssistant = { id: `assistant-${event._daemonEventId ?? index}`, kind: "assistant", text: "", streaming: true, taskId, runId }
           this.items.push(this.activeAssistant)
+          this.activeAssistantIndex = this.items.length - 1
         } else {
           // Replace the object (new reference) so memoized row components
           // re-render on each delta instead of bailing out on the same ref.
           const updated = { ...this.activeAssistant, text: this.activeAssistant.text + (delta.delta ?? "") }
-          const at = this.items.indexOf(this.activeAssistant)
           this.activeAssistant = updated
-          if (at >= 0) this.items[at] = updated
+          if (this.activeAssistantIndex >= 0) this.items[this.activeAssistantIndex] = updated
         }
       }
     } else if (event.type === "message_end") {
       if (this.activeAssistant) {
-        const at = this.items.indexOf(this.activeAssistant)
         const settled = { ...this.activeAssistant, streaming: false }
+        if (this.activeAssistantIndex >= 0) this.items[this.activeAssistantIndex] = settled
         this.activeAssistant = undefined
-        if (at >= 0) this.items[at] = settled
+        this.activeAssistantIndex = -1
       }
     }
 

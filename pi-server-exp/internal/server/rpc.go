@@ -83,7 +83,7 @@ func NewPiProcess(spec SessionSpec, cfg Config, logger *slog.Logger) *PiProcess 
 	if eventMaxBytes <= 0 {
 		eventMaxBytes = 8 << 20
 	}
-	journal, restored, lastID, err := openEventJournal(cfg.DataDir, spec.ID)
+	journal, restored, lastID, err := openEventJournal(cfg.DataDir, spec.ID, cfg.EventJournalSyncInterval)
 	if err != nil {
 		logger.Warn("durable event journal unavailable", "session", spec.ID, "error", err)
 	}
@@ -277,6 +277,14 @@ func (p *PiProcess) SubscribeSince(since uint64) (<-chan RPCEvent, []EventRecord
 		}
 		p.mu.Unlock()
 	}
+}
+
+// EventMetrics reports bounded replay pressure without exposing event content.
+func (p *PiProcess) EventMetrics() (retained int, retainedBytes int, dropped uint64) {
+	p.mu.RLock()
+	retained, retainedBytes = len(p.events), p.eventBytes
+	p.mu.RUnlock()
+	return retained, retainedBytes, atomic.LoadUint64(&p.droppedEvents)
 }
 
 func (p *PiProcess) Subscribe() (<-chan RPCEvent, func()) {

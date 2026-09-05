@@ -2,8 +2,10 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,7 +21,7 @@ func (s *Server) relaySessionMessages(w http.ResponseWriter, r *http.Request, ex
 	}
 	limit := positiveQueryInt(r, "limit", defaultHistoryPageSize, maxHistoryPageSize)
 	offset := positiveQueryInt(r, "offset", 0, int(^uint(0)>>1))
-	messages, total, err := readRelayMessagesPage(external.SessionPath, offset, limit)
+	messages, total, err := s.readIndexedRelayMessagesPage(external.SessionPath, offset, limit)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
@@ -156,6 +158,121 @@ func readRelayMessagesPage(path string, offset, limit int) ([]any, int, error) {
 		page[i] = ring[(head+i)%keep]
 	}
 	return page, total, nil
+}
+
+// readIndexedRelayMessagesPage uses persisted byte offsets rather than
+// scanning the complete JSONL transcript for every paged request.
+func (s *Server) readIndexedRelayMessagesPage(path string, newestOffset, limit int) ([]any, int, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		messages, total, err := s.readIndexedRelayMessagesPageOnce(path, newestOffset, limit)
+		if err == nil {
+			return messages, total, nil
+		}
+		lastErr = err
+	}
+	return nil, 0, lastErr
+}
+
+func (s *Server) readIndexedRelayMessagesPageOnce(path string, newestOffset, limit int) ([]any, int, error) {
+	info, err := os.Stat(path)
+	if err != nil { return nil, 0, err }
+	index, err := s.relayHistoryIndexFor(path, info)
+	if err != nil { return nil, 0, err }
+	total := len(index.Offsets)
+	end := total - newestOffset
+	if end < 0 { end = 0 }
+	start := end - limit
+	if start < 0 { start = 0 }
+	file, err := os.Open(path)
+	if err != nil { return nil, 0, err }
+	defer file.Close()
+	messages := make([]any, 0, end-start)
+	for i := start; i < end; i++ {
+		if _, err := file.Seek(index.Offsets[i], io.SeekStart); err != nil { return nil, 0, err }
+		line, err := bufio.NewReader(file).ReadBytes('\n')
+		if err != nil && err != io.EOF { return nil, 0, err }
+		if message, ok := relayHistoryMessage(line); ok { messages = append(messages, message) }
+	}
+	finalInfo, err := os.Stat(path)
+	if err != nil { return nil, 0, err }
+	if finalInfo.Size() != index.Size || finalInfo.ModTime().UnixNano() != index.ModTime { return nil, 0, errHistoryChanged }
+	return messages, total, nil
+}
+
+func (s *Server) relayHistoryIndexFor(path string, info os.FileInfo) (historyIndex, error) {
+	cacheKey := "relay:" + path
+	s.historyMu.Lock()
+	cached, ok := s.historyIndexes[cacheKey]
+	s.historyMu.Unlock()
+	if ok && cached.Size == info.Size() && cached.ModTime == info.ModTime().UnixNano() { return cached, nil }
+	identity, err := historyFileIdentity(path)
+	if err != nil { return historyIndex{}, err }
+	var index historyIndex
+	if data, err := os.ReadFile(path + ".relayidx"); err == nil && json.Unmarshal(data, &index) == nil && index.Size == info.Size() && index.ModTime == info.ModTime().UnixNano() && index.Identity == identity {
+		s.historyMu.Lock()
+		s.historyIndexes[cacheKey] = index
+		s.historyMu.Unlock()
+		return index, nil
+	}
+	file, err := os.Open(path)
+	if err != nil { return historyIndex{}, err }
+	defer file.Close()
+	reader := bufio.NewReaderSize(file, 64<<10)
+	var position int64
+	for {
+		lineStart := position
+		prefix := make([]byte, 0, 4<<10)
+		recordRelevant := false
+		for {
+			fragment, readErr := reader.ReadSlice('\n')
+			position += int64(len(fragment))
+			if relayHistoryRecordIsRelevant(fragment) { recordRelevant = true }
+			if len(prefix) < cap(prefix) {
+				remaining := cap(prefix) - len(prefix)
+				if remaining > len(fragment) { remaining = len(fragment) }
+				prefix = append(prefix, fragment[:remaining]...)
+			}
+			if readErr == bufio.ErrBufferFull { continue }
+			if readErr != nil && readErr != io.EOF { return historyIndex{}, readErr }
+			if recordRelevant || relayHistoryRecordIsRelevant(prefix) { index.Offsets = append(index.Offsets, lineStart) }
+			if readErr == io.EOF { position = info.Size() }
+			break
+		}
+		if position >= info.Size() { break }
+	}
+	finalInfo, err := os.Stat(path)
+	if err != nil { return historyIndex{}, err }
+	if finalInfo.Size() != info.Size() || finalInfo.ModTime().UnixNano() != info.ModTime().UnixNano() { return historyIndex{}, errHistoryChanged }
+	index.Size, index.ModTime, index.Identity = info.Size(), info.ModTime().UnixNano(), identity
+	s.historyMu.Lock()
+	s.historyIndexes[cacheKey] = index
+	s.historyMu.Unlock()
+	if info.Size() >= persistedHistoryIndexThreshold {
+		if err := writeJSONAtomic(path+".relayidx", index); err != nil {
+			s.logger.Debug("relay history index sidecar unavailable", "path", path, "error", err)
+		}
+	}
+	return index, nil
+}
+
+func relayHistoryRecordIsRelevant(prefix []byte) bool {
+	var header struct { Type string }
+	if json.Unmarshal(prefix, &header) == nil {
+		return header.Type == "message" || header.Type == "tool_use" || header.Type == "tool_result"
+	}
+	// A long JSONL record may exceed the bounded prefix. The type field is
+	// written first by Pi, so recognize it without requiring complete JSON.
+	compact := bytes.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\n', '\r', '\t':
+			return -1
+		}
+		return r
+	}, prefix)
+	return bytes.Contains(compact, []byte(`"type":"message"`)) ||
+		bytes.Contains(compact, []byte(`"type":"tool_use"`)) ||
+		bytes.Contains(compact, []byte(`"type":"tool_result"`))
 }
 
 func relayHistoryMessage(line []byte) (any, bool) {

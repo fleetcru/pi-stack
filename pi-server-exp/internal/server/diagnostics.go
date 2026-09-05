@@ -4,12 +4,24 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
 func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 	var journalBytes int64
 	var journalFiles int
+	var retainedEvents int
+	var retainedEventBytes int
+	var droppedEvents uint64
+	for _, id := range s.sessions.List() {
+		if process, ok := s.sessions.Get(id); ok {
+			retained, bytes, dropped := process.EventMetrics()
+			retainedEvents += retained
+			retainedEventBytes += bytes
+			droppedEvents += dropped
+		}
+	}
 	entries, err := os.ReadDir(filepath.Join(s.cfg.DataDir, "events"))
 	if err == nil {
 		for _, entry := range entries {
@@ -22,6 +34,8 @@ func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"apiVersion": s.apiVersion(),
 		"startedAt":   s.startedAt,
@@ -42,6 +56,17 @@ func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 			"files": journalFiles,
 			"bytes": journalBytes,
 		},
+		"eventReplay": map[string]any{
+			"retained":      retainedEvents,
+			"retainedBytes": retainedEventBytes,
+			"dropped":       droppedEvents,
+		},
+		"runtime": map[string]any{
+			"goroutines": runtime.NumGoroutine(),
+			"heapAlloc":  memory.HeapAlloc,
+			"heapSys":    memory.HeapSys,
+		},
+		"requests": s.metrics.snapshot(),
 	})
 }
 
