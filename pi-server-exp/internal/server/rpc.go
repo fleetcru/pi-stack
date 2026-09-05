@@ -83,7 +83,7 @@ func NewPiProcess(spec SessionSpec, cfg Config, logger *slog.Logger) *PiProcess 
 	if eventMaxBytes <= 0 {
 		eventMaxBytes = 8 << 20
 	}
-	journal, restored, lastID, err := openEventJournal(cfg.DataDir, spec.ID)
+	journal, restored, lastID, err := openEventJournal(cfg.DataDir, spec.ID, cfg.EventJournalSyncInterval)
 	if err != nil {
 		logger.Warn("durable event journal unavailable", "session", spec.ID, "error", err)
 	}
