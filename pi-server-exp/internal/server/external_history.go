@@ -223,9 +223,11 @@ func (s *Server) relayHistoryIndexFor(path string, info os.FileInfo) (historyInd
 	for {
 		lineStart := position
 		prefix := make([]byte, 0, 4<<10)
+		recordRelevant := false
 		for {
 			fragment, readErr := reader.ReadSlice('\n')
 			position += int64(len(fragment))
+			if relayHistoryRecordIsRelevant(fragment) { recordRelevant = true }
 			if len(prefix) < cap(prefix) {
 				remaining := cap(prefix) - len(prefix)
 				if remaining > len(fragment) { remaining = len(fragment) }
@@ -233,7 +235,7 @@ func (s *Server) relayHistoryIndexFor(path string, info os.FileInfo) (historyInd
 			}
 			if readErr == bufio.ErrBufferFull { continue }
 			if readErr != nil && readErr != io.EOF { return historyIndex{}, readErr }
-			if relayHistoryRecordIsRelevant(prefix) { index.Offsets = append(index.Offsets, lineStart) }
+			if recordRelevant || relayHistoryRecordIsRelevant(prefix) { index.Offsets = append(index.Offsets, lineStart) }
 			if readErr == io.EOF { position = info.Size() }
 			break
 		}
