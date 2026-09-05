@@ -42,6 +42,7 @@ A multi-device coding agent ecosystem for [Pi](https://github.com/earendil-works
 - **Bounded task admission** — Global, per-session, and per-worker run limits with a bounded queue and scheduler-pressure visibility.
 - **Durable distributed runs** — Remote and relay reservations survive hub restarts and reconcile from pushed lifecycle events.
 - **Indexed history paging** — Large JSONL transcripts use validated sidecar indexes and direct message-boundary seeks.
+- **Operational metrics** — Authenticated Prometheus-compatible metrics at `/metrics` expose request, scheduler, replay, and runtime signals.
 - **Fast mobile switching** — Companion caches five recent timelines, prefetches likely sessions, and restores cached content while refreshing in the background.
 
 ## Releases
@@ -206,6 +207,8 @@ The server exposes an OpenAPI spec at `GET /openapi.json`. Key endpoints:
 | `POST` | `/v1/sessions/{id}/prompt` | Send an admitted local, remote, or relay prompt |
 | `GET` | `/v1/sessions/{id}/messages` | Page persisted history from newest to oldest |
 | `GET` | `/v1/scheduler` | Inspect active runs, queue depth, limits, and worker pressure |
+| `GET` | `/metrics` | Prometheus-compatible request, runtime, and scheduler metrics |
+| `GET` | `/v1/diagnostics` | Authenticated JSON operational diagnostics |
 | `GET` | `/v1/sessions/{id}/ws` | WebSocket for live events |
 | `POST` | `/v1/ws-tickets` | Issue a single-use WS auth ticket |
 | `GET` | `/v1/workers` | List registered workers |
