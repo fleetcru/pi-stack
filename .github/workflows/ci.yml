@@ -69,6 +69,13 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Enforce Webby bundle budget
+        run: |
+          set -euo pipefail
+          bytes=$(du -sb dist | cut -f1)
+          echo "Webby dist bytes: $bytes"
+          test "$bytes" -le 10000000
+
   desktop:
     name: Desktop — typecheck, lint, build, Rust check
     defaults:
@@ -111,6 +118,13 @@ jobs:
 
       - name: Build frontend
         run: pnpm build
+
+      - name: Enforce Desktop frontend bundle budget
+        run: |
+          set -euo pipefail
+          bytes=$(du -sb dist | cut -f1)
+          echo "Desktop dist bytes: $bytes"
+          test "$bytes" -le 10000000
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
