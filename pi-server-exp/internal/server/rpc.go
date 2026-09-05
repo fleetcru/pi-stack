@@ -279,6 +279,14 @@ func (p *PiProcess) SubscribeSince(since uint64) (<-chan RPCEvent, []EventRecord
 	}
 }
 
+// EventMetrics reports bounded replay pressure without exposing event content.
+func (p *PiProcess) EventMetrics() (retained int, retainedBytes int, dropped uint64) {
+	p.mu.RLock()
+	retained, retainedBytes = len(p.events), p.eventBytes
+	p.mu.RUnlock()
+	return retained, retainedBytes, atomic.LoadUint64(&p.droppedEvents)
+}
+
 func (p *PiProcess) Subscribe() (<-chan RPCEvent, func()) {
 	ch, _, close := p.SubscribeSince(0)
 	return ch, close
