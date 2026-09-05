@@ -13,11 +13,13 @@ func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 	var retainedEvents int
 	var retainedEventBytes int
 	var droppedEvents uint64
-	for _, process := range s.sessions.List() {
-		retained, bytes, dropped := process.EventMetrics()
-		retainedEvents += retained
-		retainedEventBytes += bytes
-		droppedEvents += dropped
+	for _, id := range s.sessions.List() {
+		if process, ok := s.sessions.Get(id); ok {
+			retained, bytes, dropped := process.EventMetrics()
+			retainedEvents += retained
+			retainedEventBytes += bytes
+			droppedEvents += dropped
+		}
 	}
 	entries, err := os.ReadDir(filepath.Join(s.cfg.DataDir, "events"))
 	if err == nil {
