@@ -103,7 +103,19 @@ else { Write-Host "  Auth:      none (Tailscale/trusted LAN)" -ForegroundColor Y
 Write-Host ""
 
 if ($OpenAdmin) {
-  Start-Process "http://127.0.0.1:$Port/admin/"
+  Start-Job -ArgumentList "http://127.0.0.1:$Port", $Port -ScriptBlock {
+    param($baseUrl, $serverPort)
+    for ($attempt = 0; $attempt -lt 60; $attempt++) {
+      try {
+        $health = Invoke-WebRequest -Uri "$baseUrl/healthz" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+        if ($health.StatusCode -eq 200) {
+          Start-Process "$baseUrl/admin/"
+          return
+        }
+      } catch { }
+      Start-Sleep -Milliseconds 500
+    }
+  } | Out-Null
   Write-Host "  Opened Pi Server Admin. Create a trusted device there, then scan its QR from Companion." -ForegroundColor Green
 }
 
