@@ -255,7 +255,9 @@ func (s *Server) sessionGet(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{"command": "get_available_models", "success": true, "data": map[string]any{"models": models}})
 		case "stats":
 			writeJSON(w, http.StatusOK, map[string]any{"command": "get_session_stats", "success": true, "data": relaySessionStats(external)})
-		case "commands", "entries", "tree", "last-assistant-text", "fork-messages":
+		case "commands":
+			writeJSON(w, http.StatusOK, map[string]any{"command": "get_commands", "success": true, "data": map[string]any{"commands": external.AvailableCommands}})
+		case "entries", "tree", "last-assistant-text", "fork-messages":
 			writeJSON(w, http.StatusOK, map[string]any{"command": action, "success": true, "data": map[string]any{}})
 		default:
 			writeErrorText(w, http.StatusBadRequest, "external session resource is unavailable")

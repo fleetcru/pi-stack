@@ -281,6 +281,8 @@ Companion/Webby
 
 External Pi TUI sessions bridge into pi-server via the `external-session-bridge.ts` extension.
 
+When changing `pi-server-exp/extensions/external-session-bridge.ts`, copy the updated file to `C:\Users\basin\.pi\agent\extensions\external-session-bridge.ts` for the active local Pi installation. Relay slash commands must be routed through `AgentSession.prompt()` with command expansion enabled; do not use `sendUserMessage()` for them because that API disables slash-command handling and can send the command text to the LLM.
+
 - **Single process ownership:** Never run an RPC Pi process and a bridged TUI against the same JSONL file. Inventory and Machine Session Discovery must prefer a live relay, because separate Pi processes do not synchronize live state and can corrupt history.
 - **Lifecycle forwarding:** The bridge forwards `agent_start`, `agent_end`, and `agent_settled`; relay admission is released only on `agent_settled`, not the earlier `agent_end`.
 - **Delivery confirmation:** A normal idle relay prompt is acknowledged only after its user `message_start` appears. Pi's extension `sendUserMessage()` is fire-and-forget and does not synchronously throw on an idle/working race.

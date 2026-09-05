@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
-import { ArrowUp, Bot, Brain, ChevronRight, CircleCheck, CircleX, Clock3, Copy, CopyCheck, ImagePlus, LoaderCircle, Sparkles, Square, Terminal, X } from "lucide-react"
+import { ArrowUp, Bot, Brain, ChevronRight, CircleCheck, CircleX, Clock3, Copy, CopyCheck, ImagePlus, LoaderCircle, Sparkles, Square, Terminal, X, Zap } from "lucide-react"
 import { useImageAttachments } from "@/hooks/use-image-attachments"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -31,6 +31,8 @@ import {
   extractToolSummary,
   formatDuration,
   toolDuration,
+  matchingSlashCommands,
+  parseSlashCommands,
 } from "@pi-stack/webby-shared/session-workspace"
 import { Bubble, BubbleContent, BubbleGroup } from "@/components/ui/bubble"
 import {
@@ -70,6 +72,8 @@ import {
 
 export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const [prompt, setPrompt] = useState("")
+  const [slashIndex, setSlashIndex] = useState(0)
+  const [slashOpen, setSlashOpen] = useState(false)
   const [deliveryNotice, setDeliveryNotice] = useState<string | undefined>()
   const [deliveryCommandId, setDeliveryCommandId] = useState<string | undefined>()
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -85,6 +89,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const gitStatusQuery = useSessionGitStatus(sessionId)
   const schedulerQuery = useSchedulerStatus()
   const modelsQuery = useSessionData(sessionId, "models", { refetchInterval: 5_000 })
+  const commandsQuery = useSessionData(sessionId, "commands", { refetchInterval: 30_000 })
   const stateQuery = useSessionData(sessionId, "state", {
     // Poll only when the WebSocket is not open — the stream provides live state.
     refetchInterval: socket.status === "open" ? false : 5_000,
@@ -127,6 +132,9 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
       .flatMap((page) => buildHistory(page)) ?? []
   , [historyQuery.data])
   const timeline = useMemo(() => mergeTimeline(historyItems, liveTimelineItems), [historyItems, liveTimelineItems])
+  const slashCommands = useMemo(() => parseSlashCommands(commandsQuery.data), [commandsQuery.data])
+  const slashMatches = useMemo(() => matchingSlashCommands(prompt, slashCommands), [prompt, slashCommands])
+  const slashPaletteOpen = slashOpen && slashMatches.length > 0 && !prompt.trim().includes(" ")
 
   const deliveryStage = useMemo(() => {
     if (!deliveryCommandId) return deliveryNotice
@@ -378,7 +386,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
         <div className="px-5 pt-2 pb-5">
           <form
-            className="mx-auto w-full max-w-3xl"
+            className="relative mx-auto w-full max-w-3xl"
             onSubmit={(event) => {
               event.preventDefault()
               void sendPrompt()
@@ -390,6 +398,17 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
               onDragOver={imageActions.handleDragOver}
               onDrop={imageActions.handleDrop}
             >
+              {slashPaletteOpen && (
+                <div role="listbox" aria-label="Slash commands" className="absolute bottom-full left-0 z-20 mb-2 w-[min(34rem,calc(100vw-2.5rem))] overflow-hidden rounded-xl border border-border/70 bg-popover p-1.5 text-popover-foreground shadow-xl">
+                  <div className="max-h-[min(28rem,55vh)] overflow-y-auto">{slashMatches.map((command, index) => (
+                    <button key={command.name} type="button" role="option" aria-selected={index === slashIndex} className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left ${index === slashIndex ? "bg-accent text-accent-foreground" : "hover:bg-accent/60"}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { setPrompt(`${command.name} `); setSlashOpen(false) }}>
+                      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"><Zap className="size-3.5" /></span>
+                      <span className="min-w-0 flex-1"><code className="whitespace-nowrap text-sm font-medium">{command.name}</code><span className="ml-3 truncate text-xs text-muted-foreground">{command.description}</span></span>
+                    </button>
+                  ))}</div>
+                  <div className="mt-1 border-t px-2.5 pt-1.5 text-[10px] text-muted-foreground">↑↓ navigate&nbsp; · &nbsp;Tab insert&nbsp; · &nbsp;Enter send</div>
+                </div>
+              )}
               {pendingImages.length > 0 && (
                 <div className="flex flex-wrap gap-2 px-4 pt-3 pb-1">
                   {pendingImages.map((img) => (
@@ -420,8 +439,19 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
               <InputGroupTextarea
                 className="max-h-32 min-h-14 px-4 pt-3 text-sm leading-6 select-text"
                 value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
+                onChange={(event) => { const value = event.target.value; setPrompt(value); setSlashIndex(0); setSlashOpen(value.trim().startsWith("/") && !value.trim().includes(" ")) }}
                 onKeyDown={(event) => {
+                  if (slashMatches.length > 0 && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+                    event.preventDefault()
+                    setSlashIndex((current) => (current + (event.key === "ArrowDown" ? 1 : slashMatches.length - 1)) % slashMatches.length)
+                    return
+                  }
+                  if (slashMatches.length > 0 && event.key === "Tab") {
+                    event.preventDefault()
+                    setPrompt(`${slashMatches[slashIndex].name} `)
+                    setSlashOpen(false)
+                    return
+                  }
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault()
                     void sendPrompt()

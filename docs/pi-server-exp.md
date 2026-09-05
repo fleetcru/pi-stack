@@ -36,7 +36,7 @@ Go 1.23 HTTP/WebSocket daemon. Spawns Pi CLI processes, speaks strict LF-delimit
 - `session_inventory.go` — the unified session list. Merges local sessions, remote worker sessions, machine-discovered sessions, and live relay sessions into one `SessionSummary` shape. Relay sessions win over local processes for the same JSONL file (two Pi processes on one file corrupt history).
 - `session_inventory` helpers in `machine_sessions.go` — scans `~/.pi/agent/sessions/*.jsonl` to discover Pi sessions the server didn't spawn itself, with an mtime cache.
 - `global_sessions.go` — worker-scoped session addressing (`workerID:sessionID`) so a client can attach to a session on any worker with one ID.
-- `session_history.go` — paginated reading of session JSONL history with an in-memory index cache; powers the history replay clients show on open.
+- `session_history.go` — paginated reading of session JSONL history with an in-memory index cache; powers the history replay clients show on open. Managed sessions merge all transcript files in their session directory so restarts do not hide earlier messages.
 - `history_ownership.go` — reserves which server component owns a session's JSONL file so a bridged relay and a managed process never both own it. Lock files in `<DataDir>/history-locks/` record the owner PID; when the lock already exists and its PID is dead (crashed server), the lock is reclaimed automatically instead of failing with "already owned by another server". PID liveness is platform-specific (`pid_windows.go` uses `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`, `pid_unix.go` uses `Signal(0)`).
 - `session_state_cache.go` — short-TTL cache of Pi process state queries to avoid hammering idle processes.
 - `session_bridge.go` — maps managed sessions onto the native Pi session directory so inventory discovery can find them.
@@ -82,6 +82,7 @@ The `external-session-bridge.ts` extension in a user's Pi TUI connects back to t
 - `external_command_store.go` — atomic (write-temp + rename) persistence of queued relay commands so they survive a server crash.
 - `external_ws.go` — the inbound WebSocket a bridged TUI connects to; handles receipt acks and command delivery.
 - `external_relay_ws.go` — the viewer-facing WebSocket: clients subscribe to a relay session's event stream and send prompts, which are queued as commands and only acknowledged after the relay's `message_start` proves delivery.
+- Slash-command relay messages are routed through `AgentSession.prompt` with command expansion enabled, so extension, skill, and prompt-template commands execute locally instead of reaching the LLM.
 - `external_history.go` — reads a relayed session's JSONL directly to serve history pages and stats for relay sessions.
 
 ## Files and git
@@ -99,3 +100,8 @@ The `external-session-bridge.ts` extension in a user's Pi TUI connects back to t
 - `diagnostics.go` — aggregated health snapshot (sessions, workers, uptime, versions).
 - `command_receipts.go` — persisted receipts for delivered commands so clients can reconcile "did my prompt actually arrive" after reconnects.
 - `scheduler_handler.go` — scheduler introspection endpoint.
+
+WebSocket events are deep-cloned before they enter replay/subscriber buffers.
+This prevents nested Pi message content from being mutated while a client is
+encoding it, and the JSON WebSocket writer converts unexpected encoder panics
+into connection errors instead of crashing the server.

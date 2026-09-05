@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/gorilla/websocket"
@@ -22,10 +23,15 @@ type EventCodec interface {
 // JSONCodec uses encoding/json via gorilla/websocket's WriteJSON/ReadJSON.
 type JSONCodec struct{}
 
-func (JSONCodec) Name() string                        { return "json" }
-func (JSONCodec) Marshal(v any) ([]byte, error)        { return nil, nil } // unused — WriteWebSocket handles it
-func (JSONCodec) Unmarshal(data []byte, v any) error   { return nil }      // unused
-func (JSONCodec) WriteWebSocket(conn *websocket.Conn, v any) error {
+func (JSONCodec) Name() string                       { return "json" }
+func (JSONCodec) Marshal(v any) ([]byte, error)      { return nil, nil } // unused — WriteWebSocket handles it
+func (JSONCodec) Unmarshal(data []byte, v any) error { return nil }      // unused
+func (JSONCodec) WriteWebSocket(conn *websocket.Conn, v any) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("websocket JSON encoding failed: %v", recovered)
+		}
+	}()
 	return conn.WriteJSON(v)
 }
 func (JSONCodec) ReadWebSocket(conn *websocket.Conn, v any) error {
@@ -35,8 +41,8 @@ func (JSONCodec) ReadWebSocket(conn *websocket.Conn, v any) error {
 // MsgPackCodec uses MessagePack for binary encoding.
 type MsgPackCodec struct{}
 
-func (MsgPackCodec) Name() string                      { return "msgpack" }
-func (MsgPackCodec) Marshal(v any) ([]byte, error)     { return msgpack.Marshal(v) }
+func (MsgPackCodec) Name() string                       { return "msgpack" }
+func (MsgPackCodec) Marshal(v any) ([]byte, error)      { return msgpack.Marshal(v) }
 func (MsgPackCodec) Unmarshal(data []byte, v any) error { return msgpack.Unmarshal(data, v) }
 func (MsgPackCodec) WriteWebSocket(conn *websocket.Conn, v any) error {
 	data, err := msgpack.Marshal(v)

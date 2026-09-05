@@ -109,6 +109,13 @@ func (s *Server) gitHandler(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("format") == "json" {
 			status, err := s.gitStatus(r.Context(), spec.CWD)
 			if err != nil {
+				// A session directory is not required to be a Git repository.
+				// Return an empty successful status so clients do not surface an
+				// expected condition as a failed XHR.
+				if errorsIsNotRepo(err) {
+					writeJSON(w, http.StatusOK, map[string]any{"cwd": spec.CWD, "status": GitStatus{}})
+					return
+				}
 				writeGitError(w, err)
 				return
 			}

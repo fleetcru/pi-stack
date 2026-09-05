@@ -1,5 +1,6 @@
 export * from "./types"
 export * from "./constants"
+export * from "./slash-commands"
 export {
   contentText,
   contentImages,

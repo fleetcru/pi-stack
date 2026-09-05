@@ -49,7 +49,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   let pollRunning = false;
   let flushRunning = false;
   let ui: { setStatus: (key: string, text?: string) => void; notify: (message: string, level?: "info" | "warning" | "error") => void } | undefined;
-  let sessionCtx: { model?: unknown; abort: () => void; isIdle?: () => boolean } | undefined;
+  let sessionCtx: { model?: unknown; abort: () => void; isIdle?: () => boolean; session?: { prompt: (text: string, options?: { streamingBehavior?: "steer" | "followUp"; expandPromptTemplates?: boolean; source?: string }) => Promise<void> } } | undefined;
   let relaySocket: WebSocket | undefined;
   let relayReconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let relayConnectInFlight = false;
@@ -483,6 +483,22 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       const requestedDelivery = command.delivery ?? "prompt";
       await cacheRelayImages(command.images);
       const content = userMessageContent(command.message, command.images);
+      const isSlashCommand = typeof command.message === "string" && /^\/\S+/.test(command.message.trim());
+      if (isSlashCommand && sessionCtx?.session) {
+        // sendUserMessage deliberately disables command handling. Use the
+        // session prompt API so slash commands execute locally and never
+        // become an LLM prompt.
+        await sessionCtx.session.prompt(command.message!.trim(), {
+          expandPromptTemplates: true,
+          source: "extension",
+          ...((sessionCtx.isIdle?.() ?? true) ? {} : { streamingBehavior: requestedDelivery === "followUp" ? "followUp" : "steer" }),
+        });
+        promptDeliveryAttempts.delete(command.id);
+        emit({ type: "bridge_receipt", commandId: command.id, status: "delivered" });
+        handledCommands.add(command.id);
+        await acknowledge(command.id);
+        return;
+      }
       const attempt = (promptDeliveryAttempts.get(command.id) ?? 0) + 1;
       promptDeliveryAttempts.set(command.id, attempt);
       const idle = sessionCtx?.isIdle?.() ?? false;
@@ -598,6 +614,17 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
         // any events that were dropped during the disconnect window.
         if (sessionCtx?.model) emit({ type: "model_select", model: sessionCtx.model });
         emit({ type: "thinking_level_select", level: pi.getThinkingLevel() });
+        // Publish the live command catalog so remote clients can offer the
+        // same extension, prompt-template, and skill commands as the TUI.
+        try {
+          const session: any = sessionCtx?.session;
+          const commands = [
+            ...(session?.extensionRunner?.getRegisteredCommands?.() ?? []).map((c: any) => ({ name: c.invocationName, description: c.description, source: "extension" })),
+            ...(session?.promptTemplates ?? []).map((c: any) => ({ name: c.name, description: c.description, source: "prompt" })),
+            ...(session?.resourceLoader?.getSkills?.()?.skills ?? []).map((s: any) => ({ name: `skill:${s.name}`, description: s.description, source: "skill" })),
+          ].filter((c: any) => typeof c.name === "string" && c.name.length > 0);
+          emit({ type: "available_commands", commands });
+        } catch { /* command discovery is best-effort during reconnect */ }
         // Re-emit available models on reconnect.
         try {
           let models: any[] = [];

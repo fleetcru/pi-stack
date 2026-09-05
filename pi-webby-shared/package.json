@@ -12,7 +12,8 @@
     "./session-workspace": "./src/session-workspace/index.ts",
     "./session-workspace/types": "./src/session-workspace/types.ts",
     "./session-workspace/constants": "./src/session-workspace/constants.ts",
-    "./session-workspace/timeline": "./src/session-workspace/timeline.ts"
+    "./session-workspace/timeline": "./src/session-workspace/timeline.ts",
+    "./session-workspace/slash-commands": "./src/session-workspace/slash-commands.ts"
   },
   "peerDependencies": {
     "@tanstack/react-query": "^5.0.0",

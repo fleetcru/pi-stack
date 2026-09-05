@@ -771,11 +771,37 @@ func (p *PiProcess) Events(limit int, since uint64) []EventRecord {
 }
 
 func cloneEvent(event RPCEvent) RPCEvent {
-	out := make(RPCEvent, len(event))
-	for k, v := range event {
-		out[k] = v
+	return cloneJSONValue(event).(RPCEvent)
+}
+
+// cloneJSONValue makes an ownership-safe copy of values carried by Pi's JSON
+// protocol. Nested content arrays and objects may otherwise be mutated while
+// a WebSocket writer is encoding an event.
+func cloneJSONValue(value any) any {
+	switch value := value.(type) {
+	case RPCEvent:
+		out := make(RPCEvent, len(value))
+		for key, item := range value {
+			out[key] = cloneJSONValue(item)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(value))
+		for key, item := range value {
+			out[key] = cloneJSONValue(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(value))
+		for i, item := range value {
+			out[i] = cloneJSONValue(item)
+		}
+		return out
+	case []string:
+		return append([]string(nil), value...)
+	default:
+		return value
 	}
-	return out
 }
 func extensionUIRequiresResponse(event RPCEvent) bool {
 	method, _ := event["method"].(string)

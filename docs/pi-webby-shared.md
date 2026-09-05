@@ -1,5 +1,7 @@
 # pi-webby-shared — file guide
 
+The shared session-workspace package parses the authoritative slash-command list returned by each session's `get_commands` resource for the Webby and Desktop prompt bars. Commands not returned by the session are not fabricated; arbitrary custom command text remains pass-through prompt text. Expanded skill payloads remain hidden from displayed user bubbles, and assistant provider errors render as system timeline items.
+
 TypeScript library (`@pi-stack/webby-shared`) containing everything the browser and desktop clients share: the API client, the WebSocket wrapper, React Query hooks, generated types, the Zustand store factory, and session-workspace timeline logic. `dist/` is build output; `src/` is the source of truth.
 
 ## `src/api/`

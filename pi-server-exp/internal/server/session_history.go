@@ -41,11 +41,33 @@ var errHistoryChanged = errors.New("history changed while indexing")
 func (s *Server) sessionMessages(w http.ResponseWriter, r *http.Request, p *PiProcess) {
 	limit := positiveQueryInt(r, "limit", defaultHistoryPageSize, maxHistoryPageSize)
 	offset := positiveQueryInt(r, "offset", 0, int(^uint(0)>>1))
+	if p.spec.ManagedSessionDir != "" {
+		if messages, total, err := readManagedHistoryPage(p.spec.ManagedSessionDir, limit, offset); err == nil {
+			writeJSON(w, http.StatusOK, RPCEvent{"command": "get_messages", "data": map[string]any{
+				"messages": messages,
+				"history": map[string]any{"total": total, "offset": offset, "limit": limit, "hasOlder": offset+len(messages) < total, "nextOffset": offset + len(messages)},
+			}})
+			return
+		}
+	}
 	resp := RPCEvent{"command": "get_messages"}
-	if p.spec.SessionPath != "" {
-		if messages, total, err := s.readIndexedHistoryPage(p.spec.SessionPath, limit, offset); err == nil {
+	historyPath := p.spec.SessionPath
+	if historyPath == "" && p.spec.ManagedSessionDir != "" {
+		// Managed RPC sessions keep their JSONL transcript inside the managed
+		// session directory; SessionPath is only populated for attached sessions.
+		if entries, err := os.ReadDir(p.spec.ManagedSessionDir); err == nil {
+			for i := len(entries) - 1; i >= 0; i-- {
+				if !entries[i].IsDir() && filepath.Ext(entries[i].Name()) == ".jsonl" {
+					historyPath = filepath.Join(p.spec.ManagedSessionDir, entries[i].Name())
+					break
+				}
+			}
+		}
+	}
+	if historyPath != "" {
+		if messages, total, err := s.readIndexedHistoryPage(historyPath, limit, offset); err == nil {
 			s.historyMu.Lock()
-			s.historyIndexPaths[p.id] = p.spec.SessionPath
+			s.historyIndexPaths[p.id] = historyPath
 			s.historyMu.Unlock()
 			writeJSON(w, http.StatusOK, RPCEvent{"command": "get_messages", "data": map[string]any{
 				"messages": messages,
@@ -112,6 +134,34 @@ func (s *Server) sessionMessages(w http.ResponseWriter, r *http.Request, p *PiPr
 		"hasOlder": start > 0, "nextOffset": offset + len(page),
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// readManagedHistoryPage merges all JSONL transcripts because Pi creates a
+// new transcript file when a managed process restarts.
+func readManagedHistoryPage(dir string, limit, offset int) ([]any, int, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil { return nil, 0, err }
+	var messages []any
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" { continue }
+		file, openErr := os.Open(filepath.Join(dir, entry.Name()))
+		if openErr != nil { return nil, 0, openErr }
+		scanner := bufio.NewScanner(file)
+		scanner.Buffer(make([]byte, 64<<10), 8<<20)
+		for scanner.Scan() {
+			var record struct { Type string `json:"type"`; Message any `json:"message"` }
+			if json.Unmarshal(scanner.Bytes(), &record) == nil && record.Type == "message" && record.Message != nil { messages = append(messages, record.Message) }
+		}
+		scanErr := scanner.Err()
+		_ = file.Close()
+		if scanErr != nil { return nil, 0, scanErr }
+	}
+	total := len(messages)
+	end := total - offset
+	if end < 0 { end = 0 }
+	start := end - limit
+	if start < 0 { start = 0 }
+	return messages[start:end], total, nil
 }
 
 func (s *Server) readIndexedHistoryPage(path string, limit, newestOffset int) ([]any, int, error) {

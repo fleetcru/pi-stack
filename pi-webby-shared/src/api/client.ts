@@ -359,7 +359,15 @@ export class PiServerClient {
   }
 
   getSessionGitStatus(id: string): Promise<GitStatusResponse> {
-    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/status?format=json`)
+    return this.request(`/v1/sessions/${encodeURIComponent(id)}/git/status?format=json`).catch((error: unknown) => {
+      // Git status is optional: sessions can live in ordinary directories.
+      // The server correctly returns 422 for those paths; keep that expected
+      // condition out of the client error surface.
+      if (error instanceof ApiError && error.status === 422) {
+        return { cwd: "", status: { branch: "", ahead: 0, behind: 0, staged: [], modified: [], untracked: [], conflicts: [], changes: [], hasUpstream: false, hasRemote: false, isDefault: false, isWorktree: false } }
+      }
+      throw error
+    })
   }
 
   getSessionGitFileDiff(id: string, path: string): Promise<GitFileDiffResponse> {

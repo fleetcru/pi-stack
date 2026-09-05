@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -58,6 +59,10 @@ fun MessageInputBar(
   onRemoveAttachment: ((Int) -> Unit)? = null,
 ) {
   var text by remember { mutableStateOf("") }
+  val slashCommands = remember(text) {
+    listOf("/help" to "Show Pi help", "/clear" to "Clear conversation", "/compact" to "Compact conversation", "/model" to "Change model", "/settings" to "Open settings", "/reload" to "Reload extensions", "/session" to "Show session information", "/tps" to "Show token and speed totals")
+      .filter { text.trim().split(Regex("\\s+"), limit = 2).firstOrNull()?.let { token -> token.startsWith("/") && it.first.startsWith(token, ignoreCase = true) } == true }
+  }
   val aborting = agentWorking && onAbort != null
   val canSend = (text.isNotBlank() || attachmentUris.isNotEmpty()) && !sending && !aborting
 
@@ -117,6 +122,17 @@ fun MessageInputBar(
           disabledIndicatorColor = Color.Transparent,
         ),
       )
+      if (slashCommands.isNotEmpty()) {
+        Column(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+          slashCommands.forEach { (command, description) ->
+            Row(modifier = Modifier.fillMaxWidth().clickable { text = "$command " }.padding(horizontal = 8.dp, vertical = 6.dp)) {
+              Text(command, style = MaterialTheme.typography.labelLarge)
+              Text("  $description", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+          }
+          Text("Tap a command to complete it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp))
+        }
+      }
 
       Row(
         modifier = Modifier.fillMaxWidth(),

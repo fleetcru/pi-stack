@@ -671,6 +671,7 @@ class SessionDetailViewModel(
       "message_end" -> {
         val message = raw["message"]?.jsonObject ?: return
         if (message.getString("role") != "assistant") return
+        message.getString("errorMessage")?.let { appendItem(SessionTimelineItem.System("Pi error: $it")) }
         _sendState.value = SendState.Idle
         _agentWorking.value = false
         turnCompleteGeneration++

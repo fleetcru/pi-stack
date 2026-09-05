@@ -151,13 +151,15 @@ export class IncrementalTimeline {
       const message = event.message as { role?: string; content?: unknown; images?: unknown; timestamp?: number } | undefined
       const id = `${message?.role ?? "message"}-${message?.timestamp ?? event._daemonEventId ?? index}`
       if (message?.role === "user") {
-        const text = contentText(message.content)
+        const text = displayUserText(contentText(message.content))
         const images = contentImages(message.content).concat(contentImages(message.images))
         if (text || images.length > 0) this.items.push({ id, kind: "user", text, images: images.length > 0 ? images : undefined, taskId, runId })
       } else if (message?.role === "assistant") {
+        const errorMessage = typeof (message as Record<string, unknown>).errorMessage === "string" ? (message as Record<string, string>).errorMessage : undefined
         this.activeAssistant = { id, kind: "assistant", text: "", streaming: true, taskId, runId }
         this.items.push(this.activeAssistant)
         this.activeAssistantIndex = this.items.length - 1
+        if (errorMessage) this.items.push({ id: `${id}-error`, kind: "system", text: `Pi error: ${errorMessage}`, taskId, runId })
       }
     } else if (event.type === "message_update") {
       const delta = event.assistantMessageEvent as { type?: string; delta?: string } | undefined
@@ -181,6 +183,8 @@ export class IncrementalTimeline {
         this.activeAssistant = undefined
         this.activeAssistantIndex = -1
       }
+      const endedMessage = event.message as Record<string, unknown> | undefined
+      if (typeof endedMessage?.errorMessage === "string") this.items.push({ id: `error-${event._daemonEventId ?? index}`, kind: "system", text: `Pi error: ${endedMessage.errorMessage}`, taskId, runId })
     }
 
     // File changes are presented in the Changed files dropdown in the
@@ -298,13 +302,14 @@ export function buildHistory(
       if (role === "assistant") rememberToolCalls(message.content, toolCalls)
       const timestamp = message.timestamp ?? index
       if (role === "user" || role === "assistant") {
-        const text = contentText(message.content)
+        const text = role === "user" ? displayUserText(contentText(message.content)) : contentText(message.content)
         const images = role === "user" ? contentImages(message.content).concat(contentImages(message.images)) : []
         const items: TimelineItem[] = text || images.length > 0
           ? [{ id: `${role}-${String(timestamp)}`, kind: role, text, images: images.length > 0 ? images : undefined }]
           : []
-        if (role === "assistant") {
-          items.push(...assistantToolCalls.map((call) => ({
+      if (role === "assistant") {
+        if (typeof message.errorMessage === "string") return [{ id: `error-${String(timestamp)}`, kind: "system", text: `Pi error: ${message.errorMessage}` }]
+        items.push(...assistantToolCalls.map((call) => ({
             id: `tool-${call.id}`,
             kind: "tool" as const,
             name: call.name,
@@ -417,6 +422,12 @@ export function groupModelsByProvider(models: AvailableModel[]) {
       model,
     ])
   return [...groups.entries()]
+}
+
+/** Hide Pi's expanded skill payload while keeping the user's request visible. */
+export function displayUserText(text: string): string {
+  const visible = text.replace(/^\s*<skill\b[^>]*>[\s\S]*?<\/skill>\s*/i, "").trim()
+  return visible || text
 }
 
 const PI_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "max", "xhigh", "ultra"] as const

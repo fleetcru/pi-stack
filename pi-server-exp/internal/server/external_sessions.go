@@ -42,6 +42,7 @@ type ExternalSession struct {
 	SessionPath      string
 	Model            map[string]any
 	AvailableModels  []any
+	AvailableCommands []any
 	ThinkingLevel    string
 	LastUsage        map[string]any
 	TotalCost        float64
@@ -261,6 +262,10 @@ func (r *ExternalRegistry) publish(id string, ev RPCEvent) bool {
 	case "available_models":
 		if models, ok := ev["models"].([]any); ok {
 			s.AvailableModels = models
+		}
+	case "available_commands":
+		if commands, ok := ev["commands"].([]any); ok {
+			s.AvailableCommands = commands
 		}
 	case "thinking_level_select":
 		if level, ok := ev["level"].(string); ok {
