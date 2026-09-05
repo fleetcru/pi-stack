@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -24,7 +25,8 @@ func TestReadRelayMessagesPageReturnsBoundedNewestPage(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	messages, total, err := readRelayMessagesPage(path, 0, 40)
+	server := &Server{historyIndexes: map[string]historyIndex{}, logger: slog.Default()}
+	messages, total, err := server.readIndexedRelayMessagesPage(path, 0, 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,5 +47,20 @@ func TestReadRelayMessagesPageReturnsBoundedNewestPage(t *testing.T) {
 	data := response["data"].(map[string]any)
 	if len(data["messages"].([]any)) != 40 {
 		t.Fatalf("response page was re-sliced: %#v", data["messages"])
+	}
+}
+
+func TestIndexedRelayHistoryIncludesToolRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	content := "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"one\"}}\n" +
+		"{\"type\":\"tool_use\",\"message\":{\"id\":\"call-1\",\"name\":\"bash\"}}\n" +
+		"{\"type\":\"tool_result\",\"message\":{\"toolCallId\":\"call-1\",\"content\":\"done\"}}\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil { t.Fatal(err) }
+	server := &Server{historyIndexes: map[string]historyIndex{}, logger: slog.Default()}
+	messages, total, err := server.readIndexedRelayMessagesPage(path, 0, 10)
+	if err != nil { t.Fatal(err) }
+	if total != 3 || len(messages) != 3 { t.Fatalf("total=%d messages=%#v", total, messages) }
+	if historyType, _ := messages[1].(map[string]any)["_historyType"].(string); historyType != "tool_use" {
+		t.Fatalf("tool history type not preserved: %#v", messages[1])
 	}
 }
