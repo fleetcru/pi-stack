@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 )
@@ -57,6 +58,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		scope = "local"
 	}
 	includeState := r.URL.Query().Get("include") == "state"
+	limit := positiveQueryInt(r, "limit", 0, 200)
 
 	if scope == "local" {
 		specs := s.sessions.ListSpecs()
@@ -65,6 +67,10 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 			if !s.hideDuplicateSessionSpec(spec, specs) {
 				filtered = append(filtered, spec)
 			}
+		}
+		if limit > 0 && len(filtered) > limit {
+			sort.SliceStable(filtered, func(i, j int) bool { return filtered[i].UpdatedAt.After(filtered[j].UpdatedAt) })
+			filtered = filtered[:limit]
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"sessions": filtered})
 		return
@@ -253,6 +259,11 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		if res.fail != nil {
 			failures = append(failures, *res.fail)
 		}
+	}
+
+	if limit > 0 && len(summaries) > limit {
+		sort.SliceStable(summaries, func(i, j int) bool { return summaries[i].UpdatedAt.After(summaries[j].UpdatedAt) })
+		summaries = summaries[:limit]
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
