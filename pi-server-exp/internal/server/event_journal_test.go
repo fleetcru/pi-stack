@@ -63,3 +63,14 @@ func TestEventJournalIgnoresTornFinalRecord(t *testing.T) {
 		t.Fatalf("expected valid prefix to survive, got %+v, last id %d", records, lastID)
 	}
 }
+
+func TestEventJournalBatchesSyncWhenConfigured(t *testing.T) {
+	journal, _, _, err := openEventJournal(t.TempDir(), "batched", time.Hour)
+	if err != nil { t.Fatal(err) }
+	defer journal.close()
+	if err := journal.append(EventRecord{ID: 1, Timestamp: time.Now().UTC(), Event: RPCEvent{"type": "one"}}); err != nil { t.Fatal(err) }
+	firstSync := journal.lastSync
+	if firstSync.IsZero() { t.Fatal("first append did not sync") }
+	if err := journal.append(EventRecord{ID: 2, Timestamp: time.Now().UTC(), Event: RPCEvent{"type": "two"}}); err != nil { t.Fatal(err) }
+	if !journal.lastSync.Equal(firstSync) { t.Fatal("second append unexpectedly forced another sync") }
+}
