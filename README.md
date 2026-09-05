@@ -163,6 +163,7 @@ All configuration is via environment variables (or CLI flags for the server):
 | `PI_SERVER_DISTRIBUTED_RUN_TIMEOUT` | `2h` | Fallback lease expiry when distributed lifecycle delivery is lost |
 | `PI_SERVER_ALLOW_INSECURE` | _(empty)_ | Set to `1` to allow non-loopback binding without auth (install scripts use `--insecure` / `-AllowInsecure` flag) |
 | `PI_SERVER_PI_BINARY` | `pi` | Path to the Pi CLI executable |
+| `PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL` | `0` | Event-journal fsync interval; `0` keeps strict per-event durability |
 
 ## Building
 
