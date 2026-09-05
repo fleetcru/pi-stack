@@ -17,6 +17,8 @@ type eventJournal struct {
 	path    string
 	records int
 	bytes   int64
+	syncInterval time.Duration
+	lastSync time.Time
 }
 
 type persistedEventRecord struct {
@@ -25,7 +27,9 @@ type persistedEventRecord struct {
 	Event     RPCEvent        `json:"event"`
 }
 
-func openEventJournal(dataDir, sessionID string) (*eventJournal, []EventRecord, uint64, error) {
+// syncInterval controls fsync batching. Zero preserves strict per-event durability.
+func openEventJournal(dataDir, sessionID string, syncInterval time.Duration) (*eventJournal, []EventRecord, uint64, error) {
+	if syncInterval < 0 { syncInterval = 0 }
 	if dataDir == "" {
 		return nil, nil, 0, nil
 	}
@@ -48,7 +52,7 @@ func openEventJournal(dataDir, sessionID string) (*eventJournal, []EventRecord, 
 		_ = file.Close()
 		return nil, nil, 0, err
 	}
-	return &eventJournal{file: file, path: path, records: len(records), bytes: info.Size()}, records, lastID, nil
+	return &eventJournal{file: file, path: path, records: len(records), bytes: info.Size(), syncInterval: syncInterval}, records, lastID, nil
 }
 
 func safeEventJournalName(sessionID string) string {
@@ -122,10 +126,13 @@ func (j *eventJournal) append(record EventRecord) error {
 	if _, err := j.file.Write(data); err != nil {
 		return err
 	}
-	// Journal writes are explicitly durable before the event is published to
-	// subscribers. This makes a reconnect after a daemon crash deterministic.
-	if err := j.file.Sync(); err != nil {
-		return err
+	// Strict mode fsyncs every event. A positive interval safely batches fsyncs
+	// while preserving ordered append; close and compaction always force a sync.
+	if j.syncInterval <= 0 || j.lastSync.IsZero() || time.Since(j.lastSync) >= j.syncInterval {
+		if err := j.file.Sync(); err != nil {
+			return err
+		}
+		j.lastSync = time.Now()
 	}
 	j.records++
 	j.bytes += int64(len(data))
@@ -142,6 +149,9 @@ func (j *eventJournal) shouldCompact(maxRecords, maxBytes int) bool {
 func (j *eventJournal) close() error {
 	if j == nil || j.file == nil {
 		return nil
+	}
+	if err := j.file.Sync(); err != nil {
+		return err
 	}
 	return j.file.Close()
 }
@@ -194,6 +204,7 @@ func (j *eventJournal) compact(records []EventRecord) error {
 	j.file = file
 	j.records = len(records)
 	j.bytes = 0
+	j.lastSync = time.Now()
 	if info, statErr := file.Stat(); statErr == nil {
 		j.bytes = info.Size()
 	}
