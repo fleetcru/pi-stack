@@ -105,6 +105,7 @@ func paths() map[string]any {
 	post := func(path, summary, body string) { p[path] = map[string]any{"post": op(summary, "RPCResponse", body)} }
 	p["/healthz"] = map[string]any{"get": op("Health check", "RPCResponse", "")}
 	p["/v1/diagnostics"] = map[string]any{"get": op("Operational diagnostics", "RPCResponse", "")}
+	p["/metrics"] = map[string]any{"get": op("Prometheus operational metrics", "RPCResponse", "")}
 	p["/v1/devices"] = map[string]any{"get": op("List trusted devices", "RPCResponse", ""), "post": op("Create trusted device credential", "RPCResponse", "")}
 	p["/v1/devices/{id}"] = map[string]any{"delete": op("Revoke trusted device credential", "RPCResponse", "")}
 	p["/v1/scheduler"] = map[string]any{"get": op("Scheduler admission status", "RPCResponse", "")}
