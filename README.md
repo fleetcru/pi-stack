@@ -52,9 +52,16 @@ A multi-device coding agent ecosystem for [Pi](https://github.com/earendil-works
 
 Use the release pages above for current version numbers.
 
+## Deployment boundary
+
+> [!WARNING]
+> pi-server is designed for a trusted private network: loopback, a controlled LAN, or an authenticated Tailscale network. It is **not** an internet-facing service. Do not expose it through a public IP address, port-forward, or publicly reachable reverse proxy.
+>
+> Set an explicit `PI_SERVER_AUTH_TOKEN` for every non-loopback deployment, including Tailscale and LAN access. Only use `--insecure` / `-AllowInsecure` on a loopback interface or a deliberately trusted private network.
+
 ## Production installation
 
-The installers verify release checksums before installing the server binary. For internet-facing servers, set an explicit `PI_SERVER_AUTH_TOKEN`. Only use `--insecure` / `-AllowInsecure` on a loopback, trusted LAN, or authenticated Tailscale network.
+The installers verify release checksums before installing the server binary.
 
 ### Quick setup
 
