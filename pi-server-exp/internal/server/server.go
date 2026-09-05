@@ -182,7 +182,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 	}
 	s.httpSrv = &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           requestIDMiddleware(loggingMiddleware(logger, metricsMiddleware(s.metrics, corsMiddleware(cfg.AllowedOrigins, authMiddlewareWithDevices(cfg.AuthToken, s.devices, recoverMiddleware(s.routes())))))),
+		Handler:           requestIDMiddleware(loggingMiddleware(logger, metricsMiddleware(s.metrics, securityHeadersMiddleware(corsMiddleware(cfg.AllowedOrigins, authMiddlewareWithDevices(cfg.AuthToken, s.devices, metricsCacheControlMiddleware(requestBodyLimitMiddleware(maxHTTPBodyBytes, recoverMiddleware(s.routes()))))))))),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,
@@ -213,6 +213,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /v1/capabilities", s.capabilities)
 	mux.HandleFunc("GET /v1/diagnostics", s.diagnostics)
+	mux.HandleFunc("GET /metrics", s.prometheusMetrics)
 	mux.HandleFunc("PATCH /v1/capacity", s.updateCapacity)
 	mux.HandleFunc("GET /v1/scheduler", s.schedulerStatus)
 	mux.HandleFunc("GET /v1/rpc/commands", s.rpcCommandCatalog)
