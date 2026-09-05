@@ -10,6 +10,15 @@ import (
 func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 	var journalBytes int64
 	var journalFiles int
+	var retainedEvents int
+	var retainedEventBytes int
+	var droppedEvents uint64
+	for _, process := range s.sessions.List() {
+		retained, bytes, dropped := process.EventMetrics()
+		retainedEvents += retained
+		retainedEventBytes += bytes
+		droppedEvents += dropped
+	}
 	entries, err := os.ReadDir(filepath.Join(s.cfg.DataDir, "events"))
 	if err == nil {
 		for _, entry := range entries {
@@ -41,6 +50,11 @@ func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 		"eventJournal": map[string]any{
 			"files": journalFiles,
 			"bytes": journalBytes,
+		},
+		"eventReplay": map[string]any{
+			"retained":      retainedEvents,
+			"retainedBytes": retainedEventBytes,
+			"dropped":       droppedEvents,
 		},
 	})
 }
