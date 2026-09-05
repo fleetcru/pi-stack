@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -33,6 +34,8 @@ func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"apiVersion": s.apiVersion(),
 		"startedAt":   s.startedAt,
@@ -58,6 +61,12 @@ func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 			"retainedBytes": retainedEventBytes,
 			"dropped":       droppedEvents,
 		},
+		"runtime": map[string]any{
+			"goroutines": runtime.NumGoroutine(),
+			"heapAlloc":  memory.HeapAlloc,
+			"heapSys":    memory.HeapSys,
+		},
+		"requests": s.metrics.snapshot(),
 	})
 }
 
