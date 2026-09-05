@@ -404,7 +404,12 @@ export function useActiveSessionSocket(
       client,
       sessionId: activeSessionId,
       watchFiles,
-      onStatusChange: setStatus,
+      onStatusChange: (next) => {
+        setStatus(next)
+        // A recovered socket clears the last transient onerror so the red
+        // banner does not stick around after a reconnect (e.g. server restart).
+        if (next === "open") setError(undefined)
+      },
       onEvent: (event) => {
         if (disposed) return
         // A successfully delivered event means the gap/overflow has recovered;

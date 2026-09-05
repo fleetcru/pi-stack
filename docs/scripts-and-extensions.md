@@ -4,7 +4,7 @@
 
 These TypeScript files are loaded into Pi processes (via `PI_SERVER_PI_EXTENSIONS` or install scripts), not into pi-server itself.
 
-- `external-session-bridge.ts` — bridges a user's local Pi TUI session into pi-server as an external relay. Connects a WebSocket back to the hub, streams events, receives queued prompts, and emits `ask:requested`/`ask:closed`/`ask:remote-response` on Pi's event bus so the local `ask_user` overlay closes when a phone answers remotely. This is the counterpart to the server's `external_*.go` files.
+- `external-session-bridge.ts` — bridges a user's local Pi TUI session into pi-server as an external relay. Connects a WebSocket back to the hub, streams events, receives queued prompts, and emits `ask:requested`/`ask:closed`/`ask:remote-response` on Pi's event bus so the local `ask_user` overlay closes when a phone answers remotely. This is the counterpart to the server's `external_*.go` files. Tokens are sent only in `Sec-WebSocket-Protocol`: URL-safe tokens as `pi-relay.<token>`, others as `pi-relay-b64.<base64url(token)>` (the server decodes both). The bridge re-reads `~/.pi/agent/bridge-config.json` on every registration attempt, so a server restart with a new relay URL/token is picked up on reconnect without `/reload` or `/bridge-reconnect`.
 - `session-title.ts` — sets a useful title immediately on session start, then replaces it with a concise task-oriented title once the agent understands the work.
 
 ## pi-server-tray

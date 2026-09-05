@@ -141,6 +141,13 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
 
   const registerInner = async (): Promise<boolean> => {
     if (!id) return false;
+    // Re-read bridge-config.json on every registration attempt so reconnects
+    // pick up a server restart that changed relayUrl/relayToken without
+    // requiring /bridge-reconnect or a Pi reload.
+    if (refreshConfig()) {
+      lease = "";
+      registered = false;
+    }
     try {
       const response = await request("/v1/external-sessions/register", "POST", { id, cwd, title, sessionPath, bridgeId });
       const data = await response.json() as { lease?: string };
@@ -565,21 +572,20 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     // Authenticate via a WebSocket subprotocol instead of a URL query token so
     // the secret stays out of URLs, proxy logs, and process listings. Tokens
     // outside the subprotocol grammar fall back to the deprecated query param.
-    const subprotocolSafe = token ? /^[A-Za-z0-9._~-]+$/.test(token) : false;
-    if (token && !subprotocolSafe) {
-      // Never put a bearer token in the WebSocket URL. The server deliberately
-      // accepts relay credentials only through Sec-WebSocket-Protocol. HTTP
-      // polling remains available as the safe fallback for unusual tokens.
-      relayConnectInFlight = false;
-      ui?.setStatus("external-session-bridge", "Bridge: connected (HTTP fallback; token is not WebSocket-safe)");
-      // HTTP polling remains the active command transport for tokens that
-      // cannot be represented in a WebSocket subprotocol.
-      return;
-    }
+    // Tokens travel in Sec-WebSocket-Protocol, never in the URL. Subprotocol
+    // values must be valid HTTP header tokens, so non URL-safe tokens are
+    // base64url-encoded under the pi-relay-b64. prefix (the server decodes
+    // both forms). This removes the old HTTP-polling fallback entirely.
+    const subprotocol = (() => {
+      if (!token) return undefined;
+      return /^[A-Za-z0-9._~-]+$/.test(token)
+        ? `pi-relay.${token}`
+        : `pi-relay-b64.${Buffer.from(token, "utf8").toString("base64url")}`;
+    })();
     const relayQuery = new URLSearchParams({ lease });
     const wsUrl = baseUrl.replace(/^http/, "ws") + `/v1/external-sessions/relay/${encodeURIComponent(id)}?${relayQuery}`;
     try {
-      const socket = subprotocolSafe ? new WebSocket(wsUrl, [`pi-relay.${token}`]) : new WebSocket(wsUrl);
+      const socket = subprotocol ? new WebSocket(wsUrl, [subprotocol]) : new WebSocket(wsUrl);
       relaySocket = socket;
 
       socket.onopen = async () => {

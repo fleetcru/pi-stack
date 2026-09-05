@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/input-group"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -115,6 +116,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   }, [client, ignoreExtension, sessionId])
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const [selectedProvider, setSelectedProvider] = useState<string | undefined>()
+  const [modelSearch, setModelSearch] = useState("")
   const extension = useMemo(() => findExtensionRequest(socket.events), [socket.events])
   const visibleExtension = extension && !ignoredExtensionIds.includes(extension.id) ? extension : undefined
   const historyItems = useMemo(() =>
@@ -156,7 +158,12 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
     : state?.model?.provider && modelGroups.some(([provider]) => provider === state.model?.provider)
       ? state.model.provider
       : modelGroups[0]?.[0]
-  const visibleModels = modelGroups.find(([provider]) => provider === visibleProvider)?.[1] ?? []
+  const modelSearchLower = modelSearch.trim().toLowerCase()
+  const visibleModels = (modelGroups.find(([provider]) => provider === visibleProvider)?.[1] ?? [])
+    .filter((model) => !modelSearchLower || (model.name || "").toLowerCase().includes(modelSearchLower) || model.id.toLowerCase().includes(modelSearchLower))
+  const visibleProviderGroups = modelSearchLower
+    ? modelGroups.filter(([provider]) => provider.toLowerCase().includes(modelSearchLower))
+    : modelGroups
   const selectedModel = models.find((model) => model.provider === state?.model?.provider && model.id === state?.model?.id)
   const modelLabel = selectedModel?.name || state?.model?.id || "Choose model"
   // The shared socket hook derives this incrementally from the event stream.
@@ -241,21 +248,21 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
         open={modelPickerOpen}
         onOpenChange={(open) => {
           setModelPickerOpen(open)
-          if (open) setSelectedProvider(state?.model?.provider)
+          if (open) { setSelectedProvider(state?.model?.provider); setModelSearch("") }
         }}
       >
-        <DialogContent className="max-w-2xl gap-0 overflow-hidden p-0">
+        <DialogContent className="max-w-3xl sm:max-w-3xl gap-0 overflow-hidden p-0">
           <DialogHeader className="px-6 pt-6 pb-4">
             <DialogTitle>Choose a model</DialogTitle>
             <DialogDescription>Select a provider, then choose one of its available models.</DialogDescription>
           </DialogHeader>
           <Separator />
-          <div className="flex h-80 min-h-0">
-            <aside className="flex w-44 shrink-0 flex-col border-r">
+          <div className="flex h-[32rem] min-h-0">
+            <aside className="flex w-52 shrink-0 flex-col border-r">
               <p className="px-4 pt-4 pb-2 text-xs font-medium text-muted-foreground">Providers</p>
               <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
                 <div className="flex flex-col gap-1">
-                  {modelGroups.map(([provider, providerModels]) => (
+                  {visibleProviderGroups.map(([provider, providerModels]) => (
                     <Button
                       key={provider}
                       type="button"
@@ -272,8 +279,14 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
               </ScrollArea>
             </aside>
             <section className="flex min-w-0 flex-1 flex-col">
-              <div className="px-5 pt-4 pb-2">
-                <p className="text-xs font-medium text-muted-foreground">{visibleProvider || "Models"}</p>
+              <div className="flex items-center gap-3 px-5 pt-4 pb-2">
+                <p className="shrink-0 text-xs font-medium text-muted-foreground">{visibleProvider || "Models"}</p>
+                <Input
+                  value={modelSearch}
+                  onChange={(event) => setModelSearch(event.target.value)}
+                  placeholder="Search models…"
+                  className="h-8 min-w-0 flex-1 text-sm"
+                />
               </div>
               <ScrollArea className="min-h-0 flex-1 px-3 pb-4">
                 <div className="flex flex-col gap-1">
@@ -293,7 +306,9 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                     )
                   })}
                   {visibleProvider && visibleModels.length === 0 && (
-                    <p className="px-2 py-4 text-sm text-muted-foreground">No models are available for this provider.</p>
+                    <p className="px-2 py-4 text-sm text-muted-foreground">
+                      {modelSearchLower ? "No models match your search." : "No models are available for this provider."}
+                    </p>
                   )}
                 </div>
               </ScrollArea>

@@ -1,11 +1,14 @@
 package server
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 func historyOwnerKey(spec SessionSpec) string {
@@ -43,10 +46,16 @@ func (s *Server) reserveHistoryOwner(spec SessionSpec) error {
 	lockPath := filepath.Join(lockDir, hex.EncodeToString(digest[:])+".lock")
 	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
-		if os.IsExist(err) {
-			return fmt.Errorf("session history %q is already owned by another server", key)
+		if os.IsExist(err) && reclaimStaleHistoryLock(lockPath) {
+			// The previous owner's process is gone; take over the lock.
+			lock, err = os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		}
-		return fmt.Errorf("create history lock: %w", err)
+		if err != nil {
+			if os.IsExist(err) {
+				return fmt.Errorf("session history %q is already owned by another server", key)
+			}
+			return fmt.Errorf("create history lock: %w", err)
+		}
 	}
 	if _, err := fmt.Fprintf(lock, "%d\n%s\n", os.Getpid(), key); err != nil {
 		_ = lock.Close()
@@ -56,6 +65,40 @@ func (s *Server) reserveHistoryOwner(spec SessionSpec) error {
 	s.historyOwnerLocks[key] = lock
 	s.historyOwners[key] = spec.ID
 	return nil
+}
+
+// reclaimStaleHistoryLock checks whether the lock file records a PID that is
+// no longer running. Locks are only removed on clean release, so a crashed
+// server leaves them behind; those are stale and safe to reclaim.
+func reclaimStaleHistoryLock(lockPath string) bool {
+	file, err := os.Open(lockPath)
+	if err != nil {
+		return false
+	}
+	// Close explicitly before removing: on Windows a file cannot be deleted
+	// while it is open, so a deferred Close would run after os.Remove fails.
+	scanner := bufio.NewScanner(file)
+	if !scanner.Scan() {
+		_ = file.Close()
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(scanner.Text()))
+	if err != nil {
+		_ = file.Close()
+		return false
+	}
+	// Never reclaim our own server's live in-process claim; pidAlive would
+	// report true for us anyway, so this is only a guard against self-race.
+	if pid <= 0 || pid == os.Getpid() {
+		_ = file.Close()
+		return false
+	}
+	if pidAlive(pid) {
+		_ = file.Close()
+		return false
+	}
+	_ = file.Close()
+	return os.Remove(lockPath) == nil
 }
 
 func (s *Server) releaseHistoryOwner(spec SessionSpec) {

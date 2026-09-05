@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"log/slog"
 	"net/http"
@@ -63,6 +65,36 @@ func TestHistoryOwnershipRejectsSamePathAndReleases(t *testing.T) {
 		t.Fatalf("history ownership was not released: %v", err)
 	}
 	t.Cleanup(func() { s.releaseHistoryOwner(second) })
+}
+
+func TestHistoryOwnershipReclaimsStaleLock(t *testing.T) {
+	s := New(Config{DataDir: t.TempDir()}, testLogger())
+	path := filepath.Join(t.TempDir(), "shared.jsonl")
+	// Find the lock file path the same way reserveHistoryOwner does.
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		resolved = path
+	}
+	digest := sha256.Sum256([]byte(resolved))
+	lockPath := filepath.Join(s.cfg.DataDir, "history-locks", hex.EncodeToString(digest[:])+".lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	// Write a lock whose owner PID cannot exist (above the Windows PID max,
+	// and no live process on Unix), simulating a server that crashed without
+	// cleanup.
+	if err := os.WriteFile(lockPath, []byte("999999999\n"+resolved+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec := SessionSpec{ID: "one", SessionPath: path}
+	if err := s.reserveHistoryOwner(spec); err != nil {
+		t.Fatalf("stale lock was not reclaimed: %v", err)
+	}
+	t.Cleanup(func() { s.releaseHistoryOwner(spec) })
+	// A second session must still be rejected by the live owner.
+	if err := s.reserveHistoryOwner(SessionSpec{ID: "two", SessionPath: path}); err == nil {
+		t.Fatal("expected duplicate history ownership to be rejected after reclaim")
+	}
 }
 
 func TestExternalRegisterRejectsManagedSessionID(t *testing.T) {

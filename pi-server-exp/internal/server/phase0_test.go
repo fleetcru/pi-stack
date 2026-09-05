@@ -211,6 +211,19 @@ func TestWSTicketLifecycle(t *testing.T) {
 		t.Fatalf("reuse code=%s", code)
 	}
 
+	// A browser WebSocket upgrade cannot send an Authorization header, so the
+	// upgrade arrives with the "anonymous" fingerprint and must be accepted —
+	// the single-use ticket is the credential.
+	ticketAnon, _, _ := store.issue("sess-a", tokenFingerprint("secret"))
+	if code := store.consume(ticketAnon, "sess-a", "anonymous"); code != "" {
+		t.Fatalf("anonymous consume code=%s", code)
+	}
+	// A different credential presented at upgrade time is still rejected.
+	ticketWrong, _, _ := store.issue("sess-a", tokenFingerprint("secret"))
+	if code := store.consume(ticketWrong, "sess-a", tokenFingerprint("other")); code != CodeInvalidTicket {
+		t.Fatalf("wrong credential code=%s", code)
+	}
+
 	// expired
 	store2 := newWSTicketStore()
 	ticket3, _, _ := store2.issue("s", tokenFingerprint("secret"))

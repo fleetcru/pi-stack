@@ -52,6 +52,8 @@ import {
 } from "@/components/ui/input-group"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message"
@@ -149,6 +151,24 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const models = responseModels(modelsQuery.data)
   const state = stateQuery.data?.data as { model?: { provider?: string; id?: string }; thinkingLevel?: string; isStreaming?: boolean; external?: boolean; relayConnected?: boolean; relayLatencyMs?: number } | undefined
+  const modelGroups = useMemo(() => groupModelsByProvider(models), [models])
+  const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const [selectedProvider, setSelectedProvider] = useState<string | undefined>()
+  const [modelSearch, setModelSearch] = useState("")
+  const visibleProvider =
+    selectedProvider && modelGroups.some(([provider]) => provider === selectedProvider)
+      ? selectedProvider
+      : state?.model?.provider && modelGroups.some(([provider]) => provider === state.model?.provider)
+        ? state.model.provider
+        : modelGroups[0]?.[0]
+  const modelSearchLower = modelSearch.trim().toLowerCase()
+  const visibleModels = (modelGroups.find(([provider]) => provider === visibleProvider)?.[1] ?? [])
+    .filter((model) => !modelSearchLower || (model.name || "").toLowerCase().includes(modelSearchLower) || model.id.toLowerCase().includes(modelSearchLower))
+  const visibleProviderGroups = modelSearchLower
+    ? modelGroups.filter(([provider]) => provider.toLowerCase().includes(modelSearchLower))
+    : modelGroups
+  const selectedModel = models.find((model) => model.provider === state?.model?.provider && model.id === state?.model?.id)
+  const modelLabel = selectedModel?.name || state?.model?.id || "Choose model"
   // The shared socket hook derives this incrementally from the event stream.
   const wsRuntimeState = socket.health.runtime
   // Use WS runtime state when available (WS open), fall back to HTTP polling (WS closed).
@@ -163,6 +183,16 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
       ? `Relay connected${typeof state.relayLatencyMs === "number" ? ` · ${state.relayLatencyMs} ms` : ""}`
       : "Relay disconnected — commands queue on the server"
     : state ? "Local RPC" : undefined
+
+  async function selectModel(provider: string, modelId: string) {
+    try {
+      await client.sessionPost(sessionId, "model", { provider, modelId })
+      setModelPickerOpen(false)
+      void stateQuery.refetch()
+    } catch (error) {
+      setDeliveryNotice(error instanceof Error ? error.message : "Could not change model")
+    }
+  }
 
   async function abortSession() {
     try {
@@ -205,6 +235,78 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
           <Button size="xs" variant="ghost" onClick={() => ignoreExtension(visibleExtension.id)}>Ignore</Button>
         </div>
       )}
+      <Dialog
+        open={modelPickerOpen}
+        onOpenChange={(open) => {
+          setModelPickerOpen(open)
+          if (open) { setSelectedProvider(state?.model?.provider); setModelSearch("") }
+        }}
+      >
+          <DialogContent className="max-w-3xl sm:max-w-3xl gap-0 overflow-hidden p-0">
+            <DialogHeader className="px-6 pt-6 pb-4">
+              <DialogTitle>Choose a model</DialogTitle>
+              <DialogDescription>Select a provider, then choose one of its available models.</DialogDescription>
+            </DialogHeader>
+            <Separator />
+            <div className="flex h-[32rem] min-h-0">
+              <aside className="flex w-52 shrink-0 flex-col border-r">
+                <p className="px-4 pt-4 pb-2 text-xs font-medium text-muted-foreground">Providers</p>
+                <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
+                  <div className="flex flex-col gap-1">
+                    {visibleProviderGroups.map(([provider, providerModels]) => (
+                      <Button
+                        key={provider}
+                        type="button"
+                        variant={provider === visibleProvider ? "secondary" : "ghost"}
+                        size="sm"
+                        className="w-full justify-between"
+                        onClick={() => setSelectedProvider(provider)}
+                      >
+                        <span className="truncate">{provider}</span>
+                        <span>{providerModels.length}</span>
+                      </Button>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </aside>
+              <section className="flex min-w-0 flex-1 flex-col">
+                <div className="flex items-center gap-3 px-5 pt-4 pb-2">
+                  <p className="shrink-0 text-xs font-medium text-muted-foreground">{visibleProvider || "Models"}</p>
+                  <Input
+                    value={modelSearch}
+                    onChange={(event) => setModelSearch(event.target.value)}
+                    placeholder="Search models…"
+                    className="h-8 min-w-0 flex-1 text-sm"
+                  />
+                </div>
+                <ScrollArea className="min-h-0 flex-1 px-3 pb-4">
+                  <div className="flex flex-col gap-1">
+                    {visibleModels.map((model) => {
+                      const active = model.provider === state?.model?.provider && model.id === state?.model?.id
+                      return (
+                        <Button
+                          key={`${model.provider}:${model.id}`}
+                          type="button"
+                          variant={active ? "secondary" : "ghost"}
+                          className="w-full justify-between"
+                          onClick={() => void selectModel(model.provider, model.id)}
+                        >
+                          <span className="min-w-0 truncate text-left">{model.name || model.id}</span>
+                          {active && <CircleCheck data-icon="inline-end" />}
+                        </Button>
+                      )
+                    })}
+                    {visibleProvider && visibleModels.length === 0 && (
+                      <p className="px-2 py-4 text-sm text-muted-foreground">
+                        {modelSearchLower ? "No models match your search." : "No models are available for this provider."}
+                      </p>
+                    )}
+                  </div>
+                </ScrollArea>
+              </section>
+            </div>
+          </DialogContent>
+        </Dialog>
       {visibleExtension && (
         <Dialog open={extensionDialogOpen} onOpenChange={setExtensionDialogOpen}>
           <DialogContent>
@@ -328,26 +430,19 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
               <InputGroupAddon align="block-end" className="w-full px-3 pt-0 pb-2.5">
                 <div className="flex w-full items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2 overflow-x-auto">
-                <Select
-                  value={state?.model?.provider && state?.model?.id ? `${state.model.provider}:${state.model.id}` : null}
-                  onValueChange={(value) => {
-                    const [provider, modelId] = String(value).split(":")
-                    if (provider && modelId) void client.sessionPost(sessionId, "model", { provider, modelId }).then(() => void stateQuery.refetch()).catch((error: unknown) => setDeliveryNotice(error instanceof Error ? error.message : "Could not change model"))
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-w-40 max-w-56 rounded-xl border-border/70 bg-muted/70 text-foreground shadow-none hover:bg-muted"
+                  onClick={() => {
+                    setSelectedProvider(state?.model?.provider)
+                    setModelPickerOpen(true)
                   }}
                 >
-                  <SelectTrigger size="sm" className="min-w-40 max-w-56 rounded-xl border-border/70 bg-muted/70 text-foreground shadow-none hover:bg-muted">
-                    <Sparkles className="size-3.5 text-primary" />
-                    <SelectValue placeholder="Choose model" />
-                  </SelectTrigger>
-                  <SelectContent align="start">
-                    {groupModelsByProvider(models).map(([provider, providerModels]) => (
-                      <SelectGroup key={provider}>
-                        <SelectLabel className="font-semibold tracking-wide uppercase">{provider}</SelectLabel>
-                        {providerModels.map((model) => <SelectItem key={`${model.provider}:${model.id}`} value={`${model.provider}:${model.id}`}>{model.name || model.id}</SelectItem>)}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <Sparkles data-icon="inline-start" />
+                  <span className="truncate">{modelLabel}</span>
+                </Button>
                 <Select
                   value={state?.thinkingLevel ?? null}
                   onValueChange={(value) => void client.sessionPost(sessionId, "thinking-level", { level: String(value) }).then(() => void stateQuery.refetch()).catch((error: unknown) => setDeliveryNotice(error instanceof Error ? error.message : "Could not change thinking level"))}

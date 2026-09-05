@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/subtle"
+	"encoding/base64"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -34,7 +35,7 @@ func (s *Server) externalRelayWebSocket(w http.ResponseWriter, r *http.Request) 
 	responseHeader := http.Header{}
 	for _, protocol := range strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
 		protocol = strings.TrimSpace(protocol)
-		if strings.HasPrefix(protocol, "pi-relay.") {
+		if strings.HasPrefix(protocol, relayProtocolPrefix) || strings.HasPrefix(protocol, relayProtocolB64Prefix) {
 			responseHeader.Set("Sec-WebSocket-Protocol", protocol)
 			break
 		}
@@ -133,11 +134,24 @@ func isExternalRelayWSRequest(r *http.Request) bool {
 // relayWSAuthenticated accepts the `pi-relay.<token>` subprotocol credential.
 // The query parameter fallback was removed — tokens must be sent via the
 // Sec-WebSocket-Protocol header to avoid leaking credentials in logs.
+// Tokens that are not valid HTTP header tokens are sent base64url-encoded
+// under the `pi-relay-b64.` prefix.
 const relayProtocolPrefix = "pi-relay."
+const relayProtocolB64Prefix = "pi-relay-b64."
 
 func relayWSAuthenticated(r *http.Request, token string) bool {
 	for _, protocol := range strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
 		trimmed := strings.TrimSpace(protocol)
+		if strings.HasPrefix(trimmed, relayProtocolB64Prefix) {
+			decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(trimmed, relayProtocolB64Prefix))
+			if err != nil {
+				continue
+			}
+			if subtle.ConstantTimeCompare(decoded, []byte(token)) == 1 {
+				return true
+			}
+			continue
+		}
 		if strings.HasPrefix(trimmed, relayProtocolPrefix) &&
 			subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(trimmed, relayProtocolPrefix)), []byte(token)) == 1 {
 			return true

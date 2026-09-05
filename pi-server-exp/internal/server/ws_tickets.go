@@ -83,7 +83,7 @@ func (st *wsTicketStore) consume(ticket, sessionID, tokenFP string) (code string
 		delete(st.tickets, key)
 		return CodeTicketSessionMismatch
 	}
-	if tokenFP != "" && rec.tokenFP != tokenFP {
+	if tokenFP != "" && tokenFP != "anonymous" && rec.tokenFP != tokenFP {
 		delete(st.tickets, key)
 		return CodeInvalidTicket
 	}

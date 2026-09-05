@@ -37,7 +37,7 @@ Go 1.23 HTTP/WebSocket daemon. Spawns Pi CLI processes, speaks strict LF-delimit
 - `session_inventory` helpers in `machine_sessions.go` — scans `~/.pi/agent/sessions/*.jsonl` to discover Pi sessions the server didn't spawn itself, with an mtime cache.
 - `global_sessions.go` — worker-scoped session addressing (`workerID:sessionID`) so a client can attach to a session on any worker with one ID.
 - `session_history.go` — paginated reading of session JSONL history with an in-memory index cache; powers the history replay clients show on open.
-- `history_ownership.go` — reserves which server component owns a session's JSONL file so a bridged relay and a managed process never both own it.
+- `history_ownership.go` — reserves which server component owns a session's JSONL file so a bridged relay and a managed process never both own it. Lock files in `<DataDir>/history-locks/` record the owner PID; when the lock already exists and its PID is dead (crashed server), the lock is reclaimed automatically instead of failing with "already owned by another server". PID liveness is platform-specific (`pid_windows.go` uses `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`, `pid_unix.go` uses `Signal(0)`).
 - `session_state_cache.go` — short-TTL cache of Pi process state queries to avoid hammering idle processes.
 - `session_bridge.go` — maps managed sessions onto the native Pi session directory so inventory discovery can find them.
 - `session_transport.go` — abstraction over where a session's events come from (local process vs relay), exposing a uniform `SessionTransport` interface.
@@ -60,7 +60,7 @@ Go 1.23 HTTP/WebSocket daemon. Spawns Pi CLI processes, speaks strict LF-delimit
 
 - `ws_handler.go` — the per-session browser WebSocket: ticket auth, `since` cursor replay from the ring buffer, event fan-out with a per-connection write mutex, and nacks.
 - `ws_multiplex.go` — multiplexed WebSocket allowing one connection to subscribe to multiple sessions (`subscribe`/`unsubscribe` messages routed to the right Pi process).
-- `ws_tickets.go` — single-use, short-TTL-ticket store. Tickets are bound to the SHA-256 fingerprint of the bearer token so a leaked ticket is useless without the token.
+- `ws_tickets.go` — single-use, short-TTL-ticket store. Tickets are bound to the SHA-256 fingerprint of the bearer token so a leaked ticket is useless without the token. Browser WebSocket upgrades cannot send an Authorization header, so an upgrade presenting no credential (`anonymous` fingerprint) is accepted; the ticket itself is the credential. A upgrade presenting a *different* token is rejected.
 
 (SSE support described in AGENTS.md is served through the same session WebSocket handlers; there is no separate `sse_handler.go` in the current tree.)
 
