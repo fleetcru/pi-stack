@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -63,4 +64,15 @@ func TestIndexedRelayHistoryIncludesToolRecords(t *testing.T) {
 	if historyType, _ := messages[1].(map[string]any)["_historyType"].(string); historyType != "tool_use" {
 		t.Fatalf("tool history type not preserved: %#v", messages[1])
 	}
+}
+
+func TestIndexedRelayHistoryHandlesLongRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	entry, err := json.Marshal(map[string]any{"type": "message", "message": map[string]any{"role": "user", "content": strings.Repeat("x", 8<<10)}})
+	if err != nil { t.Fatal(err) }
+	if err := os.WriteFile(path, append(entry, '\n'), 0o600); err != nil { t.Fatal(err) }
+	server := &Server{historyIndexes: map[string]historyIndex{}, logger: slog.Default()}
+	messages, total, err := server.readIndexedRelayMessagesPage(path, 0, 10)
+	if err != nil { t.Fatal(err) }
+	if total != 1 || len(messages) != 1 { t.Fatalf("total=%d messages=%d", total, len(messages)) }
 }
