@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -26,7 +27,11 @@ func TestAuthenticatedSessionInventoryAndMetricsFlow(t *testing.T) {
 		IdleTimeout:    time.Second,
 		MaxSessions:    2,
 	}, slog.Default())
-	t.Cleanup(func() { _ = server.Shutdown(testContext(t)) })
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	})
 	handler := server.httpSrv.Handler
 
 	unauthorized := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
