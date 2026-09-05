@@ -59,6 +59,10 @@ export type AvailableModel = {
   provider: string
   id: string
   name?: string
+  thinkingLevels?: string[]
+  reasoningEfforts?: string[]
+  thinkingLevelMap?: Record<string, unknown>
+  reasoning?: boolean
 }
 
 /** Extension UI request from a Pi extension. */

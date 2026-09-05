@@ -10,6 +10,7 @@ export {
   buildHistory,
   mergeTimeline,
   responseModels,
+  responseThinkingLevels,
   groupModelsByProvider,
   findExtensionRequest,
   toolDisplayName,

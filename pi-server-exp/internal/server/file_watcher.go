@@ -13,6 +13,9 @@ import (
 var ignoredWatchDirs = map[string]struct{}{
 	".git": {}, ".next": {}, ".turbo": {}, ".cache": {}, ".idea": {},
 	"node_modules": {}, "dist": {}, "build": {}, "coverage": {}, "vendor": {},
+	// The server's own journal and session state live here. Watching it emits
+	// file_change events for every event append, creating a visible event loop.
+	".data": {},
 }
 
 func shouldWatchDir(path string) bool {

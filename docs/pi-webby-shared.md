@@ -17,5 +17,5 @@ TypeScript library (`@pi-stack/webby-shared`) containing everything the browser 
 ## `src/session-workspace/`
 
 - `types.ts` / `constants.ts` — shared item shapes and tuning constants for the chat timeline (streaming buffer sizes, dedup window).
-- `timeline.ts` — pure functions that turn raw Pi events (`message_start/update/end`, `tool_execution_*`, `runtime_state`) into a flat timeline item list: assistant text accumulation, tool-call pairing with results, dedup by event ID, and unique-key generation for list rendering. Both clients import this so their chat rendering stays identical.
+- `timeline.ts` — pure functions that turn raw Pi events (`message_start/update/end`, `tool_execution_*`, `runtime_state`) into a flat timeline item list: assistant text accumulation, tool-call pairing with results, dedup by event ID, unique-key generation for list rendering, and extraction of model-provided effort capabilities. Map keys are preserved because null provider translations can still be valid Pi levels; options use stable semantic ordering. File-change events are intentionally omitted here because the web workspace presents them in its Changed files dropdown.
 - `index.ts` — barrel export.

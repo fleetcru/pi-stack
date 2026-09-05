@@ -14,6 +14,7 @@ import {
   PanelRight,
   Search,
   Server,
+  Cpu,
   Sun,
 } from "lucide-react"
 
@@ -23,6 +24,7 @@ import { CapacityControl } from "@/components/capacity-control"
 import { CreateSessionDialog } from "@/components/create-session-dialog"
 import { GlobalSessionList, MachineSessionList } from "@/components/machine-session-list"
 import { ServerConnectionsDialog } from "@/components/server-connections-dialog"
+import { WorkerManagementDialog } from "@/components/worker-management-dialog"
 const SessionInspector = lazy(() => import("@/components/session-inspector").then((module) => ({ default: module.SessionInspector })) )
 const SessionWorkspace = lazy(() => import("@/components/session-workspace"))
 import { SessionTree, TreeNode } from "@/components/sidebar-tree"
@@ -42,6 +44,7 @@ export function WorkspaceShell() {
   const [inspectorOpen, setInspectorOpen] = useState(true)
   const [createSessionOpen, setCreateSessionOpen] = useState(false)
   const [serverConnectionsOpen, setServerConnectionsOpen] = useState(false)
+  const [workerManagementOpen, setWorkerManagementOpen] = useState(false)
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const leftPanelRef = usePanelRef()
   const connection = useAppStore((state) => state.connection)
@@ -81,8 +84,9 @@ export function WorkspaceShell() {
   if (!connection) {
     return (
       <main className="flex h-svh items-center justify-center bg-background p-5 text-foreground">
-        <FirstServerOnboarding onOpenServers={() => setServerConnectionsOpen(true)} />
+        <FirstServerOnboarding onOpenServers={() => setServerConnectionsOpen(true)} onUseLocal={() => useAppStore.getState().addServer({ baseUrl: `http://${window.location.hostname || "127.0.0.1"}:3142`, name: "Local Pi" })} />
         <ServerConnectionsDialog open={serverConnectionsOpen} onOpenChange={setServerConnectionsOpen} />
+        <WorkerManagementDialog open={workerManagementOpen} onOpenChange={setWorkerManagementOpen} />
       </main>
     )
   }
@@ -132,6 +136,7 @@ export function WorkspaceShell() {
                 <ServerTreeHeader
                   onCreate={() => setCreateSessionOpen(true)}
                   onManageServers={() => setServerConnectionsOpen(true)}
+                  onManageWorkers={() => setWorkerManagementOpen(true)}
                   onCollapse={() => {
                     leftPanelRef.current?.collapse()
                     setLeftSidebarCollapsed(true)
@@ -257,14 +262,13 @@ export function WorkspaceShell() {
   )
 }
 
-function FirstServerOnboarding({ onOpenServers }: { onOpenServers: () => void }) {
+function FirstServerOnboarding({ onOpenServers, onUseLocal }: { onOpenServers: () => void; onUseLocal: () => void }) {
   return (
     <section className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-sm">
       <div className="mb-4 flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground"><Server className="size-5" /></div>
       <h1 className="text-lg font-semibold">Connect your first Pi server</h1>
-      <p className="mt-2 text-sm leading-6 text-muted-foreground">Webby does not assume a local server. Add the trusted pi-server URL you want to use, then create or open a session.</p>
-      <div className="mt-5 rounded-lg bg-muted/50 p-3 font-mono text-xs text-muted-foreground">http://your-laptop-ip:3141</div>
-      <Button className="mt-5 w-full" onClick={onOpenServers}>Add Pi server</Button>
+      <p className="mt-2 text-sm leading-6 text-muted-foreground">Use the local Pi server instantly, or connect to a different trusted server.</p>
+      <div className="mt-5 grid gap-2 sm:grid-cols-2"><Button onClick={onUseLocal}>Use local server</Button><Button variant="outline" onClick={onOpenServers}>Add remote server</Button></div>
     </section>
   )
 }
@@ -356,10 +360,12 @@ function ServerTreeHeader({
   onCollapse,
   onCreate,
   onManageServers,
+  onManageWorkers,
 }: {
   onCollapse: () => void
   onCreate: () => void
   onManageServers: () => void
+  onManageWorkers: () => void
 }) {
   const { theme, setTheme } = useTheme()
   const isDark = theme === "dark"
@@ -381,6 +387,7 @@ function ServerTreeHeader({
         >
           <Server />
         </Button>
+        <Button size="icon-xs" variant="ghost" aria-label="Manage workers" title="Manage workers" onClick={onManageWorkers}><Cpu /></Button>
         <Button
           size="icon-xs"
           variant="ghost"

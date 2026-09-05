@@ -24,6 +24,7 @@ import {
   buildHistory,
   mergeTimeline,
   responseModels,
+  responseThinkingLevels,
   groupModelsByProvider,
   findExtensionRequest,
   toolDisplayName,
@@ -165,6 +166,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
     ? modelGroups.filter(([provider]) => provider.toLowerCase().includes(modelSearchLower))
     : modelGroups
   const selectedModel = models.find((model) => model.provider === state?.model?.provider && model.id === state?.model?.id)
+  const thinkingLevels = responseThinkingLevels(modelsQuery.data, selectedModel)
   const modelLabel = selectedModel?.name || state?.model?.id || "Choose model"
   // The shared socket hook derives this incrementally from the event stream.
   const wsRuntimeState = socket.health.runtime
@@ -209,7 +211,9 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
       setDeliveryCommandId(typeof commandId === "string" ? commandId : undefined)
       setPrompt("")
       imageActions.clearImages()
-      setDeliveryNotice(mode === "steer" ? "Steering Pi now…" : "Sent to bridged Pi. It will arrive at the next safe turn boundary.")
+      setDeliveryNotice(mode === "steer"
+        ? "Steering Pi now…"
+        : state?.external ? "Sent to bridged Pi. It will arrive at the next safe turn boundary." : "Sent to local Pi. Waiting for response…")
     } catch (error) {
       setDeliveryNotice(error instanceof Error ? error.message : "Could not send message to Pi")
     }
@@ -441,7 +445,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   <Sparkles data-icon="inline-start" />
                   <span className="truncate">{modelLabel}</span>
                 </Button>
-                <Select
+                {thinkingLevels.length > 0 ? <Select
                   value={state?.thinkingLevel ?? null}
                   onValueChange={(value) => void client.sessionPost(sessionId, "thinking-level", { level: String(value) }).then(() => void stateQuery.refetch()).catch((error: unknown) => setDeliveryNotice(error instanceof Error ? error.message : "Could not change thinking level"))}
                 >
@@ -452,10 +456,10 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   <SelectContent align="start">
                     <SelectGroup>
                       <SelectLabel>Thinking / effort</SelectLabel>
-                      {['off', 'low', 'medium', 'high'].map((level) => <SelectItem key={level} value={level}>{level}</SelectItem>)}
+                      {thinkingLevels.map((level) => <SelectItem key={level} value={level}>{level}</SelectItem>)}
                     </SelectGroup>
                   </SelectContent>
-                </Select>
+                </Select> : <Button size="sm" variant="outline" disabled className="min-w-32 rounded-xl border-border/70 bg-muted/70 text-foreground opacity-100"><Brain className="size-3.5 text-primary" /><span className="truncate">{state?.thinkingLevel ? `Thinking: ${state.thinkingLevel}` : "Thinking unavailable"}</span></Button>}
                   </div>
                 <input
                   ref={imageInputRef}

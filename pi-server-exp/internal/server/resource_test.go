@@ -8,7 +8,7 @@ import (
 )
 
 func TestShouldWatchDirSkipsExpensiveTrees(t *testing.T) {
-	for _, path := range []string{"project/node_modules", "project/.git", "project/.next", "project/dist"} {
+	for _, path := range []string{"project/node_modules", "project/.git", "project/.next", "project/dist", "project/.data"} {
 		if shouldWatchDir(path) {
 			t.Fatalf("expected %q to be skipped", path)
 		}

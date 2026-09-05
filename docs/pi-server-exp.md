@@ -88,7 +88,7 @@ The `external-session-bridge.ts` extension in a user's Pi TUI connects back to t
 
 - `file_handlers.go` — directory listing and file-tree endpoints for a session's cwd.
 - `file_content.go` — file read/write with `allowedFilePath` (symlink-resolution + root confinement) and binary-sniffing so images return as samples.
-- `file_watcher.go` — fsnotify watcher per session emitting `file_change` events to connected clients.
+- `file_watcher.go` — fsnotify watcher per session emitting `file_change` events to connected clients; skips the server-generated `.data` tree to prevent event-journal writes from appearing as user file changes.
 - `directory_handler.go` — allowed directory roots listing (drives the directory pickers in clients).
 - `git_handlers.go` — git status/branches/worktrees/commit/push endpoints. All git arguments come from a fixed whitelist. Implements the T3-Code-style enriched status (upstream, remote, GitHub repo parse) and worktree create/remove.
 

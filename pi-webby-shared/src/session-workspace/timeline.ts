@@ -13,6 +13,7 @@ import type {
 // flood of irrelevant file_change events (e.g. .git/*, .wrangler/tmp).
 const NOISE_FILE_SEGMENTS = new Set([
   ".git",
+  ".data",
   ".wrangler",
   "node_modules",
   ".next",
@@ -182,7 +183,8 @@ export class IncrementalTimeline {
       }
     }
 
-    if (event.type === "file_change" && event.path && !isNoiseFilePath(event.path)) this.items.push({ id: `file-${String(event._daemonEventId ?? index)}`, kind: "system", text: `File ${event.change ?? "changed"}: ${event.path}`, taskId, runId })
+    // File changes are presented in the Changed files dropdown in the
+    // workspace; do not duplicate every change as a chat timeline item.
     if (event.type === "tool_execution_start") {
       const id = `tool-${String(event.toolCallId ?? event._daemonEventId ?? index)}`
       this.items.push({ id, kind: "tool", name: String(event.toolName ?? "tool"), done: false, startedAt: typeof event.timestamp === "string" || typeof event.timestamp === "number" ? event.timestamp : undefined, args: typeof event.args === "object" && event.args !== null ? event.args as Record<string, unknown> : undefined, taskId, runId })
@@ -415,6 +417,28 @@ export function groupModelsByProvider(models: AvailableModel[]) {
       model,
     ])
   return [...groups.entries()]
+}
+
+const PI_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "max", "xhigh", "ultra"] as const
+
+/**
+ * Returns Pi effort options for the selected model/session.
+ *
+ * Provider thinkingLevelMap values are transport translations and may contain
+ * nulls or only a partial subset. For reasoning-capable models, Pi accepts the
+ * canonical levels, so the UI must not mistake that provider metadata for the
+ * complete availability list.
+ */
+export function responseThinkingLevels(response: Record<string, unknown> | undefined, model?: AvailableModel): string[] {
+  const data = response?.data as { thinkingLevels?: unknown; reasoningEfforts?: unknown } | undefined
+  const mapLevels = model?.thinkingLevelMap ? Object.keys(model.thinkingLevelMap) : []
+  const candidates = [model?.thinkingLevels, model?.reasoningEfforts, mapLevels, data?.thinkingLevels, data?.reasoningEfforts]
+  const values = model?.reasoning
+    ? [...PI_THINKING_LEVELS]
+    : candidates.flatMap((value) => Array.isArray(value) ? value : [])
+  const order = new Map(PI_THINKING_LEVELS.map((value, index) => [value, index]))
+  return [...new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))]
+    .sort((a, b) => (order.get(a.toLowerCase()) ?? order.size) - (order.get(b.toLowerCase()) ?? order.size) || a.localeCompare(b))
 }
 
 /**

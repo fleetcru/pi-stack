@@ -1,7 +1,26 @@
 import { describe, expect, it } from "vitest"
-import { buildHistory, findExtensionRequest, IncrementalTimeline, isNoiseFilePath } from "@pi-stack/webby-shared/session-workspace"
+import { buildHistory, findExtensionRequest, IncrementalTimeline, isNoiseFilePath, responseThinkingLevels } from "@pi-stack/webby-shared/session-workspace"
 
 describe("shared history timeline", () => {
+  it("uses Pi's complete canonical effort list for reasoning-capable providers", () => {
+    expect(responseThinkingLevels(undefined, {
+      provider: "openrouter",
+      id: "gpt-5.6-sol",
+      name: "GPT-5.6 Sol",
+      reasoning: true,
+      thinkingLevelMap: { minimal: null, low: "low", max: "max" },
+    })).toEqual(["off", "minimal", "low", "medium", "high", "max", "xhigh", "ultra"])
+  })
+
+  it("merges provider/session metadata when reasoning capability is explicit but not true", () => {
+    expect(responseThinkingLevels({ data: { reasoningEfforts: ["high", "medium"] } }, {
+      provider: "custom",
+      id: "model",
+      name: "Model",
+      thinkingLevelMap: { low: null, high: "high" },
+    })).toEqual(["low", "medium", "high"])
+  })
+
   it("parses Pi toolCall and toolResult records", () => {
     const timeline = buildHistory({ data: { messages: [
       { role: "assistant", timestamp: 1, content: [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "README.md" } }] },
@@ -98,6 +117,7 @@ describe("IncrementalTimeline", () => {
       ".git",
       ".git/index",
       ".git/config",
+      ".data/pi-server/events/session.jsonl",
       ".wrangler",
       ".wrangler/tmp/abc",
       "node_modules/pkg/index.js",
@@ -117,7 +137,7 @@ describe("IncrementalTimeline", () => {
     }
   })
 
-  it("does not emit system items for noise file changes", () => {
+  it("does not emit file changes as duplicate system timeline items", () => {
     const reducer = new IncrementalTimeline()
     const events = [
       { type: "file_change", _daemonEventId: 1, path: ".git/index", change: "modified" },
@@ -125,7 +145,6 @@ describe("IncrementalTimeline", () => {
       { type: "file_change", _daemonEventId: 3, path: "src/app.tsx", change: "modified" },
     ]
     const items = reducer.update(events)
-    expect(items).toHaveLength(1)
-    expect(items[0]).toMatchObject({ kind: "system", text: "File modified: src/app.tsx" })
+    expect(items).toHaveLength(0)
   })
 })

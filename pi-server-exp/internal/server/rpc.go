@@ -464,6 +464,15 @@ func (p *PiProcess) wait(cmd *exec.Cmd) {
 }
 
 func (p *PiProcess) dispatch(ev RPCEvent) {
+	// Close() marks the process closed before stopping auxiliary producers such
+	// as filesystem watchers. Ignore late events rather than touching a closed
+	// journal or publishing to closed subscriber channels.
+	p.mu.RLock()
+	closed := p.closed
+	p.mu.RUnlock()
+	if closed {
+		return
+	}
 	// Pi uses extension_ui_request for both blocking dialog methods and
 	// fire-and-forget status/notification events. Preserve the raw protocol
 	// fields and add a daemon classification so clients never mistake verbose
@@ -485,6 +494,10 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 		}
 	}
 	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return
+	}
 	if ev["type"] == "extension_ui_request" && extensionUIRequiresResponse(ev) {
 		p.pendingUIRequest = cloneEvent(ev)
 	}
@@ -515,14 +528,16 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 		record := EventRecord{ID: id, Timestamp: time.Now().UTC(), Event: cloneEvent(ev), size: len(encoded)}
 		p.events = append(p.events, record)
 		p.eventBytes += record.size
-		if err := p.journal.append(record); err != nil {
-			p.logger.Warn("failed to persist daemon event", "error", err)
+		if p.journal != nil {
+			if err := p.journal.append(record); err != nil {
+				p.logger.Warn("failed to persist daemon event", "error", err)
+			}
 		}
 		for len(p.events) > p.eventMax || p.eventBytes > p.eventMaxBytes {
 			p.eventBytes -= p.events[0].size
 			p.events = p.events[1:]
 		}
-		if p.journal.shouldCompact(p.eventMax, p.eventMaxBytes) {
+		if p.journal != nil && p.journal.shouldCompact(p.eventMax, p.eventMaxBytes) {
 			if err := p.journal.compact(p.events); err != nil {
 				p.logger.Warn("failed to compact event journal", "error", err)
 			}

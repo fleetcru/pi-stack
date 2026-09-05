@@ -100,6 +100,7 @@ describe("ServerConnectionsDialog", () => {
     renderDialog()
     const trashBtn = screen.getByLabelText("Remove Remove Me")
     await userEvent.click(trashBtn)
+    await userEvent.click(screen.getByLabelText("Confirm remove Remove Me"))
     expect(useAppStore.getState().servers).toHaveLength(0)
     expect(screen.queryByText("Remove Me")).not.toBeInTheDocument()
   })

@@ -17,11 +17,15 @@ React 19 + Vite 8 + Tailwind v4 + shadcn/ui browser client for pi-server. Most d
 ## Major components (`src/components/`)
 
 - `workspace-shell.tsx` — the main three-panel layout: sidebar (session tree), center workspace, right inspector. Manages panel resizing, collapse states, the command palette, theme toggle, and navigation between sessions. Lazy-loads the heavy workspace component.
+  Its empty state offers one-click local server setup at the dev port and keeps remote server configuration available.
 - `session-workspace.tsx` — the chat view. Subscribes to the active session socket, renders streaming assistant text, tool-call cards (bash, read, edit…), message markdown (react-markdown + sanitize), image attachments, prompt bar with model/thinking selectors, and stop/retry actions.
 - `session-inspector.tsx` — right panel: session details, file tree browser with file preview, git status/branches/worktrees, and the guided commit/push flow (`resolveGitQuickAction` computing Commit → Commit & push → Push → blocked, with the GitHub compare link when `githubRepo` is known).
 - `sidebar-tree.tsx` — grouped session list (local, remote, relay, machine-discovered) with search and per-session context menus.
 - `create-session-dialog.tsx` — new-session form: cwd picker, args, worktree toggle, extension options.
+  The form also supports an optional initial message, sent immediately after creation so sessions can run in the background.
 - `server-connections-dialog.tsx` — manage multiple pi-server connections (name, URL, token, remember-token) backed by the persisted store.
+  The dialog presents active-server highlighting, an empty state, inline editing, and a two-step remove confirmation.
+- `worker-management-dialog.tsx` — manage remote workers through the server worker CRUD API, including add, edit, health/status refresh, and confirmed removal; the local worker is immutable.
 - `machine-session-list.tsx` — browse Pi sessions discovered on the machine but not managed by the server; can attach/adopt them.
 - `changed-files-list.tsx` — compact list of git working-tree changes used in the inspector and commit dialog.
 - `capacity-control.tsx` — admin UI for adjusting server capacity limits at runtime (talks to the admin settings endpoint).

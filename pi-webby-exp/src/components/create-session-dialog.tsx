@@ -26,6 +26,7 @@ export function CreateSessionDialog({
 }) {
   const [cwd, setCwd] = useState("")
   const [title, setTitle] = useState("")
+  const [prompt, setPrompt] = useState("")
   const [workerId, setWorkerId] = useState("")
   const [workerHealth, setWorkerHealth] = useState<Record<string, string>>({})
   const [args, setArgs] = useState("")
@@ -103,10 +104,16 @@ export function CreateSessionDialog({
       return
     }
     selectSession(sessions[sessions.length - 1].id)
+    // Match the Companion flow: optionally seed the new/background session
+    // with a prompt immediately after it is created.
+    if (prompt.trim()) {
+      await Promise.allSettled(sessions.map((session) => client.prompt(session.id, { message: prompt.trim() })))
+    }
     const partial = sessions.length !== count
     if (!partial) onOpenChange(false)
     setCwd("")
     setTitle("")
+    setPrompt("")
     setSessionCount(1)
     setIsolated(false)
     setSubmitting(false)
@@ -115,7 +122,7 @@ export function CreateSessionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>New session</DialogTitle>
           <DialogDescription>
@@ -160,6 +167,11 @@ export function CreateSessionDialog({
               onChange={(event) => setCwd(event.target.value)}
               placeholder="/home/user/project"
             />
+          </label>
+          <label className="grid gap-2 text-sm">
+            Start with a message
+            <Input value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ask Pi to inspect this project…" />
+            <span className="text-xs text-muted-foreground">The session starts in the background and this message is sent immediately.</span>
           </label>
           {browsing && (
             <div className="overflow-hidden rounded-lg border border-border bg-muted/20 text-sm">

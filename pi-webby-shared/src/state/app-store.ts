@@ -30,6 +30,7 @@ interface AppState {
   liveSessionState: Record<string, LiveSessionState>
   setConnection: (connection?: ServerConnectionSettings) => void
   addServer: (connection: ServerConnectionSettings) => void
+  updateServer: (baseUrl: string, connection: ServerConnectionSettings) => void
   removeServer: (baseUrl: string) => void
   selectSession: (sessionId?: string) => void
   setTreeNodeExpanded: (nodeId: string, expanded: boolean) => void
@@ -71,6 +72,15 @@ export function createAppStore(storageName: string) {
                 ? state.servers.map((item) => item.baseUrl === baseUrl ? { ...item, ...server } : item)
                 : [...state.servers, server],
               connection: state.connection?.baseUrl === baseUrl ? server : state.connection ?? server,
+            }
+          }),
+        updateServer: (baseUrl, connection) =>
+          set((state) => {
+            const normalized = connection.baseUrl.replace(/\/+$/, "")
+            const updated = { ...connection, baseUrl: normalized }
+            return {
+              servers: state.servers.map((server) => server.baseUrl === baseUrl ? updated : server),
+              connection: state.connection?.baseUrl === baseUrl ? { ...state.connection, ...updated } : state.connection,
             }
           }),
         removeServer: (baseUrl) =>

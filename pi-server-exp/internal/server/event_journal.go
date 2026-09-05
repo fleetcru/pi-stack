@@ -13,18 +13,18 @@ import (
 )
 
 type eventJournal struct {
-	file    *os.File
-	path    string
-	records int
-	bytes   int64
+	file         *os.File
+	path         string
+	records      int
+	bytes        int64
 	syncInterval time.Duration
-	lastSync time.Time
+	lastSync     time.Time
 }
 
 type persistedEventRecord struct {
-	ID        uint64          `json:"id"`
-	Timestamp time.Time       `json:"timestamp"`
-	Event     RPCEvent        `json:"event"`
+	ID        uint64    `json:"id"`
+	Timestamp time.Time `json:"timestamp"`
+	Event     RPCEvent  `json:"event"`
 }
 
 // syncInterval controls fsync batching. Zero preserves strict per-event durability.
@@ -34,7 +34,9 @@ func openEventJournal(dataDir, sessionID string, syncIntervals ...time.Duration)
 	if len(syncIntervals) > 0 {
 		syncInterval = syncIntervals[0]
 	}
-	if syncInterval < 0 { syncInterval = 0 }
+	if syncInterval < 0 {
+		syncInterval = 0
+	}
 	if dataDir == "" {
 		return nil, nil, 0, nil
 	}
@@ -129,6 +131,10 @@ func (j *eventJournal) append(record EventRecord) error {
 	}
 	data = append(data, '\n')
 	if _, err := j.file.Write(data); err != nil {
+		if errors.Is(err, os.ErrClosed) {
+			j.file = nil
+			return nil
+		}
 		return err
 	}
 	// Strict mode fsyncs every event. A positive interval safely batches fsyncs
@@ -158,7 +164,9 @@ func (j *eventJournal) close() error {
 	if err := j.file.Sync(); err != nil {
 		return err
 	}
-	return j.file.Close()
+	err := j.file.Close()
+	j.file = nil
+	return err
 }
 
 func (j *eventJournal) compact(records []EventRecord) error {
@@ -218,10 +226,9 @@ func (j *eventJournal) compact(records []EventRecord) error {
 
 var errEventJournalUnavailable = errors.New("event journal unavailable")
 
-
 const (
 	defaultEventJournalMaxTotalBytes = int64(512 << 20)
-	defaultEventJournalMaxAge         = 30 * 24 * time.Hour
+	defaultEventJournalMaxAge        = 30 * 24 * time.Hour
 )
 
 func cleanupEventJournals(dataDir string, activeSessionIDs map[string]struct{}) error {
@@ -272,7 +279,6 @@ func cleanupEventJournals(dataDir string, activeSessionIDs map[string]struct{}) 
 	}
 	return nil
 }
-
 
 func removeEventJournal(dataDir, sessionID string) error {
 	path := filepath.Join(dataDir, "events", safeEventJournalName(sessionID)+".jsonl")

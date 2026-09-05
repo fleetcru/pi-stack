@@ -69,6 +69,8 @@ go vet ./...
 go build ./cmd/pi-server
 ```
 
+**Server rebuild requirement:** whenever an agent changes any file under `pi-server-exp/`, it must rebuild `pi-server-exp/pi-server.exe` before reporting the server change complete. Source changes do not affect an already-running executable.
+
 ### pi-webby-exp (React + TypeScript)
 
 **Path:** `pi-webby-exp/` · **Stack:** React 19, Vite 8, TypeScript, shadcn/ui, Tailwind v4
