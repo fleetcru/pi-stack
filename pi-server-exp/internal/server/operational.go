@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 )
 
 const maxHTTPBodyBytes int64 = 10 << 20
@@ -108,5 +107,3 @@ func metricsCacheControlMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-
-var _ = time.Second
