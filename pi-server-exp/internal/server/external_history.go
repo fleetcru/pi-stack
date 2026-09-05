@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -255,8 +256,21 @@ func (s *Server) relayHistoryIndexFor(path string, info os.FileInfo) (historyInd
 
 func relayHistoryRecordIsRelevant(prefix []byte) bool {
 	var header struct { Type string }
-	if json.Unmarshal(prefix, &header) != nil { return false }
-	return header.Type == "message" || header.Type == "tool_use" || header.Type == "tool_result"
+	if json.Unmarshal(prefix, &header) == nil {
+		return header.Type == "message" || header.Type == "tool_use" || header.Type == "tool_result"
+	}
+	// A long JSONL record may exceed the bounded prefix. The type field is
+	// written first by Pi, so recognize it without requiring complete JSON.
+	compact := bytes.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\n', '\r', '\t':
+			return -1
+		}
+		return r
+	}, prefix)
+	return bytes.Contains(compact, []byte(`"type":"message"`)) ||
+		bytes.Contains(compact, []byte(`"type":"tool_use"`)) ||
+		bytes.Contains(compact, []byte(`"type":"tool_result"`))
 }
 
 func relayHistoryMessage(line []byte) (any, bool) {
