@@ -417,6 +417,15 @@ Key invariants:
 - `turnCompleteGeneration` prevents stale runtime_state from re-enabling spinner after turn completes
 - LazyColumn keys must be unique — `itemKeys` uses seen-set with index fallback
 
+### Companion self-updater
+
+- Stable users receive only stable GitHub Releases. Prereleases require an explicit future opt-in.
+- A release must contain exactly one `pi-companion-<semver>.apk` asset, and `<semver>` must match the `v<semver>` release tag.
+- Select releases by Semantic Version precedence, not publish time or digits stripped from filenames.
+- APK downloads must use HTTPS on approved GitHub asset hosts, match the API-advertised size, stay below 200 MB, and move from a private `.part` file only after completion.
+- Before PackageInstaller receives an APK, verify its application ID, signing certificate against the installed app, and a strictly greater Android `versionCode`.
+- `STATUS_PENDING_USER_ACTION` must open Android's confirmation intent. Ignoring it leaves installs stuck indefinitely on devices that require confirmation.
+
 ## Scripts
 
 | Script | Purpose |

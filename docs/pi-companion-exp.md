@@ -73,12 +73,14 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 - `WorkerEditorDialog.kt` — add/edit a worker (URL, token).
 
 ### Settings (`ui/settings/`)
-- `SettingsViewModel.kt` / `SettingsScreen.kt` / `SettingsRow.kt` / `SettingsSection.kt` — settings UI over the DataStore, including a first-run QR pairing shortcut that creates the server entry automatically. The server-address hint uses a home-LAN address on the shared `3142` port. The About section shows an in-app updater that queries GitHub Releases.
+- `SettingsViewModel.kt` / `SettingsScreen.kt` / `SettingsRow.kt` / `SettingsSection.kt` — settings UI over the DataStore, including a first-run QR pairing shortcut that creates the server entry automatically. The server-address hint uses a home-LAN address on the shared `3142` port. The About section checks stable GitHub releases, reports download percentage, preserves a pending release across the unknown-apps permission screen, and surfaces update failures.
 - `PairingScanActivity.kt`, `PairingScanOverlayView.kt`, `PairingScanSquareLayout.kt` — camera QR scanning for server pairing (fullscreen overlay activity with a square preview layout).
 
 ### Updater (`data/updater/`)
-- `ReleaseStore.kt` — queries the public GitHub Releases API for `fleetcru/pi-stack`, selects the newest `pi-companion-*.apk` asset by publish time across both prereleases and stable, and returns its download URL.
-- `AppUpdater.kt` — downloads the selected APK to app cache, checks the downloaded `versionCode` against the installed one to avoid downgrades, and stages a silent install through Android's `PackageInstaller` (requires REQUEST_INSTALL_PACKAGES).
+- `ReleaseStore.kt` — queries the public GitHub Releases API for `fleetcru/pi-stack` with bounded timeouts. It accepts exactly one APK whose strict `pi-companion-<semver>.apk` name matches the release tag, ignores prereleases by default, and selects the highest Semantic Version rather than the latest timestamp.
+- `GitHubRelease.kt` — release API models plus strict Semantic Version parsing and precedence, including stable, alpha, beta, and release-candidate ordering.
+- `AppUpdater.kt` — accepts only HTTPS downloads from approved GitHub asset hosts, enforces the API-advertised size and a 200 MB cap, writes through an atomic `.part` file, and reports progress. Before installation it requires the expected application ID, a signing certificate matching the installed app, and a strictly newer Android `versionCode`. It stages the verified APK through `PackageInstaller` and removes cached files afterward.
+- `InstallResultReceiver.kt` — handles PackageInstaller status broadcasts, opens Android's required user-confirmation intent, and reports failures instead of leaving installation stuck silently.
 
 ## Theme
 

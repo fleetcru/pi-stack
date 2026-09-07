@@ -19,7 +19,28 @@ class InstallResultReceiver : BroadcastReceiver() {
     Log.i("AppUpdater", "Install result: status=$status message=$message")
     when (status) {
       PackageInstaller.STATUS_SUCCESS -> Unit
-      PackageInstaller.STATUS_PENDING_USER_ACTION -> Unit
+      PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+        val confirmation = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+          intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+        } else {
+          @Suppress("DEPRECATION")
+          intent.getParcelableExtra(Intent.EXTRA_INTENT)
+        }
+        if (confirmation != null) {
+          confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          runCatching { context.startActivity(confirmation) }
+            .onFailure {
+              Log.e("AppUpdater", "Could not open install confirmation", it)
+              Toast.makeText(
+                context,
+                "Open Pi Companion and retry the update to confirm installation",
+                Toast.LENGTH_LONG,
+              ).show()
+            }
+        } else {
+          Toast.makeText(context, "Android did not provide an install confirmation", Toast.LENGTH_LONG).show()
+        }
+      }
       else -> Toast.makeText(
         context,
         "Update could not be installed: $message",

@@ -10,6 +10,7 @@ import com.example.picompanion.data.settings.ServerEntry
 import com.example.picompanion.data.updater.AppUpdater
 import com.example.picompanion.data.updater.CompanionRelease
 import com.example.picompanion.di.AppModule
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -35,11 +36,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     data object Idle : UpdateState
     data object Checking : UpdateState
     data object UpToDate : UpdateState
-    data object Downloading : UpdateState
+    data class Downloading(val percent: Int) : UpdateState
     data object Installing : UpdateState
     data class UpdateAvailable(val release: CompanionRelease) : UpdateState
     data class Failed(val message: String) : UpdateState
-    data object PermissionRequired : UpdateState
+    data class PermissionRequired(val release: CompanionRelease) : UpdateState
   }
 
   private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
@@ -64,7 +65,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         return@launch
       }
       if (!updater.canRequestInstall()) {
-        _updateState.value = UpdateState.PermissionRequired
+        _updateState.value = UpdateState.PermissionRequired(release)
         return@launch
       }
       _updateState.value = UpdateState.UpdateAvailable(release)
@@ -73,15 +74,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
   fun downloadAndInstall(release: CompanionRelease) {
     if (_updateState.value is UpdateState.Downloading || _updateState.value is UpdateState.Installing) return
+    if (!updater.canRequestInstall()) {
+      _updateState.value = UpdateState.PermissionRequired(release)
+      return
+    }
     viewModelScope.launch {
-      _updateState.value = UpdateState.Downloading
+      _updateState.value = UpdateState.Downloading(percent = 0)
       try {
-        val apk = updater.download(release)
-        val downloadedCode = updater.downloadedVersionCode(apk)
-        if (downloadedCode != null && downloadedCode < updater.currentVersionCode()) {
-          _updateState.value = UpdateState.Failed("Downloaded APK is older than the installed app")
-          return@launch
+        val apk = updater.download(release) { downloaded, total ->
+          _updateState.value = UpdateState.Downloading(
+            percent = ((downloaded * 100) / total).toInt().coerceIn(0, 100),
+          )
         }
+        updater.validateDownloadedApk(apk)
         _updateState.value = UpdateState.Installing
         updater.install(apk) { success, message ->
           if (success) {
@@ -91,6 +96,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             _updateState.value = UpdateState.Failed(message ?: "Update could not be installed")
           }
         }
+      } catch (cancelled: CancellationException) {
+        _updateState.value = UpdateState.Idle
+        throw cancelled
       } catch (error: Exception) {
         _updateState.value = UpdateState.Failed(error.message ?: "Update failed")
       }
@@ -105,9 +113,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
    * fresh check so the update option appears without the user tapping again.
    */
   fun refreshInstallPermission() {
-    if (_updateState.value !is UpdateState.PermissionRequired) return
+    val pending = _updateState.value as? UpdateState.PermissionRequired ?: return
     if (updater.canRequestInstall()) {
-      checkForUpdates()
+      _updateState.value = UpdateState.UpdateAvailable(pending.release)
     }
   }
 

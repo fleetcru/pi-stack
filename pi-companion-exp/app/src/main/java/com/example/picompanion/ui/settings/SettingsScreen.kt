@@ -293,7 +293,7 @@ private fun UpdateSection(
     is SettingsViewModel.UpdateState.Downloading -> {
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-        Text("Downloading update…", style = MaterialTheme.typography.bodySmall)
+        Text("Downloading update... ${state.percent}%", style = MaterialTheme.typography.bodySmall)
       }
     }
     is SettingsViewModel.UpdateState.Installing -> {
