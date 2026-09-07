@@ -23,7 +23,7 @@ React 19 + Vite 8 + Tailwind v4 + shadcn/ui browser client for pi-server. Most d
 - `sidebar-tree.tsx` — grouped session list (local, remote, relay, machine-discovered) with search and per-session context menus.
 - `create-session-dialog.tsx` — new-session form: cwd picker, args, worktree toggle, extension options.
   The form also supports an optional initial message, sent immediately after creation so sessions can run in the background.
-- `server-connections-dialog.tsx` — manage multiple pi-server connections (name, URL, token, remember-token) backed by the persisted store.
+- `server-connections-dialog.tsx` — manage multiple pi-server connections (name, URL, token, remember-token) backed by the persisted store. Connection hints use the shared `3142` server port.
   The dialog presents active-server highlighting, an empty state, inline editing, and a two-step remove confirmation.
 - `worker-management-dialog.tsx` — manage remote workers through the server worker CRUD API, including add, edit, health/status refresh, and confirmed removal; the local worker is immutable.
 - `machine-session-list.tsx` — browse Pi sessions discovered on the machine but not managed by the server; can attach/adopt them.

@@ -96,15 +96,11 @@ func main() {
 		}
 	}
 
-	// Binding a non-loopback address without an auth token exposes full session
-	// control (prompt execution, file reads, relay commands) to the LAN — and,
-	// via the permissive WebSocket origin check, to any website the operator
-	// visits. Refuse to start unless explicitly overridden.
-	if cfg.AuthToken == "" && !loopbackAddr(cfg.Addr) && os.Getenv("PI_SERVER_ALLOW_INSECURE") == "" {
-		logger.Error("refusing to bind a non-loopback address without PI_SERVER_AUTH_TOKEN",
-			"addr", cfg.Addr,
-			"hint", "set PI_SERVER_AUTH_TOKEN, or set PI_SERVER_ALLOW_INSECURE=1 to override")
-		os.Exit(1)
+	// The standalone default intentionally trusts the home LAN or Tailscale
+	// network. Operators can still set PI_SERVER_AUTH_TOKEN when the network
+	// contains devices that should not have full Pi access.
+	if cfg.AuthToken == "" && !loopbackAddr(cfg.Addr) {
+		logger.Warn("authentication disabled; trusting the private network", "addr", cfg.Addr)
 	}
 
 	// Validate before detaching so --bg reports configuration errors to the
@@ -122,6 +118,7 @@ func main() {
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("starting pi-server", "addr", cfg.Addr, "pi", cfg.PiBinary, "cwd", cfg.CWD)
+		logAccessURLs(logger, cfg.Addr)
 		errCh <- srv.ListenAndServe()
 	}()
 
@@ -223,12 +220,51 @@ func writeBridgeConfig(cfg server.Config) error {
 func bridgeAddress(addr string) string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil || port == "" {
-		port = "3141"
+		port = "3142"
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
 		host = firstLANIPv4()
 	}
 	return "http://" + net.JoinHostPort(host, port)
+}
+
+func logAccessURLs(logger *clog.Logger, addr string) {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		port = "3142"
+	}
+	logger.Info("local access", "url", "http://127.0.0.1:"+port, "admin", "http://127.0.0.1:"+port+"/admin/")
+	if lan := firstLANIPv4(); lan != "127.0.0.1" {
+		logger.Info("home network access", "url", "http://"+net.JoinHostPort(lan, port))
+	}
+	if tailscale := firstTailscaleIPv4(); tailscale != "" {
+		logger.Info("Tailscale access", "url", "http://"+net.JoinHostPort(tailscale, port))
+	}
+}
+
+func firstTailscaleIPv4() string {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := iface.Addrs()
+		for _, addr := range addrs {
+			ip, _, err := net.ParseCIDR(addr.String())
+			if err == nil && isTailscaleIPv4(ip) {
+				return ip.String()
+			}
+		}
+	}
+	return ""
+}
+
+func isTailscaleIPv4(ip net.IP) bool {
+	v4 := ip.To4()
+	return v4 != nil && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
 }
 
 func firstLANIPv4() string {
@@ -344,7 +380,7 @@ func loopbackAddr(addr string) bool {
 		host = addr
 	}
 	if host == "" {
-		return false // ":3141" listens on all interfaces
+		return false // ":3142" listens on all interfaces
 	}
 	if host == "localhost" {
 		return true

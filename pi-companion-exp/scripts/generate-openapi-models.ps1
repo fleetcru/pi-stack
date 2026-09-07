@@ -1,5 +1,5 @@
 param(
-  [string]$ServerUrl = "http://127.0.0.1:3141",
+  [string]$ServerUrl = "http://127.0.0.1:3142",
   [string]$Output = "app/src/main/java/com/example/picompanion/data/api/generated"
 )
 

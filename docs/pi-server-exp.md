@@ -9,11 +9,11 @@ Go 1.23 HTTP/WebSocket daemon. Spawns Pi CLI processes, speaks strict LF-delimit
 ## Server core
 
 - `internal/server/server.go` — the `Server` struct and constructor. Owns the HTTP mux, registries (sessions, remote sessions, external relays, workers, devices), admission control, metrics, and route registration. `Shutdown` drains gracefully.
-- `config.go` — `Config` struct plus `ConfigFromEnv()`. Maps `PI_SERVER_*` environment variables (address, auth token, data dir, allowed roots/origins, capacity limits, timeouts) into typed values with validation.
+- `config.go` — `Config` struct plus `ConfigFromEnv()`. Maps `PI_SERVER_*` environment variables into typed values with validation. The standalone default is `0.0.0.0:3142`, ready for trusted home-LAN and Tailscale clients.
 - `capabilities.go` — `GET /v1` capability discovery and `/healthz` health check.
 - `context.go` — helper wrapping requests in a timeout context.
 - `errors.go` — request-ID plumbing and `writeErrorCode`, the uniform JSON error writer used by every handler.
-- `http_util.go` — `writeJSON`, CORS middleware (rejects browser cross-origin when no origins configured; non-browser requests pass), loopback-origin equivalence checks.
+- `http_util.go` — `writeJSON` and CORS middleware. With no explicit allowlist, browser origins on loopback, RFC1918 LAN addresses, Tailscale `100.64.0.0/10`, and the server's own `*.ts.net` hostname pass. Public origins fail. `PI_SERVER_ALLOWED_ORIGINS` replaces these defaults with a strict list.
 - `operational.go` — security headers middleware, request body size limit, and the Prometheus `/metrics` endpoint.
 - `request_metrics.go` — per-route request counters/latency histograms feeding the Prometheus output.
 - `path.go` — URL-path splitting (`/v1/sessions/{id}/...`), session-ID validation, CWD normalization against allowed roots.
@@ -96,7 +96,7 @@ The `external-session-bridge.ts` extension in a user's Pi TUI connects back to t
 ## Devices, admin, diagnostics
 
 - `devices.go` — persisted device registry used by QR pairing (Companion scans a code, server records the device).
-- `admin.go` / `admin_config.go` — built-in admin page and runtime-adjustable admin settings (capacity limits, durations) that overlay the env config.
+- `admin.go` / `admin_config.go` — built-in admin page and runtime-adjustable admin settings (capacity limits, durations) that overlay the env config. The embedded Admin UI uses the stack's black, white, and gray palette, with responsive cards, forms, device controls, and a mobile bottom-sheet pairing dialog.
 - `diagnostics.go` — aggregated health snapshot (sessions, workers, uptime, versions).
 - `command_receipts.go` — persisted receipts for delivered commands so clients can reconcile "did my prompt actually arrive" after reconnects.
 - `scheduler_handler.go` — scheduler introspection endpoint.

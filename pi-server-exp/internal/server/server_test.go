@@ -64,6 +64,64 @@ func TestOriginAllowlist(t *testing.T) {
 	}
 }
 
+func TestDefaultPrivateNetworkOrigins(t *testing.T) {
+	tests := []struct {
+		name       string
+		origin     string
+		serverHost string
+		allowed    bool
+	}{
+		{name: "localhost", origin: "http://localhost:5174", serverHost: "192.168.1.10:3142", allowed: true},
+		{name: "tauri", origin: "tauri://localhost", serverHost: "100.90.80.70:3142", allowed: true},
+		{name: "home ipv4", origin: "http://192.168.1.20:5174", serverHost: "192.168.1.10:3142", allowed: true},
+		{name: "home ipv6", origin: "http://[fd00::20]:5174", serverHost: "[fd00::10]:3142", allowed: true},
+		{name: "tailscale ipv4", origin: "http://100.100.20.30:5174", serverHost: "100.90.80.70:3142", allowed: true},
+		{name: "same magicdns host", origin: "https://workstation.tailnet.ts.net:5174", serverHost: "workstation.tailnet.ts.net:3142", allowed: true},
+		{name: "different magicdns host", origin: "https://other.tailnet.ts.net:5174", serverHost: "workstation.tailnet.ts.net:3142", allowed: false},
+		{name: "public ipv4", origin: "https://8.8.8.8", serverHost: "192.168.1.10:3142", allowed: false},
+		{name: "public domain", origin: "https://evil.example", serverHost: "192.168.1.10:3142", allowed: false},
+		{name: "unsupported scheme", origin: "ftp://192.168.1.20", serverHost: "192.168.1.10:3142", allowed: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := corsOriginAllowed(tt.origin, tt.serverHost, nil); got != tt.allowed {
+				t.Fatalf("corsOriginAllowed(%q, %q) = %v, want %v", tt.origin, tt.serverHost, got, tt.allowed)
+			}
+		})
+	}
+}
+
+func TestDefaultPrivateNetworkCORSMiddleware(t *testing.T) {
+	h := corsMiddleware(nil, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+
+	allowed := httptest.NewRequest(http.MethodOptions, "http://192.168.1.10:3142/v1/sessions", nil)
+	allowed.Host = "192.168.1.10:3142"
+	allowed.Header.Set("Origin", "http://192.168.1.20:5174")
+	allowedResponse := httptest.NewRecorder()
+	h.ServeHTTP(allowedResponse, allowed)
+	if allowedResponse.Code != http.StatusNoContent || allowedResponse.Header().Get("Access-Control-Allow-Origin") != "http://192.168.1.20:5174" {
+		t.Fatalf("private CORS response = %d %q", allowedResponse.Code, allowedResponse.Header().Get("Access-Control-Allow-Origin"))
+	}
+
+	blocked := httptest.NewRequest(http.MethodGet, "http://192.168.1.10:3142/v1/sessions", nil)
+	blocked.Host = "192.168.1.10:3142"
+	blocked.Header.Set("Origin", "https://evil.example")
+	blockedResponse := httptest.NewRecorder()
+	h.ServeHTTP(blockedResponse, blocked)
+	if blockedResponse.Code != http.StatusForbidden {
+		t.Fatalf("public origin response = %d, want %d", blockedResponse.Code, http.StatusForbidden)
+	}
+}
+
+func TestExplicitOriginAllowlistOverridesPrivateDefaults(t *testing.T) {
+	if corsOriginAllowed("http://192.168.1.20:5174", "192.168.1.10:3142", []string{"https://app.example"}) {
+		t.Fatal("private origin bypassed explicit allowlist")
+	}
+	if !corsOriginAllowed("https://app.example", "192.168.1.10:3142", []string{"https://app.example"}) {
+		t.Fatal("explicitly allowed origin was rejected")
+	}
+}
+
 func TestConvenienceCommandValidation(t *testing.T) {
 	r := httptest.NewRequest("POST", "/", strings.NewReader(`{}`))
 	if _, _, err := commandFromBody("prompt", r); err == nil {

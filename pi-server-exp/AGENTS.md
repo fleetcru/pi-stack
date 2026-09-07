@@ -96,7 +96,7 @@ Start the daemon with a matching allowlist, for example:
 ```powershell
 $env:PI_SERVER_ALLOWED_ORIGINS = "http://127.0.0.1:8080"
 $env:PI_SERVER_ALLOWED_ROOTS = "C:\Users\basin\pi-server,C:\Users\basin\Desktop"
-go run ./cmd/pi-server --addr 127.0.0.1:3141
+go run ./cmd/pi-server --addr 127.0.0.1:3142
 ```
 
 `http://localhost:8080` is also accepted for that same loopback port.

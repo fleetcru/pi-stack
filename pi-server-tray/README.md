@@ -96,7 +96,7 @@ Options:
 --no-download         disable automatic server downloads
 --release-repo REPO   stable release repository (default fleetcru/pi-stack)
 --cwd PATH            server working directory (default: user home)
---url URL             server base URL (default http://127.0.0.1:3141)
+--url URL             server base URL (default http://127.0.0.1:3142)
 --log-file PATH       combined server output log
 ```
 

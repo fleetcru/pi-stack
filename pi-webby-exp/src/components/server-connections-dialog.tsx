@@ -89,7 +89,7 @@ export function ServerConnectionsDialog({
         <div className="grid gap-3 border-t border-border pt-4">
           <div className="flex items-center justify-between"><div><p className="text-sm font-medium">{editingUrl ? "Edit server" : "Add a server"}</p><p className="text-xs text-muted-foreground">Use a name you will recognize later.</p></div>{editingUrl && <Button type="button" size="sm" variant="ghost" onClick={resetForm}><X /> Cancel</Button>}</div>
           <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Server name (optional)" />
-          <Input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://pi-server.example:3141" />
+          <Input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="http://your-laptop-ip:3142" />
           {(() => {
             try {
               const url = new URL(baseUrl.trim())

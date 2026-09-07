@@ -1,11 +1,10 @@
 [CmdletBinding()]
-# Keep the live development stack on 3142; pi-server standalone defaults to 3141.
+# The live development stack and standalone server both use port 3142.
 # This avoids confusing a separately running server with the stack launcher.
 param(
   [int]$ServerPort = 3142,
   [int]$WebPort = 5174,
   [string]$AuthToken = "",
-  [switch]$AllowInsecure,
   [switch]$InstallGlobalBridge,
   [switch]$Background,
   [switch]$Minimized,
@@ -36,7 +35,6 @@ if (-not $lanIp) {
 }
 
 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-$origins = "http://127.0.0.1:$WebPort,http://localhost:$WebPort,http://${lanIp}:$WebPort"
 
 # --- Install global bridge extension if requested ---
 if ($InstallGlobalBridge) {
@@ -52,17 +50,18 @@ if ($InstallGlobalBridge) {
 function Quote-PowerShell([string]$value) { "'" + $value.Replace("'", "''") + "'" }
 
 # --- Build server command ---
-$bindHost = if ($AuthToken -or $AllowInsecure) { "0.0.0.0" } else { "127.0.0.1" }
+$bindHost = "0.0.0.0"
 $serverCommand = @(
   "`$env:PI_SERVER_ADDR = '${bindHost}:$ServerPort'"
   "`$env:PI_SERVER_CWD = $(Quote-PowerShell $root)"
   "`$env:PI_SERVER_DATA_DIR = $(Quote-PowerShell $dataDir)"
   "`$env:PI_SERVER_ALLOWED_ROOTS = $(Quote-PowerShell $root)"
-  "`$env:PI_SERVER_ALLOWED_ORIGINS = $(Quote-PowerShell $origins)"
+  "Remove-Item Env:PI_SERVER_ALLOWED_ORIGINS -ErrorAction SilentlyContinue"
   "`$env:PI_SERVER_PI_EXTENSIONS = $(Quote-PowerShell (Join-Path $serverDir 'extensions' | Join-Path -ChildPath 'session-title.ts'))"
   "`$env:PI_SERVER_MAX_SESSIONS = '$MaxSessions'"
   "`$env:PI_SERVER_MAX_ACTIVE_RUNS = '$MaxActiveRuns'"
-  $(if ($AuthToken) { "`$env:PI_SERVER_AUTH_TOKEN = $(Quote-PowerShell $AuthToken); Remove-Item Env:PI_SERVER_ALLOW_INSECURE -ErrorAction SilentlyContinue" } elseif ($AllowInsecure) { "Remove-Item Env:PI_SERVER_AUTH_TOKEN -ErrorAction SilentlyContinue; `$env:PI_SERVER_ALLOW_INSECURE = '1'" } else { "Remove-Item Env:PI_SERVER_AUTH_TOKEN -ErrorAction SilentlyContinue; Remove-Item Env:PI_SERVER_ALLOW_INSECURE -ErrorAction SilentlyContinue" })
+  $(if ($AuthToken) { "`$env:PI_SERVER_AUTH_TOKEN = $(Quote-PowerShell $AuthToken)" } else { "Remove-Item Env:PI_SERVER_AUTH_TOKEN -ErrorAction SilentlyContinue" })
+  "Remove-Item Env:PI_SERVER_ALLOW_INSECURE -ErrorAction SilentlyContinue"
   "Set-Location $(Quote-PowerShell $serverDir)"
   "go run ./cmd/pi-server"
 ) -join "; "

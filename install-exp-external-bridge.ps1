@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [int]$ServerPort = 3141,
+  [int]$ServerPort = 3142,
   [string]$RelayUrl = "",
   [string]$AuthToken = ""
 )

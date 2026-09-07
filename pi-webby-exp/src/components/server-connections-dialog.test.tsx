@@ -81,8 +81,8 @@ describe("ServerConnectionsDialog", () => {
   })
 
   it("shows existing servers in the list", () => {
-    useAppStore.getState().addServer({ baseUrl: "http://a.example:3141", name: "My Server" })
-    useAppStore.getState().addServer({ baseUrl: "http://b.example:3141", name: "Remote" })
+    useAppStore.getState().addServer({ baseUrl: "http://a.example:3142", name: "My Server" })
+    useAppStore.getState().addServer({ baseUrl: "http://b.example:3142", name: "Remote" })
     renderDialog()
     const dialog = getDialogContent()
     expect(within(dialog).getByText("My Server")).toBeInTheDocument()
@@ -90,13 +90,13 @@ describe("ServerConnectionsDialog", () => {
   })
 
   it("shows remove button for each server", () => {
-    useAppStore.getState().addServer({ baseUrl: "http://a.example:3141", name: "Test" })
+    useAppStore.getState().addServer({ baseUrl: "http://a.example:3142", name: "Test" })
     renderDialog()
     expect(screen.getByTestId("icon-trash")).toBeInTheDocument()
   })
 
   it("removes a server when trash is clicked", async () => {
-    useAppStore.getState().addServer({ baseUrl: "http://a.example:3141", name: "Remove Me" })
+    useAppStore.getState().addServer({ baseUrl: "http://a.example:3142", name: "Remove Me" })
     renderDialog()
     const trashBtn = screen.getByLabelText("Remove Remove Me")
     await userEvent.click(trashBtn)
@@ -106,11 +106,11 @@ describe("ServerConnectionsDialog", () => {
   })
 
   it("sets active connection when a server is clicked", async () => {
-    useAppStore.getState().addServer({ baseUrl: "http://a.example:3141", name: "Click Me" })
+    useAppStore.getState().addServer({ baseUrl: "http://a.example:3142", name: "Click Me" })
     const { onOpenChange } = renderDialog()
     const serverBtn = screen.getByText("Click Me")
     await userEvent.click(serverBtn)
-    expect(useAppStore.getState().connection?.baseUrl).toBe("http://a.example:3141")
+    expect(useAppStore.getState().connection?.baseUrl).toBe("http://a.example:3142")
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
@@ -118,47 +118,47 @@ describe("ServerConnectionsDialog", () => {
     renderDialog()
     const dialog = getDialogContent()
     const nameInput = within(dialog).getByPlaceholderText("Server name (optional)")
-    const urlInput = within(dialog).getByPlaceholderText("https://pi-server.example:3141")
+    const urlInput = within(dialog).getByPlaceholderText("http://your-laptop-ip:3142")
     await userEvent.type(nameInput, "New Server")
-    await userEvent.type(urlInput, "http://new.example:3141")
+    await userEvent.type(urlInput, "http://new.example:3142")
     expect(nameInput).toHaveValue("New Server")
-    expect(urlInput).toHaveValue("http://new.example:3141")
+    expect(urlInput).toHaveValue("http://new.example:3142")
   })
 
   it("shows HTTP warning for non-localhost HTTP URLs", async () => {
     renderDialog()
     const dialog = getDialogContent()
-    const urlInput = within(dialog).getByPlaceholderText("https://pi-server.example:3141")
-    await userEvent.type(urlInput, "http://remote.example:3141")
+    const urlInput = within(dialog).getByPlaceholderText("http://your-laptop-ip:3142")
+    await userEvent.type(urlInput, "http://remote.example:3142")
     expect(within(dialog).getByText(/HTTP sends your token in plaintext/)).toBeInTheDocument()
   })
 
   it("does not show HTTP warning for localhost", async () => {
     renderDialog()
     const dialog = getDialogContent()
-    const urlInput = within(dialog).getByPlaceholderText("https://pi-server.example:3141")
-    await userEvent.type(urlInput, "http://localhost:3141")
+    const urlInput = within(dialog).getByPlaceholderText("http://your-laptop-ip:3142")
+    await userEvent.type(urlInput, "http://localhost:3142")
     expect(within(dialog).queryByText(/HTTP sends your token in plaintext/)).not.toBeInTheDocument()
   })
 
   it("add server button becomes enabled with valid URL", async () => {
     renderDialog()
     const dialog = getDialogContent()
-    const urlInput = within(dialog).getByPlaceholderText("https://pi-server.example:3141")
+    const urlInput = within(dialog).getByPlaceholderText("http://your-laptop-ip:3142")
     const addBtn = within(dialog).getByText("Add server")
     expect(addBtn).toBeDisabled()
-    await userEvent.type(urlInput, "http://new.example:3141")
+    await userEvent.type(urlInput, "http://new.example:3142")
     expect(addBtn).not.toBeDisabled()
   })
 
   it("adds a server via the add button", async () => {
     renderDialog()
     const dialog = getDialogContent()
-    const urlInput = within(dialog).getByPlaceholderText("https://pi-server.example:3141")
-    await userEvent.type(urlInput, "http://new.example:3141")
+    const urlInput = within(dialog).getByPlaceholderText("http://your-laptop-ip:3142")
+    await userEvent.type(urlInput, "http://new.example:3142")
     await userEvent.click(within(dialog).getByText("Add server"))
     expect(useAppStore.getState().servers).toHaveLength(1)
-    expect(useAppStore.getState().servers[0]!.baseUrl).toBe("http://new.example:3141")
+    expect(useAppStore.getState().servers[0]!.baseUrl).toBe("http://new.example:3142")
   })
 
   it("calls onOpenChange(false) when dialog requests close", () => {

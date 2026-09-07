@@ -75,6 +75,15 @@ import com.example.picompanion.data.settings.ServerEntry
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 
+private fun launchPairingScanner(
+  scanTargetId: String,
+  setScanTargetId: (String) -> Unit,
+  launch: (ScanOptions) -> Unit,
+) {
+  setScanTargetId(scanTargetId)
+  launch(ScanOptions().setCaptureActivity(PairingScanActivity::class.java).setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("").setBeepEnabled(false).setOrientationLocked(false))
+}
+
 @Composable
 fun SettingsScreen(
   darkTheme: Boolean,
@@ -118,6 +127,15 @@ fun SettingsScreen(
 
     // Servers
     SettingsSection(title = "Servers") {
+      OutlinedButton(
+        onClick = {
+          val id = viewModel.addServer()
+          launchPairingScanner(id, { scanTargetId = it }, scanner::launch)
+        },
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+      ) { Text("Scan pairing QR") }
+      Spacer(Modifier.height(4.dp))
       settings.servers.forEach { server ->
         ServerCard(
           server = server,
@@ -130,15 +148,7 @@ fun SettingsScreen(
           },
           onTest = { viewModel.testConnection(server) },
           onScan = {
-            scanTargetId = server.id
-            scanner.launch(
-              ScanOptions()
-                .setCaptureActivity(PairingScanActivity::class.java)
-                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                .setPrompt("")
-                .setBeepEnabled(false)
-                .setOrientationLocked(false),
-            )
+            launchPairingScanner(server.id, { scanTargetId = it }, scanner::launch)
           },
           onRemove = if (settings.servers.size > 1) {
             { viewModel.removeServer(server.id) }
@@ -346,7 +356,7 @@ private fun ServerCard(
             label = "URL",
             value = editUrl,
             onValueChange = { editUrl = it },
-            placeholder = "127.0.0.1:3141",
+            placeholder = "192.168.1.10:3142",
             imeAction = ImeAction.Next,
             keyboardType = KeyboardType.Uri,
             error = urlError,

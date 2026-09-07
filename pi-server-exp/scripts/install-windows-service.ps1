@@ -1,7 +1,7 @@
 param(
   [string]$Binary = "$PSScriptRoot\..\pi-server.exe",
   [string]$Name = "pi-server",
-  [string]$Addr = "127.0.0.1:3141"
+  [string]$Addr = "0.0.0.0:3142"
 )
 $Binary = [System.IO.Path]::GetFullPath($Binary)
 if (-not (Test-Path -LiteralPath $Binary -PathType Leaf)) {

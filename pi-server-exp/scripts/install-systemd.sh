@@ -4,7 +4,7 @@ set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo "Run this script with sudo." >&2; exit 1; }
 
 BIN=${1:-/usr/local/bin/pi-server}
-ADDR=${PI_SERVER_ADDR:-127.0.0.1:3141}
+ADDR=${PI_SERVER_ADDR:-127.0.0.1:3142}
 SERVICE_USER=${PI_SERVER_SERVICE_USER:-${SUDO_USER:-root}}
 AUTH_TOKEN=${PI_SERVER_AUTH_TOKEN:-}
 

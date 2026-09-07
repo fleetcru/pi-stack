@@ -24,7 +24,7 @@ describe("ServerConnectionsDialog", () => {
   it("renders its connection form", () => {
     render(<ServerConnectionsDialog open onOpenChange={vi.fn()} />)
     const dialog = screen.getByRole("dialog")
-    expect(within(dialog).getByPlaceholderText("https://pi-server.example:3141")).toBeInTheDocument()
+    expect(within(dialog).getByPlaceholderText("http://your-laptop-ip:3142")).toBeInTheDocument()
     expect(within(dialog).getByRole("button", { name: "Add server" })).toBeDisabled()
   })
 

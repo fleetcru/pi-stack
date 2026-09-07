@@ -154,13 +154,9 @@ func New(cfg Config, logger *slog.Logger) *Server {
 			if origin == "" {
 				return true // non-browser clients (curl, SDKs)
 			}
-			if len(cfg.AllowedOrigins) == 0 {
-				// Mirror corsMiddleware: reject browser cross-origin requests
-				// when no allowlist is configured.
-				return false
-			}
-			// Match HTTP CORS: exact origin or equivalent loopback host.
-			return originAllowed(origin, cfg.AllowedOrigins)
+			// Match HTTP CORS: explicit allowlist when configured, otherwise
+			// built-in loopback, private-LAN, and Tailscale origins.
+			return corsOriginAllowed(origin, r.Host, cfg.AllowedOrigins)
 		},
 	}
 	// Initialize session bridge for pi -r compatibility

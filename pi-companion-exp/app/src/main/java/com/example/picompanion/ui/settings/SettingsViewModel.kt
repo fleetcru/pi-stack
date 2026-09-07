@@ -54,7 +54,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
   // --- Server management ---
 
-  fun addServer() {
+  /** Adds a blank entry and returns its id so first-run pairing can start immediately. */
+  fun addServer(): String {
     val current = settings.value.servers
     val newServer = ServerEntry(
       id = UUID.randomUUID().toString().take(8),
@@ -62,6 +63,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
       url = "",
     )
     viewModelScope.launch { dataStore.updateServers(current + newServer) }
+    return newServer.id
   }
 
   fun removeServer(id: String) {

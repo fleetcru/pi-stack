@@ -12,7 +12,7 @@ export type SessionMetadataUpdate =
 export type WSTicket = components["schemas"]["WSTicketResponse"]
 
 export interface PiServerClientOptions {
-  /** HTTP(S) base URL. Defaults to VITE_PI_SERVER_URL, then localhost:3141. */
+  /** HTTP(S) base URL. Defaults to VITE_PI_SERVER_URL, then localhost:3142. */
   baseUrl?: string
   /** Optional PI_SERVER_AUTH_TOKEN. Keep this out of browser storage. */
   token?: string
@@ -231,7 +231,7 @@ export class PiServerClient {
     this.baseUrl = normalizeBaseUrl(
       options.baseUrl ??
         import.meta.env.VITE_PI_SERVER_URL ??
-        "http://127.0.0.1:3141"
+        "http://127.0.0.1:3142"
     )
     // Note: intentionally no build-time token fallback. Baking
     // VITE_PI_SERVER_AUTH_TOKEN into the client bundle would ship the bearer
