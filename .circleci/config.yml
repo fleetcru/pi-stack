@@ -63,7 +63,8 @@ jobs:
             echo "export VERSION_CODE=$(date +%s)" >> "$BASH_ENV"
             echo "$VERSION_NAME" > /tmp/pi-companion-version
 
-      - android/restore-gradle-cache
+      - android/restore_gradle_cache
+      - android/restore_build_cache
 
       - run:
           name: Build release APK
@@ -80,7 +81,8 @@ jobs:
             VERSION_NAME: $VERSION_NAME
             VERSION_CODE: $VERSION_CODE
 
-      - android/save-gradle-cache
+      - android/save_gradle_cache
+      - android/save_build_cache
 
       - save_cache:
           key: gradle-v1-{{ checksum "pi-companion-exp/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "pi-companion-exp/gradle/libs.versions.toml" }}
