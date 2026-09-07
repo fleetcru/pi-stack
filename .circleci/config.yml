@@ -11,10 +11,10 @@ orbs:
 jobs:
   build:
     docker:
-      # Recent cimg/android ships the Android SDK (platforms/build-tools),
-      # Gradle, and JDK 17. The image pulls once and Docker layer caching
+      # cimg/android:2026.08.1 ships android-36 (and 39/37/35/34),
+      # Java 21, and Gradle. The image pulls once and Docker layer caching
       # keeps it warm across runs.
-      - image: cimg/android:2025.09
+      - image: cimg/android:2026.08.1
     resource_class: medium
     steps:
       - checkout
@@ -41,15 +41,13 @@ jobs:
             echo "export KEYSTORE_PATH=/tmp/release.jks" >> "$BASH_ENV"
 
       - run:
-          name: Install Android platform 36 and accept licenses
+          name: Accept Android SDK licenses
           command: |
             set -euo pipefail
-            # Dependencies require compileSdk 36, which is newer than the image's
-            # preinstalled platforms. Install the platform + matching build-tools
-            # and accept all licenses before Gradle builds.
+            # The image already ships android-36 (and Java 21); only the SDK
+            # licenses need accepting on a fresh container before Gradle builds.
             yes | sdkmanager --licenses >/dev/null 2>&1 || true
-            sdkmanager "platforms;android-36" "build-tools;36.0.0" >/dev/null
-            sdkmanager --list_installed | grep -i 'platforms;android-36' || true
+            sdkmanager --list_installed | grep -iE 'platforms;android-36' || true
 
       - run:
           name: Generate version
