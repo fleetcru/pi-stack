@@ -41,15 +41,15 @@ jobs:
             echo "export KEYSTORE_PATH=/tmp/release.jks" >> "$BASH_ENV"
 
       - run:
-          name: Accept Android SDK licenses
+          name: Install Android platform 36 and accept licenses
           command: |
             set -euo pipefail
-            # compileSdk 35 is within the preinstalled range, but the licenses
-            # still need accepting on a fresh image before Gradle can build.
+            # Dependencies require compileSdk 36, which is newer than the image's
+            # preinstalled platforms. Install the platform + matching build-tools
+            # and accept all licenses before Gradle builds.
             yes | sdkmanager --licenses >/dev/null 2>&1 || true
-            if command -v sdkmanager >/dev/null 2>&1; then
-              sdkmanager --list_installed | grep -i 'platforms;android-35' || true
-            fi
+            sdkmanager "platforms;android-36" "build-tools;36.0.0" >/dev/null
+            sdkmanager --list_installed | grep -i 'platforms;android-36' || true
 
       - run:
           name: Generate version
