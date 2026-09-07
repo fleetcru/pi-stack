@@ -138,6 +138,33 @@ func (r *deviceRegistry) delete(id string) bool {
 	return r.saveLocked() == nil
 }
 
+// CreatePairingCredential creates a revocable token for startup pairing flows.
+// Unused credentials with the same name are removed first, so restarts do not
+// accumulate tokens that were printed but never scanned. Used device tokens
+// remain valid across restarts. The raw token is returned once and never saved.
+func (s *Server) CreatePairingCredential(name string) (string, error) {
+	s.devices.mu.Lock()
+	removed := make(map[string]deviceRecord)
+	for id, record := range s.devices.devices {
+		if record.Name == name && record.LastSeen.IsZero() {
+			removed[id] = record
+			delete(s.devices.devices, id)
+		}
+	}
+	if len(removed) > 0 {
+		if err := s.devices.saveLocked(); err != nil {
+			for id, record := range removed {
+				s.devices.devices[id] = record
+			}
+			s.devices.mu.Unlock()
+			return "", err
+		}
+	}
+	s.devices.mu.Unlock()
+	_, token, err := s.devices.create(name)
+	return token, err
+}
+
 func publicDevice(record deviceRecord) map[string]any {
 	return map[string]any{
 		"id": record.ID, "name": record.Name, "createdAt": record.CreatedAt,

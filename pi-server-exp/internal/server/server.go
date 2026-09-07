@@ -41,6 +41,9 @@ type Server struct {
 	historyOwnerLocks map[string]*os.File
 	stateCacheMu      sync.Mutex
 	stateCache        map[string]cachedSessionState
+	availableModelsMu sync.Mutex
+	availableModels   []availableServerModel
+	availableModelsAt time.Time
 	pendingTitleMu    sync.Mutex
 	pendingTitle      map[string]bool
 	// Idempotency cache: maps "sessionId:key" to expiry time.
@@ -208,6 +211,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/admin/", s.adminRoot)
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /v1/capabilities", s.capabilities)
+	mux.HandleFunc("GET /v1/models", s.listAvailableModels)
 	mux.HandleFunc("GET /v1/diagnostics", s.diagnostics)
 	mux.HandleFunc("GET /metrics", s.prometheusMetrics)
 	mux.HandleFunc("PATCH /v1/capacity", s.updateCapacity)

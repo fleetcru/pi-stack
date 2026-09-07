@@ -144,7 +144,7 @@ pnpm dev -- --host 0.0.0.0 --port 5174
 
 ### Connect from your phone
 
-The scripts auto-detect your LAN or Tailscale IP. Open the printed URL on your phone:
+The executable and scripts auto-detect your LAN or Tailscale IP. Interactive server starts also print a Companion pairing QR containing a new revocable device credential. Scan it from Companion Settings, or open one of the printed URLs manually:
 
 ```
 Webby: http://192.168.1.100:5174

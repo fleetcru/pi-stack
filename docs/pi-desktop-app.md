@@ -22,7 +22,7 @@ Tauri v2 desktop client. The React side is a near-mirror of pi-webby (same share
 - `hooks/use-session-notifications.ts` — watches a session's `runtime_state` and fires a native notification on `working → idle`, i.e. "Pi finished your task" while you're in another window.
 
 ### Components
-- `components/workspace-shell.tsx`, `session-workspace.tsx`, `session-inspector.tsx`, `sidebar-tree.tsx`, `create-session-dialog.tsx`, `server-connections-dialog.tsx`, `machine-session-list.tsx`, `changed-files-list.tsx`, `capacity-control.tsx`, `theme-provider.tsx` — functionally identical to their pi-webby-exp counterparts (kept in sync by `sync-components.ps1/.sh`); see the webby doc for details. Connection hints use the shared `3142` server port.
+- `components/workspace-shell.tsx`, `quick-session-composer.tsx`, `session-workspace.tsx`, `session-inspector.tsx`, `sidebar-tree.tsx`, `create-session-dialog.tsx`, `server-connections-dialog.tsx`, `machine-session-list.tsx`, `changed-files-list.tsx`, `capacity-control.tsx`, `theme-provider.tsx` — functionally identical to their pi-webby-exp counterparts (kept in sync by `sync-components.ps1/.sh`); see the webby doc for details. The empty workspace has the same quick-session composer with provider/model selection, and connection hints use port `3142`.
 - `components/ui/*` — shadcn/ui primitives, same set as webby.
 
 ## Sync discipline

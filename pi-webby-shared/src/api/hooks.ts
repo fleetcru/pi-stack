@@ -64,6 +64,7 @@ export const piQueryKeys = {
   scheduler: (baseUrl: string) => ["pi-server", baseUrl, "scheduler"] as const,
   capabilities: (baseUrl: string) =>
     ["pi-server", baseUrl, "capabilities"] as const,
+  models: (baseUrl: string) => ["pi-server", baseUrl, "models"] as const,
   workers: (baseUrl: string) => ["pi-server", baseUrl, "workers"] as const,
   sessions: (baseUrl: string) => ["pi-server", baseUrl, "sessions"] as const,
   globalSessions: (baseUrl: string) => ["pi-server", baseUrl, "global-sessions"] as const,
@@ -94,6 +95,17 @@ export function useServerHealth() {
   const client = usePiServerClient()
   const configured = useServerConfigured()
   return useQuery({ queryKey: piQueryKeys.health(client.cacheScope), queryFn: () => client.health(), refetchInterval: 30_000, enabled: configured })
+}
+
+export function useAvailableModels() {
+  const client = usePiServerClient()
+  const configured = useServerConfigured()
+  return useQuery({
+    queryKey: piQueryKeys.models(client.cacheScope),
+    queryFn: () => client.listAvailableModels(),
+    enabled: configured,
+    staleTime: 5 * 60_000,
+  })
 }
 
 export function useSchedulerStatus(enabled = true) {

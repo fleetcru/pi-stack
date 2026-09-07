@@ -34,6 +34,31 @@ func TestDeviceRegistryCreatesAuthenticatesAndRevokes(t *testing.T) {
 	}
 }
 
+func TestCreatePairingCredentialPrunesOnlyUnusedPriorCredentials(t *testing.T) {
+	registry := newDeviceRegistry(filepath.Join(t.TempDir(), "devices.json"))
+	server := &Server{devices: registry}
+	first, err := server.CreatePairingCredential("Terminal pairing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := server.CreatePairingCredential("Terminal pairing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second || len(registry.list()) != 1 {
+		t.Fatalf("unused credential was not replaced: devices=%d", len(registry.list()))
+	}
+	if _, ok := registry.authenticate(second); !ok {
+		t.Fatal("replacement credential did not authenticate")
+	}
+	if _, err := server.CreatePairingCredential("Terminal pairing"); err != nil {
+		t.Fatal(err)
+	}
+	if len(registry.list()) != 2 {
+		t.Fatalf("used credential was removed: devices=%d", len(registry.list()))
+	}
+}
+
 func TestDeviceRegistryRestoresHashedCredentials(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "devices.json")
 	first := newDeviceRegistry(path)

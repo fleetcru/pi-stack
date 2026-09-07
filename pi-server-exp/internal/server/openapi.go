@@ -68,8 +68,8 @@ func schemas() map[string]any {
 		}, "id", "workerId"),
 		"CreateSessionRequest": obj(map[string]any{
 			"id": str(), "cwd": str(), "args": arr(str()),
-			"env":            map[string]any{"type": "object", "additionalProperties": str()},
-			"sessionPath":    str(), "start": schemaBool(), "restart": schemaBool(), "worktreePath": str(),
+			"env":         map[string]any{"type": "object", "additionalProperties": str()},
+			"sessionPath": str(), "start": schemaBool(), "restart": schemaBool(), "worktreePath": str(),
 			"createWorktree": obj(map[string]any{"enabled": schemaBool()}),
 			"project":        str(), "title": str(), "taskType": str(), "owner": str(),
 			"labels": arr(str()), "metadata": map[string]any{"type": "object", "additionalProperties": str()},
@@ -92,6 +92,8 @@ func schemas() map[string]any {
 		"GitMergeRequest":       obj(map[string]any{"branch": str()}, "branch"),
 		"GitRemoteRequest":      obj(map[string]any{"remote": str(), "branch": str(), "setUpstream": schemaBool()}),
 		"BashRequest":           obj(map[string]any{"command": str()}, "command"),
+		"AvailableModel":        obj(map[string]any{"provider": str(), "id": str(), "name": str()}, "provider", "id"),
+		"AvailableModels":       obj(map[string]any{"models": arr(ref("AvailableModel"))}, "models"),
 		"ModelRequest":          obj(map[string]any{"provider": str(), "modelId": str()}, "provider", "modelId"),
 		"ThinkingRequest":       obj(map[string]any{"level": str()}, "level"),
 		"ModeRequest":           obj(map[string]any{"mode": str()}, "mode"),
@@ -111,6 +113,7 @@ func paths() map[string]any {
 	p["/v1/scheduler"] = map[string]any{"get": op("Scheduler admission status", "RPCResponse", "")}
 	p["/openapi.json"] = map[string]any{"get": op("OpenAPI document", "RPCResponse", "")}
 	p["/v1/capabilities"] = map[string]any{"get": op("API capabilities", "Capabilities", "")}
+	p["/v1/models"] = map[string]any{"get": op("List models available to new sessions", "AvailableModels", "")}
 	p["/v1/ws-tickets"] = map[string]any{"post": op("Issue WebSocket ticket", "WSTicketResponse", "WSTicketRequest")}
 	p["/v1/rpc/commands"] = map[string]any{"get": op("List wrapper endpoints", "RPCResponse", "")}
 	p["/v1/sessions"] = map[string]any{"get": op("List sessions (scope=local|all)", "RPCResponse", ""), "post": op("Create session", "RPCResponse", "CreateSessionRequest")}

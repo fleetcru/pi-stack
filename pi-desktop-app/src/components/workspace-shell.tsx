@@ -3,7 +3,6 @@ import { useNavigate } from "react-router"
 import { usePanelRef } from "react-resizable-panels"
 import {
   LoaderCircle,
-  MessageSquare,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
@@ -21,6 +20,7 @@ import { useGlobalSessions, useMachineSessions, usePiServerClient, useServerHeal
 import { PiServerApiError, type ApiSession, type ApiWorker, type GlobalSession, type MachineSession } from "@/api/client"
 import { CapacityControl } from "@/components/capacity-control"
 import { CreateSessionDialog } from "@/components/create-session-dialog"
+import { QuickSessionComposer } from "@/components/quick-session-composer"
 import { GlobalSessionList, MachineSessionList } from "@/components/machine-session-list"
 import { ServerConnectionsDialog } from "@/components/server-connections-dialog"
 const SessionInspector = lazy(() => import("@/components/session-inspector").then((module) => ({ default: module.SessionInspector })) )
@@ -211,7 +211,7 @@ export function WorkspaceShell() {
                 <SessionWorkspace key={selectedSession.id} sessionId={selectedSession.id} />
               </Suspense>
             ) : (
-              <EmptyWorkspace sessionSelected={false} />
+              <EmptyWorkspace onCreated={openSession} onMoreOptions={() => setCreateSessionOpen(true)} />
             )}
           </section>
         </ResizablePanel>
@@ -308,7 +308,7 @@ function MobileWorkspace({
         <Button size="icon-sm" variant="ghost" aria-label="Create session" onClick={onCreate}><Plus /></Button>
         <Button size="icon-sm" variant="ghost" aria-label="Open inspector" disabled={!selectedSession} onClick={() => setInspectorOpen(true)}><PanelRight /></Button>
       </header>
-      {selectedSession ? <Suspense fallback={<div className="h-full animate-pulse rounded-xl bg-muted/30" />}><SessionWorkspace key={selectedSession.id} sessionId={selectedSession.id} /></Suspense> : <EmptyWorkspace sessionSelected={false} />}
+      {selectedSession ? <Suspense fallback={<div className="h-full animate-pulse rounded-xl bg-muted/30" />}><SessionWorkspace key={selectedSession.id} sessionId={selectedSession.id} /></Suspense> : <EmptyWorkspace onCreated={onOpenSession} onMoreOptions={onCreate} />}
       <Sheet open={sessionsOpen} onOpenChange={setSessionsOpen}>
         <SheetContent side="left" className="w-[88vw] max-w-sm p-0" showCloseButton>
           <SheetHeader>
@@ -478,22 +478,10 @@ function WorkspaceHeader({
   )
 }
 
-function EmptyWorkspace({ sessionSelected }: { sessionSelected: boolean }) {
+function EmptyWorkspace({ onCreated, onMoreOptions }: { onCreated: (sessionId: string) => void; onMoreOptions: () => void }) {
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center px-6">
-      <div className="max-w-sm text-center">
-        <div className="mx-auto mb-4 flex size-10 items-center justify-center rounded-xl border border-border bg-muted/40 text-muted-foreground">
-          <MessageSquare className="size-4" />
-        </div>
-        <h2 className="text-sm font-medium">
-          {sessionSelected ? "Session ready" : "Select a session"}
-        </h2>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          {sessionSelected
-            ? "The agent conversation and live tool activity will appear here."
-            : "Choose a session from the server tree to open its agent workspace."}
-        </p>
-      </div>
+    <div className="flex min-h-0 flex-1 items-center justify-center px-4 py-8 sm:px-8">
+      <QuickSessionComposer onCreated={onCreated} onMoreOptions={onMoreOptions} />
     </div>
   )
 }

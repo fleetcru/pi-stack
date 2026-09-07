@@ -4,7 +4,7 @@ Go 1.23 HTTP/WebSocket daemon. Spawns Pi CLI processes, speaks strict LF-delimit
 
 ## Entry point
 
-- `cmd/pi-server/main.go` — parses env/log flags, builds `server.Config`, starts the HTTP server, wires the external relay bridge extension. `daemon_unix.go` / `daemon_windows.go` provide the `daemonize()` fork-into-background step (Windows uses a detached child process; Unix uses double-fork style daemonization).
+- `cmd/pi-server/main.go` — parses env/log flags, builds `server.Config`, starts the HTTP server, and wires the external relay bridge extension. Interactive foreground starts create a revocable device credential and print a Companion pairing QR for the preferred Tailscale or home-LAN URL; `--pairing-qr=false` disables it. `daemon_unix.go` / `daemon_windows.go` provide background mode.
 
 ## Server core
 
@@ -26,6 +26,7 @@ Go 1.23 HTTP/WebSocket daemon. Spawns Pi CLI processes, speaks strict LF-delimit
 - `rpc_handlers.go` — HTTP handlers for the generic RPC surface: `POST/GET /v1/sessions/{id}/rpc`, prompt delivery, raw send.
 - `rpc_actions.go` — convenience action dispatch (`prompt`, `abort`, model/thinking changes, extension UI responses) mapping REST bodies into RPC commands, plus local-run admission checks.
 - `rpc_catalog.go` — publishes the list of supported RPC actions for clients.
+- `available_models.go` — serves `GET /v1/models` by running `pi --list-models` in the configured server directory and parsing its provider/model table. New-session composers can load providers and models before a session exists.
 - `codec.go` — `EventCodec` interface (JSON today, pluggable later).
 - `process_windows.go` / `process_other.go` — platform `applyProcessAttrs`: on Windows sets `CREATE_NO_WINDOW` so child Pi processes never flash a console.
 

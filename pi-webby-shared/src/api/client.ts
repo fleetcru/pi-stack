@@ -11,6 +11,12 @@ export type SessionMetadataUpdate =
   components["schemas"]["SessionMetadataUpdate"]
 export type WSTicket = components["schemas"]["WSTicketResponse"]
 
+export interface AvailableServerModel {
+  provider: string
+  id: string
+  name?: string
+}
+
 export interface PiServerClientOptions {
   /** HTTP(S) base URL. Defaults to VITE_PI_SERVER_URL, then localhost:3142. */
   baseUrl?: string
@@ -251,6 +257,10 @@ export class PiServerClient {
 
   capabilities(): Promise<ApiCapabilities> {
     return this.request("/v1/capabilities")
+  }
+
+  listAvailableModels(): Promise<{ models: AvailableServerModel[] }> {
+    return this.request("/v1/models")
   }
 
   updateCapacity(maxSessions: number): Promise<{ activeSessions: number; maxSessions: number }> {

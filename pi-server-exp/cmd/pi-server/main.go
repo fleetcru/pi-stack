@@ -20,6 +20,7 @@ import (
 	"pi-server/internal/server"
 
 	clog "github.com/charmbracelet/log"
+	"github.com/mdp/qrterminal/v3"
 	"github.com/muesli/termenv"
 )
 
@@ -36,6 +37,7 @@ func main() {
 	logFormat := flag.String("log-format", "text", "log format: text, json, or logfmt")
 	logLevel := flag.String("log-level", "info", "log level: debug, info, warn, error")
 	bg := flag.Bool("bg", false, "detach and run in the background (not supported under systemd / Task Scheduler)")
+	pairingQR := flag.Bool("pairing-qr", true, "print a Companion pairing QR in an interactive terminal")
 	flag.Parse()
 	flag.Visit(func(f *flag.Flag) {
 		key := map[string]string{
@@ -115,15 +117,19 @@ func main() {
 	}
 
 	srv := server.New(cfg, slog.New(logger))
-	errCh := make(chan error, 1)
-	go func() {
-		logger.Info("starting pi-server", "addr", cfg.Addr, "pi", cfg.PiBinary, "cwd", cfg.CWD)
-		logAccessURLs(logger, cfg.Addr)
-		errCh <- srv.ListenAndServe()
-	}()
-
+	logger.Info("starting pi-server", "addr", cfg.Addr, "pi", cfg.PiBinary, "cwd", cfg.CWD)
+	logAccessURLs(logger, cfg.Addr)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	if *pairingQR {
+		// Print before serving so startup logs cannot split and corrupt the QR.
+		printPairingQR(srv, cfg.Addr, logger)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.ListenAndServe()
+	}()
 
 	select {
 	case sig := <-sigCh:
@@ -226,6 +232,41 @@ func bridgeAddress(addr string) string {
 		host = firstLANIPv4()
 	}
 	return "http://" + net.JoinHostPort(host, port)
+}
+
+func printPairingQR(srv *server.Server, addr string, logger *clog.Logger) {
+	if !isTerminal(os.Stdout) {
+		return
+	}
+	token, err := srv.CreatePairingCredential("Terminal pairing")
+	if err != nil {
+		logger.Warn("could not create terminal pairing credential", "error", err)
+		return
+	}
+	label, url := preferredPairingURL(addr)
+	payload, err := json.Marshal(map[string]string{"url": url, "token": token, "name": "Pi Server"})
+	if err != nil {
+		logger.Warn("could not encode terminal pairing payload", "error", err)
+		return
+	}
+	fmt.Fprintf(os.Stdout, "\n  Pair Companion over %s\n  %s\n\n", label, url)
+	qrterminal.GenerateHalfBlock(string(payload), qrterminal.M, os.Stdout)
+	fmt.Fprintln(os.Stdout, "  In Companion, open Settings and tap Scan pairing QR.")
+	fmt.Fprintln(os.Stdout)
+}
+
+func preferredPairingURL(addr string) (string, string) {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		port = "3142"
+	}
+	if tailscale := firstTailscaleIPv4(); tailscale != "" {
+		return "Tailscale", "http://" + net.JoinHostPort(tailscale, port)
+	}
+	if lan := firstLANIPv4(); lan != "127.0.0.1" {
+		return "home network", "http://" + net.JoinHostPort(lan, port)
+	}
+	return "this computer", "http://127.0.0.1:" + port
 }
 
 func logAccessURLs(logger *clog.Logger, addr string) {

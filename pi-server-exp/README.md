@@ -37,6 +37,7 @@ The executable listens on `0.0.0.0:3142` and prints its local, home-LAN, and Tai
 | `--log-format` | `text` | Log format: `text`, `json`, or `logfmt` |
 | `--log-level` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 | `--bg` | `false` | Detach and run in the background (see below) |
+| `--pairing-qr` | `true` | Print a Companion pairing QR when stdout is an interactive terminal |
 
 ### Logging
 

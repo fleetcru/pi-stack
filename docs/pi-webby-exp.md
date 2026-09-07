@@ -17,11 +17,12 @@ React 19 + Vite 8 + Tailwind v4 + shadcn/ui browser client for pi-server. Most d
 ## Major components (`src/components/`)
 
 - `workspace-shell.tsx` — the main three-panel layout: sidebar (session tree), center workspace, right inspector. Manages panel resizing, collapse states, the command palette, theme toggle, and navigation between sessions. Lazy-loads the heavy workspace component.
-  Its empty state offers one-click local server setup at the dev port and keeps remote server configuration available.
+  Before connecting, its empty state offers one-click local server setup. After connecting with no session selected, it centers the quick-session composer.
 - `session-workspace.tsx` — the chat view. Subscribes to the active session socket, renders streaming assistant text, tool-call cards (bash, read, edit…), message markdown (react-markdown + sanitize), image attachments, prompt bar with model/thinking selectors, and stop/retry actions.
 - `session-inspector.tsx` — right panel: session details, file tree browser with file preview, git status/branches/worktrees, and the guided commit/push flow (`resolveGitQuickAction` computing Commit → Commit & push → Push → blocked, with the GitHub compare link when `githubRepo` is known).
 - `sidebar-tree.tsx` — grouped session list (local, remote, relay, machine-discovered) with search and per-session context menus.
-- `create-session-dialog.tsx` — new-session form: cwd picker, args, worktree toggle, extension options.
+- `quick-session-composer.tsx` — centered empty-workspace composer. It loads the server's available providers/models, applies an optional model choice, creates a local session in the server's default folder, and sends the first message. "Choose project" opens the full dialog for workers, worktrees, and other options.
+- `create-session-dialog.tsx` — full new-session form: cwd picker, args, worktree toggle, extension options.
   The form also supports an optional initial message, sent immediately after creation so sessions can run in the background.
 - `server-connections-dialog.tsx` — manage multiple pi-server connections (name, URL, token, remember-token) backed by the persisted store. Connection hints use the shared `3142` server port.
   The dialog presents active-server highlighting, an empty state, inline editing, and a two-step remove confirmation.
