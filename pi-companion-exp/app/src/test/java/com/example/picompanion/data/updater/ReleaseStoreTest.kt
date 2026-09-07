@@ -1,7 +1,9 @@
 package com.example.picompanion.data.updater
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReleaseStoreTest {
@@ -50,5 +52,21 @@ class ReleaseStoreTest {
       release("server-v1.5.0-125", "2026-09-07T15:05:27Z", assetNames = listOf("pi-server-windows-amd64.exe")),
     )
     assertNull(store.selectNewestCompanionRelease(releases))
+  }
+
+  @Test
+  fun versionComparisonJudgesNewerAcrossPrereleases() {
+    val newer = CompanionRelease(
+      tagName = "v1.5.0-46",
+      publishedAtMillis = 0,
+      prerelease = true,
+      apkUrl = "https://example/x.apk",
+      apkName = "pi-companion-1.5.0-46.apk",
+    )
+    assertEquals("1.5.0-46", newer.versionName)
+    assertTrue(newer.isNewerThan("1.4.8"))
+    assertTrue(newer.isNewerThan("1.5.0"))
+    assertFalse(newer.isNewerThan("1.5.0-46"))
+    assertFalse(newer.isNewerThan("1.6.0"))
   }
 }

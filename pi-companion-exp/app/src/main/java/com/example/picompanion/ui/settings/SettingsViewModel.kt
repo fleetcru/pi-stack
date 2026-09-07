@@ -57,6 +57,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         _updateState.value = UpdateState.Failed("Could not reach GitHub releases")
         return@launch
       }
+      // If the newest release is not actually newer than the installed build,
+      // report up-to-date instead of offering a downgrade/no-op install.
+      if (!release.isNewerThan(updater.currentVersionName())) {
+        _updateState.value = UpdateState.UpToDate
+        return@launch
+      }
       if (!updater.canRequestInstall()) {
         _updateState.value = UpdateState.PermissionRequired
         return@launch

@@ -25,4 +25,30 @@ data class CompanionRelease(
   val prerelease: Boolean,
   val apkUrl: String,
   val apkName: String,
-)
+) {
+  /** Version name embedded in the asset filename (pi-companion-<version>.apk). */
+  val versionName: String
+    get() = apkName
+      .removePrefix("pi-companion-")
+      .removeSuffix(".apk")
+
+  /** True when this release's version is judged newer than the given one. */
+  fun isNewerThan(current: String): Boolean =
+    compareVersions(versionName, current) > 0
+
+  private fun compareVersions(a: String, b: String): Int {
+    val left = parseParts(a)
+    val right = parseParts(b)
+    for (i in 0 until maxOf(left.size, right.size)) {
+      val l = left.getOrElse(i) { 0 }
+      val r = right.getOrElse(i) { 0 }
+      if (l != r) return l.compareTo(r)
+    }
+    return 0
+  }
+
+  private fun parseParts(value: String): List<Int> =
+    value.split('.', '-', '+', '_')
+      .mapNotNull { part -> part.filter(Char::isDigit).toIntOrNull() }
+      .ifEmpty { listOf(0) }
+}
