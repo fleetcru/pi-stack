@@ -83,3 +83,7 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 ## Tests
 
 Unit tests under `app/src/test/` cover the pure logic (tracker, parser, queue, dedup, encoder, inventory state). Run with `./gradlew :app:testDebugUnitTest`; compile check with `:app:compileDebugKotlin`.
+
+## Networking
+
+- `res/xml/network_security_config.xml` — permits cleartext HTTP for the trusted home-LAN and Tailscale deployment model (private RFC1918 and `100.64.0.0/10` addresses with the bearer-token credential), while system trust anchors still apply to HTTPS. Public HTTP is not a supported deployment.

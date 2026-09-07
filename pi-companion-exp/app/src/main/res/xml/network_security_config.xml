@@ -1,14 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Cleartext is limited to local development. Remote servers must use HTTPS. -->
+<!--
+  pi-server is designed for trusted home-LAN and Tailscale networks with the
+  bare HTTP bearer-token credential on port 3142. That endpoint runs on private
+  RFC1918 addresses (192.168.*, 10.*, 172.16-31.*) and Tailscale 100.64.0.0/10
+  or *.ts.net hosts, none of which can be cleanly allow-listed as Android
+  domain-config entries. Public HTTP is not a supported deployment, so cleartext
+  is permitted globally and HTTPS remains preferred wherever configured.
+-->
 <network-security-config>
-  <base-config cleartextTrafficPermitted="false">
+  <base-config cleartextTrafficPermitted="true">
     <trust-anchors>
       <certificates src="system" />
     </trust-anchors>
   </base-config>
-  <domain-config cleartextTrafficPermitted="true">
-    <domain includeSubdomains="true">localhost</domain>
-    <domain includeSubdomains="true">127.0.0.1</domain>
-    <domain includeSubdomains="true">::1</domain>
-  </domain-config>
 </network-security-config>

@@ -90,12 +90,13 @@ func main() {
 		logger.Error("configuration validation failed", "error", err)
 		os.Exit(1)
 	}
-	if cfg.AuthToken != "" {
-		if err := writeBridgeConfig(cfg); err != nil {
-			logger.Warn("could not update external bridge config", "error", err)
-		} else {
-			logger.Info("external bridge config updated")
-		}
+	// Always refresh the bridge config so an interactive Pi TUI follows the
+	// current relay URL/port even in the no-auth trusted-LAN setup. The token
+	// is empty when authentication is disabled.
+	if err := writeBridgeConfig(cfg); err != nil {
+		logger.Warn("could not update external bridge config", "error", err)
+	} else {
+		logger.Info("external bridge config updated")
 	}
 
 	// The standalone default intentionally trusts the home LAN or Tailscale

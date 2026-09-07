@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 type BridgeConfig = { relayUrl?: string; relayToken?: string };
@@ -53,6 +53,9 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   let relaySocket: WebSocket | undefined;
   let relayReconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let relayConnectInFlight = false;
+  let configWatchTimer: ReturnType<typeof setInterval> | undefined;
+  let configLastMtimeMs = 0;
+  let configLastContent = "";
   let abortCurrent: (() => void) | undefined;
   /** Generation counter bumped on every new socket or registration so stale
    *  callbacks (onopen/onclose/onmessage) cannot mutate live state or schedule
@@ -87,6 +90,48 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     baseUrl = nextBaseUrl;
     token = nextToken;
     return changed;
+  };
+
+  /** Snapshot the config file's mtime and bytes so the watcher can detect a
+   * change that did not alter the parsed url/token (e.g. an atomic rename that
+   * wrote identical values while the server restarted). */
+  const snapshotConfig = (): void => {
+    try {
+      configLastMtimeMs = statSync(configPath).mtimeMs;
+      configLastContent = readFileSync(configPath, "utf8");
+    } catch {
+      configLastMtimeMs = 0;
+      configLastContent = "";
+    }
+  };
+
+  /** Watch bridge-config.json for changes and hot-apply them. pi-server
+   * rewrites this file on startup with the current relay URL and token, so a
+   * TUI already running can follow a server restart or token rotation without
+   * /reload or /bridge-reconnect. */
+  const watchConfig = (): void => {
+    if (configWatchTimer) return;
+    snapshotConfig();
+    configWatchTimer = setInterval(() => {
+      if (stopped) return;
+      let mtimeMs = 0;
+      let content = "";
+      try {
+        mtimeMs = statSync(configPath).mtimeMs;
+        content = readFileSync(configPath, "utf8");
+      } catch {
+        // Missing file is not a change worth reconnecting on.
+        return;
+      }
+      const changed = mtimeMs !== configLastMtimeMs || content !== configLastContent;
+      if (!changed) return;
+      const parsedChanged = refreshConfig();
+      configLastMtimeMs = mtimeMs;
+      configLastContent = content;
+      if (baseUrl && parsedChanged) {
+        void reconnectBridge();
+      }
+    }, 1_000);
   };
 
   // ── helpers ────────────────────────────────────────────────────────────
@@ -134,7 +179,8 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     if (baseUrl) {
       try { host = new URL(baseUrl).host; } catch { host = "invalid-url"; }
     }
-    return `host=${host} session=${id || "(none)"} ws=${wsState} queued=${pendingEvents.length}`;
+    const state = !baseUrl ? "disabled" : registered ? wsState === "OPEN" ? "connected" : "registered" : "unregistered";
+    return `host=${host} session=${id || "(none)"} ws=${wsState} queued=${pendingEvents.length} state=${state}`;
   };
 
   // ── registration (serialized) ─────────────────────────────────────────
@@ -828,6 +874,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       return;
     }
     refreshConfig();
+    watchConfig();
     if (!baseUrl) {
       ui.setStatus("external-session-bridge", "Bridge: disabled (set PI_EXTERNAL_RELAY_URL)");
       return;
@@ -933,6 +980,8 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     abortCurrent = undefined;
     if (relayReconnectTimer) clearTimeout(relayReconnectTimer);
     relayReconnectTimer = undefined;
+    if (configWatchTimer) clearInterval(configWatchTimer);
+    configWatchTimer = undefined;
     ui?.setStatus("external-session-bridge", undefined);
     emit({ type: "message_end", message: { role: "assistant" } });
   });
