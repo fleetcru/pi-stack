@@ -31,13 +31,18 @@ jobs:
           command: |
             set -euo pipefail
             for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
-              if [[ -z "${!name}" ]]; then
-                echo "::error::$name must be set in the CircleCI project environment"
+              if [[ -z "${!name:-}" ]]; then
+                echo "$name must be set in the CircleCI pi-stack-signing context"
                 exit 1
               fi
             done
-            echo "$KEYSTORE_BASE64" | base64 -d > /tmp/release.jks
-            test -s /tmp/release.jks
+            # Strip any wrapping/whitespace, then decode with GNU base64.
+            printf '%s' "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 --decode > /tmp/release.jks
+            if [[ ! -s /tmp/release.jks ]]; then
+              echo "Decoded keystore is empty — KEYSTORE_BASE64 is likely missing or malformed"
+              exit 1
+            fi
+            echo "Keystore bytes: $(wc -c < /tmp/release.jks)"
             echo "export KEYSTORE_PATH=/tmp/release.jks" >> "$BASH_ENV"
 
       - run:
