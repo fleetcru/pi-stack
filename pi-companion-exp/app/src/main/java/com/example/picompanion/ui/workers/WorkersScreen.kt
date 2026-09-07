@@ -86,9 +86,19 @@ fun WorkersScreen(
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
-      Row {
-        IconButton(onClick = { addingWorker = true }) { Icon(Icons.Default.Add, contentDescription = "Add worker") }
-        IconButton(onClick = { viewModel.refresh() }) { Icon(Icons.Default.Refresh, contentDescription = "Refresh") }
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Surface(
+          shape = CircleShape,
+          color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+        ) {
+          IconButton(onClick = { addingWorker = true }) { Icon(Icons.Default.Add, contentDescription = "Add worker") }
+        }
+        Surface(
+          shape = CircleShape,
+          color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+        ) {
+          IconButton(onClick = { viewModel.refresh() }) { Icon(Icons.Default.Refresh, contentDescription = "Refresh") }
+        }
       }
     }
 
