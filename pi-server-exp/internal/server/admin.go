@@ -209,22 +209,14 @@ func pairingEndpoints(addr string) []pairingEndpoint {
 		return nil
 	}
 	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+		if !isPhysicalAdapter(iface) {
 			continue
 		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			ip, _, err := net.ParseCIDR(addr.String())
-			if err != nil || ip.To4() == nil {
-				continue
-			}
+		for _, ip := range interfaceIPv4Addrs(iface) {
 			url := "http://" + ip.String() + ":" + port
 			if isTailscaleIP(ip) {
 				tailscale = append(tailscale, pairingEndpoint{Label: "Tailscale (" + iface.Name + ")", URL: url})
-			} else if ip.IsPrivate() {
+			} else if isPrivateLANIPv4(ip) {
 				lan = append(lan, pairingEndpoint{Label: "Home network (" + iface.Name + ")", URL: url})
 			}
 		}
@@ -232,11 +224,6 @@ func pairingEndpoints(addr string) []pairingEndpoint {
 	sort.Slice(lan, func(i, j int) bool { return lan[i].URL < lan[j].URL })
 	sort.Slice(tailscale, func(i, j int) bool { return tailscale[i].URL < tailscale[j].URL })
 	return append(lan, tailscale...)
-}
-
-func isTailscaleIP(ip net.IP) bool {
-	ip = ip.To4()
-	return ip != nil && ip[0] == 100 && ip[1]&0xc0 == 0x40
 }
 
 func (s *Server) adminGetState(w http.ResponseWriter, session adminSession) {

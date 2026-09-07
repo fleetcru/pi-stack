@@ -18,6 +18,7 @@ Go 1.23 HTTP/WebSocket daemon. Spawns Pi CLI processes, speaks strict LF-delimit
 - `request_metrics.go` — per-route request counters/latency histograms feeding the Prometheus output.
 - `path.go` — URL-path splitting (`/v1/sessions/{id}/...`), session-ID validation, CWD normalization against allowed roots.
 - `security.go` — host allowlist checks and `allowedCWD()` enforcement (every session creation and file access goes through this).
+- `network.go` — `PreferredAddresses()` ranks adapter addresses for client advertising. Virtual and container adapters (WSL, Hyper-V, Docker, VMware, VirtualBox, Bluetooth, Tailscale) are excluded, wireless is preferred over wired, and link-local and carrier-grade NAT addresses are rejected. Both the startup log/QR and the Admin pairing list use this single source of truth so they cannot disagree on which host is reachable.
 - `openapi.go` — hand-maintained OpenAPI document served at `/openapi.json`.
 
 ## RPC to Pi processes

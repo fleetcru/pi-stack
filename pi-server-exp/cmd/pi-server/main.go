@@ -229,7 +229,15 @@ func bridgeAddress(addr string) string {
 		port = "3142"
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
-		host = firstLANIPv4()
+		lan, tailscale := server.PreferredAddresses()
+		switch {
+		case tailscale != nil:
+			host = tailscale.String()
+		case lan != nil:
+			host = lan.String()
+		default:
+			host = "127.0.0.1"
+		}
 	}
 	return "http://" + net.JoinHostPort(host, port)
 }
@@ -260,11 +268,12 @@ func preferredPairingURL(addr string) (string, string) {
 	if err != nil || port == "" {
 		port = "3142"
 	}
-	if tailscale := firstTailscaleIPv4(); tailscale != "" {
-		return "Tailscale", "http://" + net.JoinHostPort(tailscale, port)
+	lan, tailscale := server.PreferredAddresses()
+	if tailscale != nil {
+		return "Tailscale", "http://" + net.JoinHostPort(tailscale.String(), port)
 	}
-	if lan := firstLANIPv4(); lan != "127.0.0.1" {
-		return "home network", "http://" + net.JoinHostPort(lan, port)
+	if lan != nil {
+		return "home network", "http://" + net.JoinHostPort(lan.String(), port)
 	}
 	return "this computer", "http://127.0.0.1:" + port
 }
@@ -275,87 +284,13 @@ func logAccessURLs(logger *clog.Logger, addr string) {
 		port = "3142"
 	}
 	logger.Info("local access", "url", "http://127.0.0.1:"+port, "admin", "http://127.0.0.1:"+port+"/admin/")
-	if lan := firstLANIPv4(); lan != "127.0.0.1" {
-		logger.Info("home network access", "url", "http://"+net.JoinHostPort(lan, port))
+	lan, tailscale := server.PreferredAddresses()
+	if lan != nil {
+		logger.Info("home network access", "url", "http://"+net.JoinHostPort(lan.String(), port))
 	}
-	if tailscale := firstTailscaleIPv4(); tailscale != "" {
-		logger.Info("Tailscale access", "url", "http://"+net.JoinHostPort(tailscale, port))
+	if tailscale != nil {
+		logger.Info("Tailscale access", "url", "http://"+net.JoinHostPort(tailscale.String(), port))
 	}
-}
-
-func firstTailscaleIPv4() string {
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return ""
-	}
-	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, _ := iface.Addrs()
-		for _, addr := range addrs {
-			ip, _, err := net.ParseCIDR(addr.String())
-			if err == nil && isTailscaleIPv4(ip) {
-				return ip.String()
-			}
-		}
-	}
-	return ""
-}
-
-func isTailscaleIPv4(ip net.IP) bool {
-	v4 := ip.To4()
-	return v4 != nil && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
-}
-
-func firstLANIPv4() string {
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return "127.0.0.1"
-	}
-
-	// Only choose RFC1918 addresses. Starlink and other ISPs can expose a
-	// carrier-grade NAT address in 100.64.0.0/10, which is not reachable by a
-	// phone on the home's Wi-Fi and must never be written into bridge-config.
-	// Prefer normal Wi-Fi/Ethernet adapters when several private networks exist.
-	bestIP := ""
-	bestScore := -1
-	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		score := 1
-		name := strings.ToLower(iface.Name)
-		if strings.Contains(name, "wi-fi") || strings.Contains(name, "wifi") ||
-			strings.Contains(name, "wireless") || strings.Contains(name, "ethernet") {
-			score = 3
-		}
-		addrs, _ := iface.Addrs()
-		for _, addr := range addrs {
-			ip, _, err := net.ParseCIDR(addr.String())
-			if err != nil || !isPrivateLANIPv4(ip) {
-				continue
-			}
-			if score > bestScore {
-				bestIP = ip.String()
-				bestScore = score
-			}
-		}
-	}
-	if bestIP != "" {
-		return bestIP
-	}
-	return "127.0.0.1"
-}
-
-func isPrivateLANIPv4(ip net.IP) bool {
-	ip = ip.To4()
-	if ip == nil {
-		return false
-	}
-	return ip[0] == 10 ||
-		(ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31) ||
-		(ip[0] == 192 && ip[1] == 168)
 }
 
 func isTerminal(f *os.File) bool {
