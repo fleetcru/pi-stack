@@ -176,12 +176,13 @@ class SessionDetailViewModel(
   private val networkCallback = object : ConnectivityManager.NetworkCallback() {
     override fun onAvailable(network: Network) {
       if (!appInForeground) return
-      // Cancel any pending backoff delay so reconnection starts immediately
-      // when Wi-Fi returns, instead of waiting for the timer to fire.
+      // Network is back. Tear down any half-open socket and reconnect through
+      // the normal scheduleReconnect path so a stale stream cannot linger.
       reconnectJob?.cancel()
       reconnectJob = null
       reconnectAttempt = 0
-      scheduleReconnect()
+      transport.disconnect()
+      scheduleReconnect(immediate = true)
     }
     override fun onLost(network: Network) {
       // Only treat this as a full loss when Android no longer reports a
@@ -193,6 +194,11 @@ class SessionDetailViewModel(
       reconnectJob?.cancel()
       reconnectJob = null
       _connectionState.value = ConnectionState.Disconnected("Network lost")
+      // Schedule a backoff reconnect even though the network is down: onLost
+      // is not always followed by a matching onAvailable (brief blips, OEM
+      // quirks), and this guarantees recovery without waiting for the user to
+      // tap refresh. scheduleReconnect re-checks the socket state per attempt.
+      scheduleReconnect()
     }
   }
   // Pi emits a separate message_update for every text token. Keep one chat row

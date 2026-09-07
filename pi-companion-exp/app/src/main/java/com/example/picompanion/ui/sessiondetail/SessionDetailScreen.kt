@@ -163,6 +163,10 @@ fun SessionDetailScreen(
   // Auto-scroll to bottom on initial load, then follow streaming replies
   // when already near the bottom.
   var initialScrollDone by remember(sessionId) { mutableStateOf(items.isNotEmpty()) }
+  // Item placement only animates after the first scroll settles. Animating
+  // during the cache → history → live fill makes every row slide into place,
+  // which reads as the whole screen "jumping" on session open.
+  val animateItems = initialScrollDone && items.isNotEmpty()
   LaunchedEffect(items.size, streamVersion) {
     if (items.isEmpty()) return@LaunchedEffect
     if (!initialScrollDone) {
@@ -370,9 +374,9 @@ fun SessionDetailScreen(
               imageUris = item.imageUris,
               imageData = item.imageData,
               streaming = !item.isUser && item.order == streamingOrder,
-              modifier = Modifier.animateItem(),
+              modifier = if (animateItems) Modifier.animateItem() else Modifier,
             )
-            is SessionTimelineItem.Tool -> ToolEventRow(item, modifier = Modifier.animateItem())
+            is SessionTimelineItem.Tool -> ToolEventRow(item, modifier = if (animateItems) Modifier.animateItem() else Modifier)
             is SessionTimelineItem.FileChange -> FileChangeRow(item)
             is SessionTimelineItem.System -> SystemMessageRow(item)
           }
