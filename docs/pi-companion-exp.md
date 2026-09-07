@@ -73,8 +73,12 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 - `WorkerEditorDialog.kt` — add/edit a worker (URL, token).
 
 ### Settings (`ui/settings/`)
-- `SettingsViewModel.kt` / `SettingsScreen.kt` / `SettingsRow.kt` / `SettingsSection.kt` — settings UI over the DataStore, including a first-run QR pairing shortcut that creates the server entry automatically. The server-address hint uses a home-LAN address on the shared `3142` port.
+- `SettingsViewModel.kt` / `SettingsScreen.kt` / `SettingsRow.kt` / `SettingsSection.kt` — settings UI over the DataStore, including a first-run QR pairing shortcut that creates the server entry automatically. The server-address hint uses a home-LAN address on the shared `3142` port. The About section shows an in-app updater that queries GitHub Releases.
 - `PairingScanActivity.kt`, `PairingScanOverlayView.kt`, `PairingScanSquareLayout.kt` — camera QR scanning for server pairing (fullscreen overlay activity with a square preview layout).
+
+### Updater (`data/updater/`)
+- `ReleaseStore.kt` — queries the public GitHub Releases API for `fleetcru/pi-stack`, selects the newest `pi-companion-*.apk` asset by publish time across both prereleases and stable, and returns its download URL.
+- `AppUpdater.kt` — downloads the selected APK to app cache, checks the downloaded `versionCode` against the installed one to avoid downgrades, and stages a silent install through Android's `PackageInstaller` (requires REQUEST_INSTALL_PACKAGES).
 
 ## Theme
 

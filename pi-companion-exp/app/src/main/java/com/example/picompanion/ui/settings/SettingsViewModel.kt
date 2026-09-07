@@ -5,9 +5,11 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.picompanion.data.api.HttpResult
-import com.example.picompanion.di.AppModule
 import com.example.picompanion.data.settings.AppSettings
 import com.example.picompanion.data.settings.ServerEntry
+import com.example.picompanion.data.updater.AppUpdater
+import com.example.picompanion.data.updater.CompanionRelease
+import com.example.picompanion.di.AppModule
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -24,9 +26,67 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
   private val dataStore = AppModule.settingsDataStore
   private val client = AppModule.client
+  private val updater = AppUpdater(application)
 
   val settings: StateFlow<AppSettings> = dataStore.settingsFlow
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AppSettings())
+
+  sealed interface UpdateState {
+    data object Idle : UpdateState
+    data object Checking : UpdateState
+    data object UpToDate : UpdateState
+    data object Downloading : UpdateState
+    data object Installing : UpdateState
+    data class UpdateAvailable(val release: CompanionRelease) : UpdateState
+    data class Failed(val message: String) : UpdateState
+    data object PermissionRequired : UpdateState
+  }
+
+  private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
+  val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
+
+  val currentVersion: String
+    get() = updater.currentVersionName()
+
+  fun checkForUpdates() {
+    if (_updateState.value is UpdateState.Checking || _updateState.value is UpdateState.Downloading || _updateState.value is UpdateState.Installing) return
+    viewModelScope.launch {
+      _updateState.value = UpdateState.Checking
+      val release = updater.newestRelease()
+      if (release == null) {
+        _updateState.value = UpdateState.Failed("Could not reach GitHub releases")
+        return@launch
+      }
+      if (!updater.canRequestInstall()) {
+        _updateState.value = UpdateState.PermissionRequired
+        return@launch
+      }
+      _updateState.value = UpdateState.UpdateAvailable(release)
+    }
+  }
+
+  fun downloadAndInstall(release: CompanionRelease) {
+    if (_updateState.value is UpdateState.Downloading || _updateState.value is UpdateState.Installing) return
+    viewModelScope.launch {
+      _updateState.value = UpdateState.Downloading
+      try {
+        val apk = updater.download(release)
+        val downloadedCode = updater.downloadedVersionCode(apk)
+        if (downloadedCode != null && downloadedCode < updater.currentVersionCode()) {
+          _updateState.value = UpdateState.Failed("Downloaded APK is older than the installed app")
+          return@launch
+        }
+        _updateState.value = UpdateState.Installing
+        updater.install(apk)
+        // Once install() returns, the system installer has taken over.
+        _updateState.value = UpdateState.UpToDate
+      } catch (error: Exception) {
+        _updateState.value = UpdateState.Failed(error.message ?: "Update failed")
+      }
+    }
+  }
+
+  fun installPermissionIntent() = updater.installPermissionIntent()
 
   // Per-server connection test results
   private val _connectionResults = MutableStateFlow<Map<String, ConnectionTestResult>>(emptyMap())

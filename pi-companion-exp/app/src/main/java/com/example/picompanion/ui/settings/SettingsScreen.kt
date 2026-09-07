@@ -93,6 +93,7 @@ fun SettingsScreen(
 ) {
   val settings by viewModel.settings.collectAsStateWithLifecycle()
   val connectionResults by viewModel.connectionResults.collectAsStateWithLifecycle()
+  val updateState by viewModel.updateState.collectAsStateWithLifecycle()
   val context = LocalContext.current
   var scanTargetId by remember { mutableStateOf<String?>(null) }
   val scanner = rememberLauncherForActivityResult(ScanContract()) { result ->
@@ -221,10 +222,96 @@ fun SettingsScreen(
       SettingsRow(label = "App version", value = com.example.picompanion.BuildConfig.VERSION_NAME)
       SettingsRow(label = "API target", value = "pi-server /v1")
       SettingsRow(label = "Build type", value = com.example.picompanion.BuildConfig.BUILD_TYPE)
+      Spacer(Modifier.height(8.dp))
+      UpdateSection(
+        state = updateState,
+        onCheck = viewModel::checkForUpdates,
+        onInstall = viewModel::downloadAndInstall,
+        onGrantPermission = {
+          try { context.startActivity(viewModel.installPermissionIntent()) }
+          catch (_: Exception) { /* no settings activity */ }
+        },
+      )
     }
 
     // Bottom spacer
     Spacer(Modifier.height(120.dp))
+  }
+}
+
+@Composable
+private fun UpdateSection(
+  state: SettingsViewModel.UpdateState,
+  onCheck: () -> Unit,
+  onInstall: (com.example.picompanion.data.updater.CompanionRelease) -> Unit,
+  onGrantPermission: () -> Unit,
+) {
+  when (state) {
+    is SettingsViewModel.UpdateState.Idle -> {
+      OutlinedButton(onClick = onCheck, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+        Text("Check for updates")
+      }
+    }
+    is SettingsViewModel.UpdateState.Checking -> {
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+        Text("Checking for updates…", style = MaterialTheme.typography.bodySmall)
+      }
+    }
+    is SettingsViewModel.UpdateState.UpToDate -> {
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+        Text("You're on the latest version", style = MaterialTheme.typography.bodySmall)
+      }
+    }
+    is SettingsViewModel.UpdateState.Downloading -> {
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+        Text("Downloading update…", style = MaterialTheme.typography.bodySmall)
+      }
+    }
+    is SettingsViewModel.UpdateState.Installing -> {
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+        Text("Installing update…", style = MaterialTheme.typography.bodySmall)
+      }
+    }
+    is SettingsViewModel.UpdateState.UpdateAvailable -> {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(16.dp))
+          Text(
+            text = if (state.release.prerelease) "Pre-release available: ${state.release.tagName}" else "Update available: ${state.release.tagName}",
+            style = MaterialTheme.typography.bodySmall,
+          )
+        }
+        Button(onClick = { onInstall(state.release) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+          Text("Download and install")
+        }
+      }
+    }
+    is SettingsViewModel.UpdateState.PermissionRequired -> {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(16.dp))
+          Text("Install permission required", style = MaterialTheme.typography.bodySmall)
+        }
+        Button(onClick = onGrantPermission, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+          Text("Allow install from this app")
+        }
+      }
+    }
+    is SettingsViewModel.UpdateState.Failed -> {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          Icon(Icons.Default.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+          Text(state.message, style = MaterialTheme.typography.bodySmall)
+        }
+        OutlinedButton(onClick = onCheck, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+          Text("Try again")
+        }
+      }
+    }
   }
 }
 
