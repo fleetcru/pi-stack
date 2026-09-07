@@ -64,15 +64,13 @@ fi
 # ── Setup ─────────────────────────────────────────────────
 mkdir -p "$DATA_DIR"
 
-ORIGINS="http://127.0.0.1:${WEB_PORT},http://localhost:${WEB_PORT},http://${TAILSCALE_IP}:${WEB_PORT}"
-
 EXTENSION="$SERVER_DIR/extensions/session-title.ts"
 
 export PI_SERVER_ADDR="0.0.0.0:${SERVER_PORT}"
 export PI_SERVER_CWD="$SCRIPT_DIR"
 export PI_SERVER_DATA_DIR="$DATA_DIR"
 export PI_SERVER_ALLOWED_ROOTS="$SCRIPT_DIR"
-export PI_SERVER_ALLOWED_ORIGINS="$ORIGINS"
+unset PI_SERVER_ALLOWED_ORIGINS 2>/dev/null || true
 
 if [[ -f "$EXTENSION" ]]; then
   export PI_SERVER_PI_EXTENSIONS="$EXTENSION"
@@ -82,11 +80,10 @@ fi
 
 if [[ -n "$AUTH_TOKEN" ]]; then
   export PI_SERVER_AUTH_TOKEN="$AUTH_TOKEN"
-  unset PI_SERVER_ALLOW_INSECURE 2>/dev/null || true
 else
   unset PI_SERVER_AUTH_TOKEN 2>/dev/null || true
-  export PI_SERVER_ALLOW_INSECURE=1
 fi
+unset PI_SERVER_ALLOW_INSECURE 2>/dev/null || true
 
 # ── Launch server in background ───────────────────────────
 echo ""

@@ -73,7 +73,7 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 - `WorkerEditorDialog.kt` — add/edit a worker (URL, token).
 
 ### Settings (`ui/settings/`)
-- `SettingsViewModel.kt` / `SettingsScreen.kt` / `SettingsRow.kt` / `SettingsSection.kt` — settings UI over the DataStore, including a first-run QR pairing shortcut that creates the server entry automatically.
+- `SettingsViewModel.kt` / `SettingsScreen.kt` / `SettingsRow.kt` / `SettingsSection.kt` — settings UI over the DataStore, including a first-run QR pairing shortcut that creates the server entry automatically. The server-address hint uses a home-LAN address on the shared `3142` port.
 - `PairingScanActivity.kt`, `PairingScanOverlayView.kt`, `PairingScanSquareLayout.kt` — camera QR scanning for server pairing (fullscreen overlay activity with a square preview layout).
 
 ## Theme

@@ -9,26 +9,26 @@ Go is the least-headache choice here: simple single-binary deployment, excellent
 ## Run
 
 ```bash
-go run ./cmd/pi-server --addr 127.0.0.1:3141
+go run ./cmd/pi-server
 ```
 
 ### Windows executable on the LAN
 
-Build and start the server from PowerShell with bearer authentication:
+Build and start the server from PowerShell:
 
 ```powershell
 cd C:\Users\basin\Desktop\pi-stack\pi-server-exp
 go build -o .\pi-server.exe .\cmd\pi-server
-$env:PI_SERVER_AUTH_TOKEN="replace-with-a-long-random-token"; .\pi-server.exe --addr 0.0.0.0:3142 --cwd C:\Users\basin\Desktop\pi-stack
+.\pi-server.exe
 ```
 
-The `--addr` and `--cwd` flags are intentional. Values saved by the admin dashboard in `~/.pi/server/admin-config.json` override environment variables, while explicit CLI flags remain authoritative. At startup, an authenticated server also writes the LAN relay URL and bearer token to `~/.pi/agent/bridge-config.json` for the external TUI bridge. Set `PI_SERVER_BRIDGE_URL` when the automatically detected LAN address is not the address the TUI should use. Keep the token and config file private. Use the laptop's LAN IP, such as `http://192.168.1.42:3142`, in Companion. Do not use `0.0.0.0` or `127.0.0.1` as the Companion URL.
+The executable listens on `0.0.0.0:3142` and prints its local, home-LAN, and Tailscale URLs. Use one of the printed network URLs in Companion, Desktop, or Webby. Do not enter `0.0.0.0` as a client URL. The default has no bearer token and trusts the home LAN and tailnet. Set `PI_SERVER_AUTH_TOKEN` before starting the executable if the network contains devices that should not control Pi. An authenticated startup also writes the LAN relay URL and token to `~/.pi/agent/bridge-config.json`.
 
 ### CLI flags
 
 | Flag | Default | Description |
 |---|---|---|
-| `--addr` | `127.0.0.1:3141` | HTTP listen address |
+| `--addr` | `0.0.0.0:3142` | HTTP listen address |
 | `--pi` | `pi` | Path to the pi executable |
 | `--cwd` | current directory | Default working directory for pi child processes |
 | `--data-dir` | `~/.pi/server` | Data directory for persisted session registry |
@@ -74,7 +74,7 @@ When `--bg` is used, the `--bg` flag is stripped from the child's argv, so the r
 
 Environment variables:
 
-- `PI_SERVER_ADDR` default `127.0.0.1:3141`
+- `PI_SERVER_ADDR` default `0.0.0.0:3142`
 - `PI_SERVER_PI_BINARY` default `pi`
 - `PI_SERVER_CWD` default current directory
 - `PI_SERVER_DATA_DIR` default `~/.pi/server`
@@ -92,12 +92,11 @@ Environment variables:
 - `PI_SERVER_MAX_WATCHES` default `2048` directories watched per session; dependency, VCS, cache, and generated-output directories are skipped
 - `PI_SERVER_DEBUG=1` enables debug logging
 - `PI_SERVER_AUTH_TOKEN` enables bearer-token authentication
-- `PI_SERVER_ALLOW_INSECURE` set to `1` to allow non-loopback binding without auth
-- `PI_SERVER_ALLOWED_ORIGINS` comma-separated browser origin allowlist
+- `PI_SERVER_ALLOWED_ORIGINS` optional strict browser origin override. When unset, localhost, RFC1918 LAN addresses, Tailscale addresses, and the server's own `*.ts.net` host are allowed.
 - `PI_SERVER_ALLOWED_ROOTS` comma-separated cwd/file API root allowlist
 - `PI_SERVER_ALLOWED_WORKER_HOSTS` comma-separated remote worker host allowlist
 
-For any network-accessible deployment, set an auth token and all three allowlists. The browser test page should be served from an allowed HTTP origin rather than opened as `file://`.
+The default setup trusts every device on the home LAN and Tailscale network and does not require a token. Set `PI_SERVER_AUTH_TOKEN` if that network includes devices that should not control Pi. Public browser origins remain blocked by the built-in CORS policy.
 
 ## Admin dashboard
 
@@ -123,13 +122,13 @@ Prompt, raw-command, WebSocket, remote-worker, and relay entry points share the 
 ### Health
 
 ```bash
-curl http://127.0.0.1:3141/healthz
+curl http://127.0.0.1:3142/healthz
 ```
 
 ### Create a Pi RPC session
 
 ```bash
-curl -X POST http://127.0.0.1:3141/v1/sessions \
+curl -X POST http://127.0.0.1:3142/v1/sessions \
   -H 'content-type: application/json' \
   -d '{"cwd":"/path/to/project","args":["--no-session"],"start":true}'
 ```
@@ -137,7 +136,7 @@ curl -X POST http://127.0.0.1:3141/v1/sessions \
 Create a session for an existing/old Pi session, preserving the cwd Pi needs for context/resource discovery:
 
 ```bash
-curl -X POST http://127.0.0.1:3141/v1/sessions \
+curl -X POST http://127.0.0.1:3142/v1/sessions \
   -H 'content-type: application/json' \
   -d '{"cwd":"/path/to/original/project","sessionPath":"/path/to/session.jsonl","start":true}'
 ```
@@ -147,7 +146,7 @@ curl -X POST http://127.0.0.1:3141/v1/sessions \
 ### Discover supported wrapper endpoints
 
 ```bash
-curl http://127.0.0.1:3141/v1/rpc/commands
+curl http://127.0.0.1:3142/v1/rpc/commands
 ```
 
 ### Convenience Pi RPC endpoints
@@ -176,7 +175,7 @@ POST /v1/sessions/<id>/ui-response
 Example:
 
 ```bash
-curl -X POST http://127.0.0.1:3141/v1/sessions/<id>/prompt \
+curl -X POST http://127.0.0.1:3142/v1/sessions/<id>/prompt \
   -H 'content-type: application/json' \
   -d '{"message":"Hello"}'
 ```
@@ -184,7 +183,7 @@ curl -X POST http://127.0.0.1:3141/v1/sessions/<id>/prompt \
 ### Raw command and wait for its Pi RPC response
 
 ```bash
-curl -X POST http://127.0.0.1:3141/v1/sessions/<id>/command \
+curl -X POST http://127.0.0.1:3142/v1/sessions/<id>/command \
   -H 'content-type: application/json' \
   -d '{"type":"get_state"}'
 ```
@@ -194,7 +193,7 @@ curl -X POST http://127.0.0.1:3141/v1/sessions/<id>/command \
 Connect to:
 
 ```text
-ws://127.0.0.1:3141/v1/sessions/<id>/ws
+ws://127.0.0.1:3142/v1/sessions/<id>/ws
 ```
 
 Add `?watch=files` to opt into workspace file-change events. It is disabled by default so a chat-only client does not allocate a recursive filesystem watcher.
@@ -208,7 +207,7 @@ Send Pi RPC JSON objects, for example:
 The socket streams Pi RPC events/responses back as JSON objects. Every daemon-streamed event includes `_daemonEventId`, a monotonic per-process cursor. Reconnect with `?since=<last-event-id>` to replay buffered events after that cursor:
 
 ```text
-ws://127.0.0.1:3141/v1/sessions/<id>/ws?since=42
+ws://127.0.0.1:3142/v1/sessions/<id>/ws?since=42
 ```
 
 HTTP history supports the same cursor:
@@ -220,7 +219,7 @@ GET /v1/sessions/<id>/events?since=42&limit=200
 ### Fire-and-forget command
 
 ```bash
-curl -X POST http://127.0.0.1:3141/v1/sessions/<id>/send \
+curl -X POST http://127.0.0.1:3142/v1/sessions/<id>/send \
   -H 'content-type: application/json' \
   -d '{"type":"abort"}'
 ```
@@ -228,7 +227,7 @@ curl -X POST http://127.0.0.1:3141/v1/sessions/<id>/send \
 ### Delete a session
 
 ```bash
-curl -X DELETE http://127.0.0.1:3141/v1/sessions/<id>
+curl -X DELETE http://127.0.0.1:3142/v1/sessions/<id>
 ```
 
 ## Notes

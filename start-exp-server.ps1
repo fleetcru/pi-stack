@@ -3,7 +3,6 @@ param(
   [int]$Port = 3142,
   [string]$AuthToken = "",
   [string]$DataDir = (Join-Path $PSScriptRoot ".data" | Join-Path -ChildPath "pi-server"),
-  [switch]$AllowInsecure,
   [switch]$OpenAdmin,
   [switch]$InstallExternalBridge,
   [string]$BridgeRelayUrl = ""
@@ -27,33 +26,33 @@ $lanAddresses = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContin
 $preferredLan = $lanAddresses |
   Where-Object { $_.InterfaceAlias -match "Wi-Fi|WiFi|Wireless|Ethernet" } |
   Select-Object -First 1 -ExpandProperty IPAddress
-$tailscaleIp = if ($preferredLan) {
+$homeLanIp = if ($preferredLan) {
   $preferredLan
 } else {
   $lanAddresses | Select-Object -First 1 -ExpandProperty IPAddress
 }
+$tailscaleIp = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  Where-Object {
+    $_.AddressState -eq "Preferred" -and
+    ($_.InterfaceAlias -match "Tailscale" -or $_.IPAddress -match "^100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.")
+  } |
+  Select-Object -First 1 -ExpandProperty IPAddress
 
-if (-not $tailscaleIp) {
-  Write-Warning "No private LAN IP detected. Binding to 0.0.0.0 but clients may not reach the server."
-  $tailscaleIp = "127.0.0.1"
+if (-not $homeLanIp -and -not $tailscaleIp) {
+  Write-Warning "No home-LAN or Tailscale address detected. Clients may not reach the server."
 }
 
 # --- Setup ---
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 
-# Allow origins from Tailscale IP, localhost, and common web dev ports
-$origins = @(
-  "http://127.0.0.1:5173", "http://localhost:5173"
-  "http://127.0.0.1:5174", "http://localhost:5174"
-  "http://${tailscaleIp}:5173", "http://${tailscaleIp}:5174"
-) -join ","
-
-$bindHost = if ($AuthToken -or $AllowInsecure) { "0.0.0.0" } else { "127.0.0.1" }
+# The server's built-in CORS policy accepts loopback, home-LAN, and Tailscale
+# browser origins when no explicit allowlist is configured.
+$bindHost = "0.0.0.0"
 $env:PI_SERVER_ADDR         = "${bindHost}:$Port"
 $env:PI_SERVER_CWD          = $PSScriptRoot
 $env:PI_SERVER_DATA_DIR     = $DataDir
 $env:PI_SERVER_ALLOWED_ROOTS = $PSScriptRoot
-$env:PI_SERVER_ALLOWED_ORIGINS = $origins
+Remove-Item Env:PI_SERVER_ALLOWED_ORIGINS -ErrorAction SilentlyContinue
 
 $extension = Join-Path $serverDir "extensions" | Join-Path -ChildPath "session-title.ts"
 if (Test-Path -LiteralPath $extension -PathType Leaf) {
@@ -64,15 +63,10 @@ if (Test-Path -LiteralPath $extension -PathType Leaf) {
 
 if ($AuthToken) {
   $env:PI_SERVER_AUTH_TOKEN = $AuthToken
-  Remove-Item Env:PI_SERVER_ALLOW_INSECURE -ErrorAction SilentlyContinue
 } else {
   Remove-Item Env:PI_SERVER_AUTH_TOKEN -ErrorAction SilentlyContinue
-  if ($AllowInsecure) {
-    $env:PI_SERVER_ALLOW_INSECURE = "1"
-  } else {
-    Remove-Item Env:PI_SERVER_ALLOW_INSECURE -ErrorAction SilentlyContinue
-  }
 }
+Remove-Item Env:PI_SERVER_ALLOW_INSECURE -ErrorAction SilentlyContinue
 
 # The bridge belongs in interactive Pi TUI processes, not server-managed RPC
 # processes. Install it globally only when explicitly requested, so future TUI
@@ -95,11 +89,13 @@ Write-Host ""
 Write-Host "  pi-server-exp" -ForegroundColor Cyan
 Write-Host "  ────────────────────────────────────" -ForegroundColor DarkGray
 Write-Host "  Bind:      ${bindHost}:$Port"
-Write-Host "  Tailscale: http://${tailscaleIp}:$Port"
+if ($homeLanIp) { Write-Host "  Home LAN:  http://${homeLanIp}:$Port" }
+if ($tailscaleIp) { Write-Host "  Tailscale: http://${tailscaleIp}:$Port" }
+Write-Host "  Local:     http://127.0.0.1:$Port"
 Write-Host "  Data:      $DataDir"
-Write-Host "  Origins:   $origins"
+Write-Host "  Browser:   localhost, home LAN, and Tailscale origins allowed"
 if ($AuthToken) { Write-Host "  Auth:      configured" }
-else { Write-Host "  Auth:      none (Tailscale/trusted LAN)" -ForegroundColor Yellow }
+else { Write-Host "  Auth:      none (trusting home LAN/Tailscale)" -ForegroundColor Yellow }
 Write-Host ""
 
 if ($OpenAdmin) {

@@ -92,7 +92,7 @@ func parseConfig(args []string) (config, error) {
 	cfg := config{autoDownload: true}
 	noDownload := false
 	fs.StringVar(&cfg.serverPath, "server", defaultServer, "custom pi-server executable path (disables automatic downloads)")
-	fs.StringVar(&cfg.serverURL, "url", "http://127.0.0.1:3141", "pi-server base URL")
+	fs.StringVar(&cfg.serverURL, "url", "http://127.0.0.1:3142", "pi-server base URL")
 	fs.StringVar(&cfg.logPath, "log-file", defaultLog, "combined pi-server stdout/stderr log")
 	fs.StringVar(&cfg.workDir, "cwd", home, "working directory used to run pi-server")
 	fs.StringVar(&cfg.releaseRepo, "release-repo", defaultReleaseRepo, "GitHub owner/repository used for stable server releases")

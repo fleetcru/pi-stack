@@ -57,7 +57,7 @@ Use the release pages above for current version numbers.
 > [!WARNING]
 > pi-server is designed for a trusted private network: loopback, a controlled LAN, or an authenticated Tailscale network. It is **not** an internet-facing service. Do not expose it through a public IP address, port-forward, or publicly reachable reverse proxy.
 >
-> Set an explicit `PI_SERVER_AUTH_TOKEN` for every non-loopback deployment, including Tailscale and LAN access. Only use `--insecure` / `-AllowInsecure` on a loopback interface or a deliberately trusted private network.
+> The default setup trusts every device on the home LAN and Tailscale network. Set `PI_SERVER_AUTH_TOKEN` if that network contains devices that should not control Pi.
 
 ## Production installation
 
@@ -95,11 +95,11 @@ cd pi-stack
 
 Run PowerShell as Administrator. This installer creates a `SYSTEM` startup task and records the current Pi executable path. A Pi installation that depends on user-only Node configuration may still be inaccessible to `SYSTEM`; use `install-server-user.ps1` in that case.
 
-Remote insecure mode remains available for trusted LAN or Tailscale deployments, but requires an explicit installer or launcher flag.
+The standalone server and development launchers trust the home LAN or Tailscale network by default. Set an auth token if other devices on that network should not have Pi access.
 
 ## Quick start (development)
 
-The development launchers bind pi-server to port **3142** and Webby to **5174**. The standalone server default is **3141**, so use the URLs printed by the launcher when testing locally.
+The standalone server and development launchers bind pi-server to port **3142**. Webby uses **5174**. Running `pi-server.exe` with no configuration listens on the home LAN and Tailscale interfaces.
 
 ### Prerequisites
 
@@ -169,19 +169,18 @@ All configuration is via environment variables (or CLI flags for the server):
 
 | Variable | Default | Description |
 |---|---|---|
-| `PI_SERVER_ADDR` | `127.0.0.1:3141` | Listen address |
+| `PI_SERVER_ADDR` | `0.0.0.0:3142` | Listen address; reachable over the home LAN and Tailscale |
 | `PI_SERVER_AUTH_TOKEN` | _(none)_ | Bearer token for API auth |
 | `PI_SERVER_CWD` | `.` | Default working directory for new sessions |
 | `PI_SERVER_DATA_DIR` | `.data/pi-server` | Persisted session registry and relay commands |
 | `PI_SERVER_ALLOWED_ROOTS` | `.` | Restrict session CWDs to these paths |
-| `PI_SERVER_ALLOWED_ORIGINS` | _(none)_ | CORS allowed origins (comma-separated) |
+| `PI_SERVER_ALLOWED_ORIGINS` | _(automatic private-network policy)_ | Optional strict CORS override. By default, browser apps on localhost, private LAN IPs, Tailscale IPs, and the server's own `*.ts.net` host are accepted. |
 | `PI_SERVER_MAX_SESSIONS` | `8` | Max concurrent Pi sessions (0 = unlimited) |
 | `PI_SERVER_MAX_ACTIVE_RUNS` | `8` | Hub-wide active local, remote, and relay runs (0 = unlimited) |
 | `PI_SERVER_MAX_RUNS_PER_SESSION` | `1` | Concurrent runs permitted for one session |
 | `PI_SERVER_MAX_RUNS_PER_WORKER` | `4` | Concurrent runs admitted to one worker |
 | `PI_SERVER_MAX_QUEUED_RUNS` | `32` | Bounded admission queue (0 = reject immediately when busy) |
 | `PI_SERVER_DISTRIBUTED_RUN_TIMEOUT` | `2h` | Fallback lease expiry when distributed lifecycle delivery is lost |
-| `PI_SERVER_ALLOW_INSECURE` | _(empty)_ | Set to `1` to allow non-loopback binding without auth (install scripts use `--insecure` / `-AllowInsecure` flag) |
 | `PI_SERVER_PI_BINARY` | `pi` | Path to the Pi CLI executable |
 | `PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL` | `0` | Event-journal fsync interval; `0` keeps strict per-event durability |
 

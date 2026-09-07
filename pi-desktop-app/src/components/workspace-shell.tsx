@@ -263,7 +263,7 @@ function FirstServerOnboarding({ onOpenServers }: { onOpenServers: () => void })
       <div className="mb-4 flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground"><Server className="size-5" /></div>
       <h1 className="text-lg font-semibold">Connect your first Pi server</h1>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">Webby does not assume a local server. Add the trusted pi-server URL you want to use, then create or open a session.</p>
-      <div className="mt-5 rounded-lg bg-muted/50 p-3 font-mono text-xs text-muted-foreground">http://your-laptop-ip:3141</div>
+      <div className="mt-5 rounded-lg bg-muted/50 p-3 font-mono text-xs text-muted-foreground">http://your-laptop-ip:3142</div>
       <Button className="mt-5 w-full" onClick={onOpenServers}>Add Pi server</Button>
     </section>
   )

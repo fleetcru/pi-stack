@@ -356,7 +356,7 @@ private fun ServerCard(
             label = "URL",
             value = editUrl,
             onValueChange = { editUrl = it },
-            placeholder = "127.0.0.1:3141",
+            placeholder = "192.168.1.10:3142",
             imeAction = ImeAction.Next,
             keyboardType = KeyboardType.Uri,
             error = urlError,

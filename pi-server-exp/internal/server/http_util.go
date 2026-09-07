@@ -33,19 +33,15 @@ func corsMiddleware(allowed []string, next http.Handler) http.Handler {
 			return
 		}
 		origin := r.Header.Get("Origin")
-		// When no origins are configured, reject browser cross-origin requests
-		// (those with an Origin header) to prevent malicious webpages from
-		// accessing pi-server via fetch(). Non-browser clients (curl, SDKs)
-		// don't send Origin and are always allowed.
-		if origin != "" && len(allowed) == 0 {
-			writeErrorCode(w, r, http.StatusForbidden, CodeOriginNotAllowed, "cross-origin requests require PI_SERVER_ALLOWED_ORIGINS")
-			return
-		}
-		if origin != "" && len(allowed) > 0 && !originAllowed(origin, allowed) {
+		// With no explicit allowlist, accept browser apps running on loopback,
+		// private home-network addresses, Tailscale addresses, or the same
+		// *.ts.net host as the server. This makes trusted LAN/tailnet installs
+		// work without Admin configuration while public web origins stay blocked.
+		if origin != "" && !corsOriginAllowed(origin, r.Host, allowed) {
 			writeErrorCode(w, r, http.StatusForbidden, CodeOriginNotAllowed, "origin not allowed")
 			return
 		}
-		if origin != "" && originAllowed(origin, allowed) {
+		if origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 		}
 		w.Header().Set("Vary", "Origin")
@@ -61,6 +57,13 @@ func corsMiddleware(allowed []string, next http.Handler) http.Handler {
 	})
 }
 
+func corsOriginAllowed(origin, serverHost string, allowed []string) bool {
+	if len(allowed) > 0 {
+		return originAllowed(origin, allowed)
+	}
+	return privateNetworkOrigin(origin, serverHost)
+}
+
 func originAllowed(origin string, allowed []string) bool {
 	for _, value := range allowed {
 		value = strings.TrimSpace(value)
@@ -69,6 +72,38 @@ func originAllowed(origin string, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+func privateNetworkOrigin(origin, serverHost string) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Hostname() == "" || parsed.User != nil {
+		return false
+	}
+	switch parsed.Scheme {
+	case "http", "https", "tauri":
+	default:
+		return false
+	}
+
+	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || tailscaleIP(ip)
+	}
+
+	serverName := serverHost
+	if parsedServer, err := url.Parse("//" + serverHost); err == nil {
+		serverName = parsedServer.Hostname()
+	}
+	serverName = strings.ToLower(strings.TrimSuffix(serverName, "."))
+	return strings.HasSuffix(host, ".ts.net") && host == serverName
+}
+
+func tailscaleIP(ip net.IP) bool {
+	v4 := ip.To4()
+	return v4 != nil && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
 }
 
 // Treat localhost, 127.0.0.1, and ::1 as equivalent only when scheme and port match.

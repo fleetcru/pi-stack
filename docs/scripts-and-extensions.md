@@ -22,7 +22,7 @@ Small Go program (separate module) for Windows desktops running pi-server person
 ## Root scripts
 
 Startup:
-- `start-exp-server.ps1` / `.cmd` / `.sh` — build/run pi-server only (dev).
+- `start-exp-server.ps1` / `.cmd` / `.sh` — build/run pi-server only. The PowerShell and shell launchers bind `0.0.0.0:3142`, use the built-in home-LAN/Tailscale browser-origin policy, and print detected local, LAN, and Tailscale URLs.
 - `start-exp-live-stack.ps1` / `.cmd` / `.sh` — full dev stack: pi-server + webby dev server + a Pi TUI with the relay bridge.
 - `fix-pi-server-node-path.sh` — repairs the Node path so the server can spawn Pi on Linux/macOS.
 

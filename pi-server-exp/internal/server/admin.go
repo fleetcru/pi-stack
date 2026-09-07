@@ -201,7 +201,7 @@ type pairingEndpoint struct {
 func pairingEndpoints(addr string) []pairingEndpoint {
 	_, port, err := net.SplitHostPort(addr)
 	if err != nil || port == "" {
-		port = "3141"
+		port = "3142"
 	}
 	var lan, tailscale []pairingEndpoint
 	interfaces, err := net.Interfaces()
@@ -258,7 +258,7 @@ func (s *Server) adminGetState(w http.ResponseWriter, session adminSession) {
 	workers := s.workers.List()
 	warnings := make([]string, 0)
 	if s.cfg.AuthToken == "" {
-		warnings = append(warnings, "Authentication is disabled; keep the server bound to loopback only.")
+		warnings = append(warnings, "Authentication is disabled; all devices on the home LAN or Tailscale network are trusted.")
 	}
 	if s.cfg.AdminConfigError != "" {
 		warnings = append(warnings, "Persisted admin configuration could not be loaded: "+s.cfg.AdminConfigError)

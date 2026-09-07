@@ -272,7 +272,7 @@ Companion/Webby
 ### Security
 
 - **Auth:** Bearer token via `Authorization` header. Token fingerprint (SHA-256) for WS ticket binding.
-- **CORS:** Rejects browser cross-origin requests when no origins configured. Non-browser clients (no Origin header) pass through.
+- **CORS:** With no explicit allowlist, accepts browser origins on loopback, RFC1918 home networks, Tailscale `100.64.0.0/10`, and the server's own `*.ts.net` host. Public origins are rejected. `PI_SERVER_ALLOWED_ORIGINS` replaces this with a strict explicit allowlist. Non-browser clients have no Origin header and pass through.
 - **File access:** `filepath.EvalSymlinks` + `allowedFilePath` prevents symlink escapes. Git args from fixed whitelist only.
 - **Worker proxy:** SSRF mitigation via scheme/host validation and optional allowlist. Only pre-registered URLs contacted.
 - **SensitiveString:** Worker tokens redact on `String()`/`GoString()` to prevent log leakage.
@@ -354,19 +354,18 @@ Key invariants:
 
 | Variable | Default | Description |
 |---|---|---|
-| `PI_SERVER_ADDR` | `127.0.0.1:3141` | Listen address |
+| `PI_SERVER_ADDR` | `0.0.0.0:3142` | Listen address; reachable over home LAN and Tailscale |
 | `PI_SERVER_AUTH_TOKEN` | _(none)_ | Bearer token for API auth |
 | `PI_SERVER_CWD` | `.` | Default working directory |
 | `PI_SERVER_DATA_DIR` | `.data/pi-server` | Persisted data |
 | `PI_SERVER_ALLOWED_ROOTS` | `.` | Restrict session CWDs |
-| `PI_SERVER_ALLOWED_ORIGINS` | _(none)_ | CORS origins (comma-separated) |
+| `PI_SERVER_ALLOWED_ORIGINS` | _(automatic private-network policy)_ | Optional strict CORS origin override |
 | `PI_SERVER_MAX_SESSIONS` | `8` | Max concurrent sessions (0 = unlimited) |
 | `PI_SERVER_MAX_ACTIVE_RUNS` | `8` | Hub-wide active local/remote/relay run limit (0 = unlimited) |
 | `PI_SERVER_MAX_RUNS_PER_SESSION` | `1` | Active runs allowed per session |
 | `PI_SERVER_MAX_RUNS_PER_WORKER` | `4` | Active runs allowed per worker |
 | `PI_SERVER_MAX_QUEUED_RUNS` | `32` | Hub admission queue bound (0 = reject when busy) |
 | `PI_SERVER_DISTRIBUTED_RUN_TIMEOUT` | `2h` | Fallback lease timeout for missing distributed lifecycle events (0 = disabled) |
-| `PI_SERVER_ALLOW_INSECURE` | _(empty)_ | `1` to allow non-loopback without auth |
 | `PI_SERVER_PI_BINARY` | `pi` | Path to Pi CLI |
 | `PI_SERVER_PI_EXTENSIONS` | _(none)_ | Extensions to load |
 | `PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL` | `0` | Event-journal fsync interval; `0` keeps strict per-event durability |
