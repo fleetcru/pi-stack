@@ -71,8 +71,9 @@ class AppUpdater(
 
   /**
    * Stages an APK for a full install and commits it. The system shows its own
-   * confirmation UI. After a successful install Android kills and (optionally)
-   * relaunches the app via the returned status broadcast.
+   * confirmation UI. The commit status is delivered to a broadcast receiver,
+   * whose PendingIntent must be mutable so the framework can attach
+   * PackageInstaller.EXTRA_STATUS.
    */
   fun install(apkFile: File) {
     val installer = context.packageManager.packageInstaller
@@ -83,14 +84,14 @@ class AppUpdater(
         apkFile.inputStream().use { input -> input.copyTo(out) }
         session.fsync(out)
       }
-      // No status receiver: the platform package installer shows its own UI and
-      // the launcher can restart the app normally after the update.
-      session.commit(PendingIntent.getActivity(context, 0, launchAfterInstallIntent(), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE).intentSender)
+      val statusReceiver = PendingIntent.getBroadcast(
+        context,
+        0,
+        Intent(context, InstallResultReceiver::class.java),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+      )
+      session.commit(statusReceiver.intentSender)
     }
   }
-
-  private fun launchAfterInstallIntent(): Intent =
-    context.packageManager.getLaunchIntentForPackage(context.packageName)
-      ?: Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
 }
 
