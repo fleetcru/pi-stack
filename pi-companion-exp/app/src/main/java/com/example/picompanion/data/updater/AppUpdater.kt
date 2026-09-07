@@ -6,7 +6,10 @@ import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -70,36 +73,54 @@ class AppUpdater(
   }
 
   /**
-   * Stages an APK for a full install and commits it. The system shows its own
-   * confirmation UI. The commit status is delivered to a broadcast receiver,
-   * whose PendingIntent must be mutable so the framework can attach
-   * PackageInstaller.EXTRA_STATUS. Runs off the main thread because the session
-   * performs file IO.
+   * Stages an APK for a full install and commits it, then reports the outcome
+   * through [onFinished]. A SessionCallback is the authoritative signal; the
+   * broadcast PendingIntent is only a mandatory placeholder for session.commit.
    */
-  suspend fun install(apkFile: File) = withContext(Dispatchers.IO) {
-    val installer = context.packageManager.packageInstaller
-    val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-    val sessionId = installer.createSession(params)
-    try {
-      installer.openSession(sessionId).use { session ->
-        session.openWrite("pi-companion", 0, apkFile.length()).use { out ->
-          apkFile.inputStream().use { input -> input.copyTo(out) }
-          session.fsync(out)
+  suspend fun install(
+    apkFile: File,
+    onFinished: (success: Boolean, message: String?) -> Unit,
+  ) {
+    withContext(Dispatchers.IO) {
+      val installer = context.packageManager.packageInstaller
+      val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+      val sessionId = installer.createSession(params)
+      val mainHandler = Handler(Looper.getMainLooper())
+      val callback = object : PackageInstaller.SessionCallback() {
+        override fun onCreated(sessionId: Int) {}
+        override fun onBadgingChanged(sessionId: Int) {}
+        override fun onActiveChanged(sessionId: Int, active: Boolean) {}
+        override fun onProgressChanged(sessionId: Int, progress: Float) {}
+        override fun onFinished(sessionId: Int, success: Boolean) {
+          Log.i("AppUpdater", "Install finished success=$success session=$sessionId")
+          runCatching { installer.unregisterSessionCallback(this) }
+          mainHandler.post {
+            onFinished(success, if (success) null else "Install failed")
+          }
         }
-        val statusReceiver = PendingIntent.getBroadcast(
-          context,
-          sessionId,
-          Intent(context, InstallResultReceiver::class.java),
-          PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
-        )
-        session.commit(statusReceiver.intentSender)
       }
-    } catch (error: Exception) {
-      // Abandon the half-written session on any staging/commit failure so no
-      // broken install lingers.
-      runCatching { installer.abandonSession(sessionId) }
-      throw error
+      installer.registerSessionCallback(callback)
+      try {
+        installer.openSession(sessionId).use { session ->
+          session.openWrite("pi-companion", 0, apkFile.length()).use { out ->
+            apkFile.inputStream().use { input -> input.copyTo(out) }
+            session.fsync(out)
+          }
+          // Broadcast is only a placeholder; SessionCallback.onFinished is the
+          // real completion signal.
+          val statusPending = PendingIntent.getBroadcast(
+            context,
+            sessionId,
+            Intent(context, InstallResultReceiver::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+          )
+          session.commit(statusPending.intentSender)
+        }
+      } catch (error: Exception) {
+        runCatching { installer.abandonSession(sessionId) }
+        runCatching { installer.unregisterSessionCallback(callback) }
+        mainHandler.post { onFinished(false, error.message ?: "Install failed") }
+      }
     }
   }
 }
-

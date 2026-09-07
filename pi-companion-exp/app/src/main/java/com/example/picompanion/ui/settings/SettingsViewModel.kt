@@ -83,10 +83,14 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
           return@launch
         }
         _updateState.value = UpdateState.Installing
-        updater.install(apk)
-        // Keep the Installing state: success is signaled by the system
-        // replacing the app process, and failure is surfaced by the broadcast
-        // receiver. Claiming UpToDate here would compete with that real result.
+        updater.install(apk) { success, message ->
+          if (success) {
+            // The system is replacing the app; the process will be killed.
+            _updateState.value = UpdateState.UpToDate
+          } else {
+            _updateState.value = UpdateState.Failed(message ?: "Update could not be installed")
+          }
+        }
       } catch (error: Exception) {
         _updateState.value = UpdateState.Failed(error.message ?: "Update failed")
       }
