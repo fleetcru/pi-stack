@@ -17,3 +17,8 @@ workflows:
           mapping: |
             pi-companion-exp/.* build-companion true
             .circleci/.* build-companion true
+          filters:
+            branches:
+              only: /.*/
+            tags:
+              only: /^v.*/

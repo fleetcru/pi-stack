@@ -43,10 +43,10 @@ CircleCI builds the signed Companion APK. The GitHub Actions workflow remains av
 - `.circleci/config.yml` is the dynamic setup configuration. It uses `circleci/path-filtering@3.0.0`.
 - `.circleci/continue_config.yml` contains the Android build and GitHub release jobs.
 - Commits run the Android workflow only when `pi-companion-exp/**` or `.circleci/**` changed. Other commits run only the small path-check job.
-- Tags matching `v*` always run the Android workflow, regardless of changed paths.
+- Tags matching `v*` always run the Android workflow, regardless of changed paths. The setup `path-filtering/filter` job must explicitly allow `v*` tags; without that filter CircleCI accepts the tag pipeline but compiles it to `jobs: {}`.
 - The Android job uses `cimg/android:2026.08.1` with the `large` Docker resource class.
 - Main-branch builds store `pi-companion-<version>.apk` as a CircleCI artifact but do not create a GitHub Release.
-- CircleCI is the only automatic publisher for `v*` tags. `.github/workflows/build-android.yml` remains a manual `workflow_dispatch` fallback and must not add a `v*` push trigger, because two publishers can race to create the same release.
+- CircleCI is the only automatic publisher for `v*` tags. `.github/workflows/build-android.yml` remains a manual `workflow_dispatch` fallback and must not add a `v*` push trigger, because two publishers can race to create the same release. Manual runs validate a SemVer `version_name` and always create a uniquely numbered prerelease.
 
 Validate both configurations after changing either file:
 
@@ -476,3 +476,4 @@ cd pi-companion-exp && ./gradlew :app:testDebugUnitTest
 11. **Git `--format` tabs:** use `%09`, not `\t`, as a `for-each-ref` field separator, and never `TrimSpace` the blob — it eats the first branch's leading-space HEAD padding and silently drops it.
 12. **Windows `git worktree remove` fails with “Permission denied”** even on clean checkouts — `removeOwnedWorktree` falls back to clearing read-only attrs + `os.RemoveAll` + `worktree prune` + `branch -D`.
 13. **`createWorktree.enabled` vs `worktreePath` are mutually exclusive** — the server must reject both set at once, and the auto branch must be recorded in `Metadata["worktreeBranch"]` so delete can clean it up.
+14. **Remote tag deletion does not remove local tags.** `git tag --list` reads local refs, while GitHub shows remote refs. Compare with `git ls-remote --tags origin`. Only prune local-only tags when the user explicitly requests it.
