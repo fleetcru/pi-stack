@@ -1,12 +1,12 @@
 version: 2.1
 
 # Android companion build on CircleCI's purpose-built cimg/android image.
-# This is additive to the existing GitHub Actions workflow; it only builds
-# and signs a release APK and uploads it as an artifact. Release/publishing
-# steps remain in .github/workflows/build-android.yml.
+# Main builds store a signed APK as a CircleCI artifact. Version-tag builds
+# pass that APK to a separate job that publishes a GitHub Release.
 
 orbs:
   android: circleci/android@3.2.0
+  github-cli: circleci/github-cli@3.0.0
 
 jobs:
   build:
@@ -121,57 +121,56 @@ jobs:
           command: |
             set -euo pipefail
             VERSION_NAME=$(cat /tmp/pi-companion-version)
-            mkdir -p /tmp/artifacts
+            mkdir -p release-artifacts
             cp pi-companion-exp/app/build/outputs/apk/release/*.apk \
-              "/tmp/artifacts/pi-companion-${VERSION_NAME}.apk"
+              "release-artifacts/pi-companion-${VERSION_NAME}.apk"
 
       - store_artifacts:
-          path: /tmp/artifacts
+          path: release-artifacts
           destination: pi-companion-apk
 
-      # On an explicit tag push, publish the APK as a GitHub Release asset so
-      # the in-app updater (which reads github.com/fleetcru/pi-stack releases)
-      # discovers it. Prereleases and stable use the same release path; the
-      # updater compares by publish time.
+      - persist_to_workspace:
+          root: .
+          paths:
+            - release-artifacts
+
+  release:
+    docker:
+      - image: cimg/base:stable
+    resource_class: small
+    steps:
+      - attach_workspace:
+          at: /tmp/workspace
+      - github-cli/setup:
+          token: GH_TOKEN
       - run:
           name: Publish APK to GitHub Release
           command: |
             set -euo pipefail
             if [[ -z "${CIRCLE_TAG:-}" ]]; then
-              echo "No tag — skipping GitHub Release creation"
-              exit 0
+              echo "A version tag is required"
+              exit 1
             fi
-            if [[ -z "${GH_TOKEN:-}" ]]; then
-              echo "GH_TOKEN not set — skipping GitHub Release creation"
-              exit 0
-            fi
-            VERSION_NAME=$(cat /tmp/pi-companion-version)
-            APK="/tmp/artifacts/pi-companion-${VERSION_NAME}.apk"
+            VERSION_NAME="${CIRCLE_TAG#v}"
+            APK="/tmp/workspace/release-artifacts/pi-companion-${VERSION_NAME}.apk"
             test -s "$APK"
-            TAG="${CIRCLE_TAG}"
-            BODY="Auto-built pi-companion ${VERSION_NAME} by CircleCI from ${CIRCLE_SHA1}"
 
-            # Create the release tag object if it does not already exist.
-            curl -fsS -X POST "https://api.github.com/repos/fleetcru/pi-stack/releases" \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -d "$(jq -n --arg tag "$TAG" --arg name "pi-companion v${VERSION_NAME}" --arg body "$BODY" '{tag_name: $tag, name: $name, body: $body, prerelease: true}')" \
-              > /tmp/release.json
-
-            RELEASE_ID=$(jq -r '.id' /tmp/release.json)
-            if [[ -z "$RELEASE_ID" || "$RELEASE_ID" == "null" ]]; then
-              # Release already existed; look it up by tag.
-              RELEASE_ID=$(curl -fsS "https://api.github.com/repos/fleetcru/pi-stack/releases/tags/$TAG" \
-                -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" | jq -r '.id')
+            if gh release view "$CIRCLE_TAG" --repo fleetcru/pi-stack >/dev/null 2>&1; then
+              gh release upload "$CIRCLE_TAG" "$APK" \
+                --repo fleetcru/pi-stack \
+                --clobber
+            else
+              prerelease_args=()
+              if [[ "$CIRCLE_TAG" == *-* ]]; then
+                prerelease_args+=(--prerelease)
+              fi
+              gh release create "$CIRCLE_TAG" "$APK" \
+                --repo fleetcru/pi-stack \
+                --title "Pi Companion ${CIRCLE_TAG}" \
+                --generate-notes \
+                --verify-tag \
+                "${prerelease_args[@]}"
             fi
-
-            # Upload the APK asset.
-            curl -fsS -X POST \
-              "https://uploads.github.com/repos/fleetcru/pi-stack/releases/${RELEASE_ID}/assets?name=pi-companion-${VERSION_NAME}.apk" \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              -H "Content-Type: application/vnd.android.package-archive" \
-              --data-binary "@${APK}"
 
 workflows:
   build-android:
@@ -181,5 +180,14 @@ workflows:
           filters:
             branches:
               only: main
+            tags:
+              only: /^v.*/
+      - release:
+          context: pi-stack-signing
+          requires:
+            - build
+          filters:
+            branches:
+              ignore: /.*/
             tags:
               only: /^v.*/

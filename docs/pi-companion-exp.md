@@ -86,7 +86,7 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 
 ## Build and release
 
-`.circleci/config.yml` builds and signs the release APK in `cimg/android:2026.08.1`. The `pi-stack-signing` context supplies `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, and `KEY_PASSWORD`. Store context values without trailing CR or LF characters. The workflow decodes the keystore and runs `keytool -list` before compilation so malformed signing secrets fail early. Tag builds publish `pi-companion-<version>.apk` as a GitHub Release asset when `GH_TOKEN` is available.
+`.circleci/config.yml` builds and signs the release APK in `cimg/android:2026.08.1`. The `pi-stack-signing` context supplies `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, and `KEY_PASSWORD`. Store context values without trailing CR or LF characters. The workflow decodes the keystore and runs `keytool -list` before compilation so malformed signing secrets fail early. The build job stores `release-artifacts/` in a CircleCI workspace. For `v*` tags, a separate small job uses the certified `circleci/github-cli` orb and `GH_TOKEN` to create the GitHub Release and upload `pi-companion-<version>.apk`. Tags containing a suffix such as `-beta.1` create prereleases. Reruns replace an existing APK asset.
 
 ## Tests
 
