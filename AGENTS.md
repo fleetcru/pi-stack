@@ -46,6 +46,7 @@ CircleCI builds the signed Companion APK. The GitHub Actions workflow remains av
 - Tags matching `v*` always run the Android workflow, regardless of changed paths.
 - The Android job uses `cimg/android:2026.08.1` with the `large` Docker resource class.
 - Main-branch builds store `pi-companion-<version>.apk` as a CircleCI artifact but do not create a GitHub Release.
+- CircleCI is the only automatic publisher for `v*` tags. `.github/workflows/build-android.yml` remains a manual `workflow_dispatch` fallback and must not add a `v*` push trigger, because two publishers can race to create the same release.
 
 Validate both configurations after changing either file:
 
@@ -66,29 +67,50 @@ The workflow uses the `pi-stack-signing` CircleCI context in organization `8d10a
 
 Store secret values without trailing CR or LF characters. A trailing line break corrupts Android aliases and passwords. The build validates the decoded keystore with `keytool` before compilation.
 
+### Versioning policy
+
+Use Semantic Versioning for each independently released product:
+
+| Product | Stable tag | Prerelease tag |
+|---|---|---|
+| Companion | `v1.2.3` | `v1.2.3-beta.1` |
+| Server | `server-v1.2.3` | `server-v1.2.3-rc.1` |
+| Server tray | `tray-v1.2.3` | `tray-v1.2.3-beta.1` |
+
+Increment versions as follows:
+
+- `PATCH` for backward-compatible fixes, such as `v0.1.0` to `v0.1.1`.
+- `MINOR` for backward-compatible features, such as `v0.1.1` to `v0.2.0`.
+- `MAJOR` for breaking compatibility or a declared stable milestone, such as `v0.9.0` to `v1.0.0`.
+- Use `-alpha.N`, `-beta.N`, or `-rc.N` for prereleases. Increment `N` for each candidate.
+
+Versions below `1.0.0` mean the product is still evolving and may introduce breaking changes in a minor release. Start at `v0.1.0` for an initial experimental/public Companion release, or at `v1.0.0` only when declaring its interfaces and update behavior stable. Do not use CI build numbers in stable tags. CircleCI generates Android `versionCode` independently from the build timestamp.
+
+Tags are immutable release identifiers. Never move, overwrite, or reuse a published tag. Ask the user for the exact product and version before creating one. Companion tags are reserved for `v*`; server and tray tags use their product prefixes so they do not trigger the Companion workflow.
+
 ### Creating a GitHub Release
 
-A version tag triggers the full release path. Choose a new version and make sure `HEAD` is the commit to release:
+A Companion version tag triggers the full release path. Choose a new version and make sure `HEAD` is the commit to release:
 
 ```bash
 git status --short
 git rev-parse HEAD
-git tag -a v1.5.2 -m "Release v1.5.2"
-git push origin v1.5.2
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
 ```
 
 Do not create or push a release tag unless the user explicitly requests that exact version. Do not move or overwrite an existing release tag.
 
-For a `v1.5.2` tag, CircleCI:
+For a `v0.1.0` tag, CircleCI:
 
 1. Builds and signs the release APK.
 2. Verifies its APK signature.
-3. Stores `pi-companion-1.5.2.apk` as a CircleCI artifact and workspace file.
+3. Stores `pi-companion-0.1.0.apk` as a CircleCI artifact and workspace file.
 4. Starts the tag-only `release` job.
 5. Uses `circleci/github-cli@3.0.0` to install and authenticate `gh` with `GH_TOKEN`.
-6. Creates GitHub Release `v1.5.2` and uploads the APK.
+6. Creates GitHub Release `v0.1.0` and uploads the APK.
 
-Tags containing a suffix, such as `v1.5.2-beta.1`, create GitHub prereleases. If the release job is rerun, `gh release upload --clobber` replaces the existing APK asset. The Companion updater discovers assets named `pi-companion-*.apk` from `fleetcru/pi-stack` releases.
+Tags containing a suffix, such as `v0.1.0-beta.1`, create GitHub prereleases. If the release job is rerun, `gh release upload --clobber` replaces the existing APK asset. The Companion updater discovers assets named `pi-companion-*.apk` from `fleetcru/pi-stack` releases.
 
 ## Projects
 

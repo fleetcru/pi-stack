@@ -1,9 +1,8 @@
 name: Build Android APK
 
+# CircleCI owns automatic v* tag releases. Keep this workflow as a manual
+# fallback so both CI systems cannot race to create the same GitHub Release.
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       version_name:
