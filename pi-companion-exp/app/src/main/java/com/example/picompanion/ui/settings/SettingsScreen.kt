@@ -70,6 +70,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.picompanion.data.settings.ServerEntry
 import com.journeyapps.barcodescanner.ScanContract
@@ -102,6 +106,18 @@ fun SettingsScreen(
     if (result.contents != null && target != null) {
       viewModel.applyPairingPayload(target, result.contents)?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
     }
+  }
+
+  // When the user returns from the "install unknown apps" settings screen,
+  // re-evaluate permission so a just-granted toggle immediately shows the
+  // available update instead of requiring a manual re-check.
+  val lifecycleOwner = LocalLifecycleOwner.current
+  DisposableEffect(lifecycleOwner, viewModel) {
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshInstallPermission()
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
   }
 
   Column(

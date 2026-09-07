@@ -88,6 +88,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
   fun installPermissionIntent() = updater.installPermissionIntent()
 
+  /**
+   * Re-evaluates install permission after the user returns from the system
+   * "install unknown apps" screen. If permission was just granted, kick off a
+   * fresh check so the update option appears without the user tapping again.
+   */
+  fun refreshInstallPermission() {
+    if (_updateState.value !is UpdateState.PermissionRequired) return
+    if (updater.canRequestInstall()) {
+      checkForUpdates()
+    }
+  }
+
   // Per-server connection test results
   private val _connectionResults = MutableStateFlow<Map<String, ConnectionTestResult>>(emptyMap())
   val connectionResults: StateFlow<Map<String, ConnectionTestResult>> = _connectionResults.asStateFlow()
