@@ -34,6 +34,62 @@ git push origin <branch>
 
 If `git push` returns HTTP 403, do not retry with the same account. Check the active account with `gh auth status`, switch or sign in to the authorized account, then rerun the push command.
 
+## CircleCI Android builds and releases
+
+CircleCI builds the signed Companion APK. The GitHub Actions workflow remains available and is not replaced by CircleCI.
+
+### Configuration and triggers
+
+- `.circleci/config.yml` is the dynamic setup configuration. It uses `circleci/path-filtering@3.0.0`.
+- `.circleci/continue_config.yml` contains the Android build and GitHub release jobs.
+- Commits run the Android workflow only when `pi-companion-exp/**` or `.circleci/**` changed. Other commits run only the small path-check job.
+- Tags matching `v*` always run the Android workflow, regardless of changed paths.
+- The Android job uses `cimg/android:2026.08.1` with the `large` Docker resource class.
+- Main-branch builds store `pi-companion-<version>.apk` as a CircleCI artifact but do not create a GitHub Release.
+
+Validate both configurations after changing either file:
+
+```bash
+circleci config validate .circleci/config.yml
+circleci config validate .circleci/continue_config.yml
+```
+
+### Signing and GitHub credentials
+
+The workflow uses the `pi-stack-signing` CircleCI context in organization `8d10a558-3b1b-47a7-9577-4c5fb77bc796`. It requires:
+
+- `KEYSTORE_BASE64`
+- `KEYSTORE_PASSWORD`
+- `KEY_ALIAS`
+- `KEY_PASSWORD`
+- `GH_TOKEN`, a fine-grained GitHub token restricted to `fleetcru/pi-stack` with `Contents: read and write`
+
+Store secret values without trailing CR or LF characters. A trailing line break corrupts Android aliases and passwords. The build validates the decoded keystore with `keytool` before compilation.
+
+### Creating a GitHub Release
+
+A version tag triggers the full release path. Choose a new version and make sure `HEAD` is the commit to release:
+
+```bash
+git status --short
+git rev-parse HEAD
+git tag -a v1.5.2 -m "Release v1.5.2"
+git push origin v1.5.2
+```
+
+Do not create or push a release tag unless the user explicitly requests that exact version. Do not move or overwrite an existing release tag.
+
+For a `v1.5.2` tag, CircleCI:
+
+1. Builds and signs the release APK.
+2. Verifies its APK signature.
+3. Stores `pi-companion-1.5.2.apk` as a CircleCI artifact and workspace file.
+4. Starts the tag-only `release` job.
+5. Uses `circleci/github-cli@3.0.0` to install and authenticate `gh` with `GH_TOKEN`.
+6. Creates GitHub Release `v1.5.2` and uploads the APK.
+
+Tags containing a suffix, such as `v1.5.2-beta.1`, create GitHub prereleases. If the release job is rerun, `gh release upload --clobber` replaces the existing APK asset. The Companion updater discovers assets named `pi-companion-*.apk` from `fleetcru/pi-stack` releases.
+
 ## Projects
 
 ### pi-server-exp (Go 1.23)
