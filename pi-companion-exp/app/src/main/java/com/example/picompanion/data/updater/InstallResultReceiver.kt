@@ -4,17 +4,27 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.util.Log
+import android.widget.Toast
 
 /**
  * Receives the status broadcast emitted by PackageInstaller after a silent
- * self-update commit. It does not need to display anything; the platform
- * installer already surfaced its own confirmation. On a successful install the
- * app process is killed and the launcher can reopen the updated build.
+ * self-update commit. Reports failures so a signature mismatch or a declined
+ * permission does not fail silently.
  */
 class InstallResultReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
-    // Nothing to do here beyond acknowledging the result; a relaunch intent is
-    // not needed because Android terminates the app on successful upgrade.
+    val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+    Log.i("AppUpdater", "Install result: status=$status message=$message")
+    when (status) {
+      PackageInstaller.STATUS_SUCCESS -> Unit
+      PackageInstaller.STATUS_PENDING_USER_ACTION -> Unit
+      else -> Toast.makeText(
+        context,
+        "Update could not be installed: $message",
+        Toast.LENGTH_LONG,
+      ).show()
+    }
   }
 }

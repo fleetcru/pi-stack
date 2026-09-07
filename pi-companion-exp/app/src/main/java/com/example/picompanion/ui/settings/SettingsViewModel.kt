@@ -84,8 +84,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
         _updateState.value = UpdateState.Installing
         updater.install(apk)
-        // Once install() returns, the system installer has taken over.
-        _updateState.value = UpdateState.UpToDate
+        // Keep the Installing state: success is signaled by the system
+        // replacing the app process, and failure is surfaced by the broadcast
+        // receiver. Claiming UpToDate here would compete with that real result.
       } catch (error: Exception) {
         _updateState.value = UpdateState.Failed(error.message ?: "Update failed")
       }

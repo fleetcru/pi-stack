@@ -73,24 +73,32 @@ class AppUpdater(
    * Stages an APK for a full install and commits it. The system shows its own
    * confirmation UI. The commit status is delivered to a broadcast receiver,
    * whose PendingIntent must be mutable so the framework can attach
-   * PackageInstaller.EXTRA_STATUS.
+   * PackageInstaller.EXTRA_STATUS. Runs off the main thread because the session
+   * performs file IO.
    */
-  fun install(apkFile: File) {
+  suspend fun install(apkFile: File) = withContext(Dispatchers.IO) {
     val installer = context.packageManager.packageInstaller
     val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
     val sessionId = installer.createSession(params)
-    installer.openSession(sessionId).use { session ->
-      session.openWrite("pi-companion", 0, apkFile.length()).use { out ->
-        apkFile.inputStream().use { input -> input.copyTo(out) }
-        session.fsync(out)
+    try {
+      installer.openSession(sessionId).use { session ->
+        session.openWrite("pi-companion", 0, apkFile.length()).use { out ->
+          apkFile.inputStream().use { input -> input.copyTo(out) }
+          session.fsync(out)
+        }
+        val statusReceiver = PendingIntent.getBroadcast(
+          context,
+          sessionId,
+          Intent(context, InstallResultReceiver::class.java),
+          PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+        )
+        session.commit(statusReceiver.intentSender)
       }
-      val statusReceiver = PendingIntent.getBroadcast(
-        context,
-        0,
-        Intent(context, InstallResultReceiver::class.java),
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
-      )
-      session.commit(statusReceiver.intentSender)
+    } catch (error: Exception) {
+      // Abandon the half-written session on any staging/commit failure so no
+      // broken install lingers.
+      runCatching { installer.abandonSession(sessionId) }
+      throw error
     }
   }
 }
