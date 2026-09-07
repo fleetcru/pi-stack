@@ -75,16 +75,14 @@ jobs:
           name: Build release APK
           command: |
             set -euo pipefail
+            # Context vars (KEY_ALIAS, KEYSTORE_PASSWORD, KEY_PASSWORD) are
+            # already exported by CircleCI when the job declares the context.
+            # KEYSTORE_PATH, VERSION_NAME, and VERSION_CODE were exported into
+            # $BASH_ENV by earlier steps, so Gradle sees them without any
+            # literal environment block (which does not interpolate $VARS).
             cd pi-companion-exp
             chmod +x gradlew
             ./gradlew :app:assembleRelease --no-daemon --stacktrace
-          environment:
-            KEYSTORE_PATH: /tmp/release.jks
-            KEYSTORE_PASSWORD: $KEYSTORE_PASSWORD
-            KEY_ALIAS: $KEY_ALIAS
-            KEY_PASSWORD: $KEY_PASSWORD
-            VERSION_NAME: $VERSION_NAME
-            VERSION_CODE: $VERSION_CODE
 
       - android/save_gradle_cache
       - android/save_build_cache
