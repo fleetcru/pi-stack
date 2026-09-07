@@ -43,6 +43,17 @@ jobs:
               exit 1
             fi
             echo "Keystore bytes: $(wc -c < /tmp/release.jks)"
+            # Validate the stored password and alias before spending several
+            # minutes compiling. This also catches CR/LF accidentally stored
+            # as part of a CircleCI context secret.
+            if ! keytool -list \
+              -keystore /tmp/release.jks \
+              -storepass "$KEYSTORE_PASSWORD" \
+              -alias "$KEY_ALIAS" >/dev/null; then
+              echo "Keystore validation failed; re-store signing context values without trailing line breaks"
+              exit 1
+            fi
+            echo "Keystore password and alias validated"
             echo "export KEYSTORE_PATH=/tmp/release.jks" >> "$BASH_ENV"
 
       - run:
