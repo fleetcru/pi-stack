@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.NetworkCheck
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -275,9 +276,12 @@ private fun UpdateSection(
       }
     }
     is SettingsViewModel.UpdateState.UpToDate -> {
-      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-        Text("You're on the latest version", style = MaterialTheme.typography.bodySmall)
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+          Text("You're on the latest version", style = MaterialTheme.typography.bodySmall)
+        }
+        RefreshButton(onClick = onCheck)
       }
     }
     is SettingsViewModel.UpdateState.Downloading -> {
@@ -304,6 +308,7 @@ private fun UpdateSection(
         Button(onClick = { onInstall(state.release) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
           Text("Download and install")
         }
+        RefreshButton(onClick = onCheck)
       }
     }
     is SettingsViewModel.UpdateState.PermissionRequired -> {
@@ -315,6 +320,7 @@ private fun UpdateSection(
         Button(onClick = onGrantPermission, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
           Text("Allow install from this app")
         }
+        RefreshButton(onClick = onCheck)
       }
     }
     is SettingsViewModel.UpdateState.Failed -> {
@@ -326,8 +332,18 @@ private fun UpdateSection(
         OutlinedButton(onClick = onCheck, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
           Text("Try again")
         }
+        RefreshButton(onClick = onCheck)
       }
     }
+  }
+}
+
+@Composable
+private fun RefreshButton(onClick: () -> Unit) {
+  OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+    Spacer(Modifier.width(8.dp))
+    Text("Check for updates")
   }
 }
 
