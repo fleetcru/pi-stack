@@ -1,0 +1,127 @@
+version: 2.1
+
+# Android companion build on CircleCI's purpose-built cimg/android image.
+# This is additive to the existing GitHub Actions workflow; it only builds
+# and signs a release APK and uploads it as an artifact. Release/publishing
+# steps remain in .github/workflows/build-android.yml.
+
+orbs:
+  android: circleci/android@3.2.0
+
+jobs:
+  build:
+    docker:
+      # Recent cimg/android ships the Android SDK (platforms/build-tools),
+      # Gradle, and JDK 17. The image pulls once and Docker layer caching
+      # keeps it warm across runs.
+      - image: cimg/android:2025.09
+    resource_class: medium
+    steps:
+      - checkout
+
+      # Warm the Gradle wrapper distribution + dependency/project caches so
+      # repeat builds skip re-resolving AGP 9.0.1, Kotlin, Compose, and the rest.
+      - restore_cache:
+          keys:
+            - gradle-v1-{{ checksum "pi-companion-exp/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "pi-companion-exp/gradle/libs.versions.toml" }}
+            - gradle-v1-
+
+      - run:
+          name: Decode release keystore
+          command: |
+            set -euo pipefail
+            for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+              if [[ -z "${!name}" ]]; then
+                echo "::error::$name must be set in the CircleCI project environment"
+                exit 1
+              fi
+            done
+            echo "$KEYSTORE_BASE64" | base64 -d > /tmp/release.jks
+            test -s /tmp/release.jks
+            echo "export KEYSTORE_PATH=/tmp/release.jks" >> "$BASH_ENV"
+
+      - run:
+          name: Accept Android SDK licenses
+          command: |
+            set -euo pipefail
+            # compileSdk 35 is within the preinstalled range, but the licenses
+            # still need accepting on a fresh image before Gradle can build.
+            yes | sdkmanager --licenses >/dev/null 2>&1 || true
+            if command -v sdkmanager >/dev/null 2>&1; then
+              sdkmanager --list_installed | grep -i 'platforms;android-35' || true
+            fi
+
+      - run:
+          name: Generate version
+          command: |
+            set -euo pipefail
+            # Tag pushes carry the version; otherwise use a CI build number.
+            if [[ -n "${CIRCLE_TAG:-}" ]]; then
+              VERSION_NAME="${CIRCLE_TAG#v}"
+            else
+              VERSION_NAME="${VERSION_NAME:-1.0.0-ci${CIRCLE_BUILD_NUM}}"
+            fi
+            echo "export VERSION_NAME=$VERSION_NAME" >> "$BASH_ENV"
+            echo "export VERSION_CODE=$(date +%s)" >> "$BASH_ENV"
+            echo "$VERSION_NAME" > /tmp/pi-companion-version
+
+      - android/restore-gradle-cache
+
+      - run:
+          name: Build release APK
+          command: |
+            set -euo pipefail
+            cd pi-companion-exp
+            chmod +x gradlew
+            ./gradlew :app:assembleRelease --no-daemon --stacktrace
+          environment:
+            KEYSTORE_PATH: /tmp/release.jks
+            KEYSTORE_PASSWORD: $KEYSTORE_PASSWORD
+            KEY_ALIAS: $KEY_ALIAS
+            KEY_PASSWORD: $KEY_PASSWORD
+            VERSION_NAME: $VERSION_NAME
+            VERSION_CODE: $VERSION_CODE
+
+      - android/save-gradle-cache
+
+      - save_cache:
+          key: gradle-v1-{{ checksum "pi-companion-exp/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "pi-companion-exp/gradle/libs.versions.toml" }}
+          paths:
+            - ~/.gradle/caches
+            - ~/.gradle/wrapper
+
+      - run:
+          name: Verify release APK signature
+          command: |
+            set -euo pipefail
+            APK=$(ls pi-companion-exp/app/build/outputs/apk/release/*.apk | head -1)
+            test -n "$APK"
+            if command -v apksigner >/dev/null 2>&1; then
+              apksigner verify --print-certs "$APK"
+            else
+              echo "apksigner not found on this image; skipping explicit signature verification"
+            fi
+
+      - run:
+          name: Stage versioned APK
+          command: |
+            set -euo pipefail
+            VERSION_NAME=$(cat /tmp/pi-companion-version)
+            mkdir -p /tmp/artifacts
+            cp pi-companion-exp/app/build/outputs/apk/release/*.apk \
+              "/tmp/artifacts/pi-companion-${VERSION_NAME}.apk"
+
+      - store_artifacts:
+          path: /tmp/artifacts
+          destination: pi-companion-apk
+
+workflows:
+  build-android:
+    jobs:
+      - build:
+          context: pi-stack-signing
+          filters:
+            branches:
+              only: main
+            tags:
+              only: /^v.*/
