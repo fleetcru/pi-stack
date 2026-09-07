@@ -242,6 +242,7 @@ fun SettingsScreen(
     // About
     SettingsSection(title = "About") {
       SettingsRow(label = "App version", value = com.example.picompanion.BuildConfig.VERSION_NAME)
+      SettingsRow(label = "Build number", value = com.example.picompanion.BuildConfig.VERSION_CODE.toString())
       SettingsRow(label = "API target", value = "pi-server /v1")
       SettingsRow(label = "Build type", value = com.example.picompanion.BuildConfig.BUILD_TYPE)
       Spacer(Modifier.height(8.dp))
