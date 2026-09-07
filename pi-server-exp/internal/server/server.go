@@ -52,6 +52,7 @@ type Server struct {
 	idempotency               map[string]time.Time
 	resolvedRoots             []string // pre-resolved allowed roots (symlinks evaluated)
 	stopHeartbeat             chan struct{}
+	adminConfigStop           chan struct{}
 	shutdownOnce              sync.Once
 	sessionBridge             *SessionBridge
 	distributedMu             sync.Mutex
@@ -151,6 +152,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 	}
 	s.restoreDistributedRuns()
 	s.startWorkerHeartbeats()
+	s.startAdminConfigWatch()
 	s.upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
@@ -199,6 +201,7 @@ func (s *Server) maxSessionsAtomicValue() int64 {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.shutdownOnce.Do(func() {
 		close(s.stopHeartbeat)
+		s.stopAdminConfigWatch()
 		s.stopWatchers()
 		s.sessions.CloseAll(ctx)
 	})

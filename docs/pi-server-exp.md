@@ -98,7 +98,7 @@ The `external-session-bridge.ts` extension in a user's Pi TUI connects back to t
 ## Devices, admin, diagnostics
 
 - `devices.go` — persisted device registry used by QR pairing (Companion scans a code, server records the device).
-- `admin.go` / `admin_config.go` — built-in admin page and runtime-adjustable admin settings (capacity limits, durations) that overlay the env config. The embedded Admin UI uses the stack's black, white, and gray palette, with responsive cards, forms, device controls, and a mobile bottom-sheet pairing dialog.
+- `admin.go` / `admin_config.go` — built-in admin page and runtime-adjustable admin settings (capacity limits, durations) that overlay the env config. `applyRuntimeSettings` hot-applies the safe subset, and a 2-second poller on `admin-config.json` re-applies it live when the file changes. `PersistAdminConfig` rewrites the effective configuration back to disk after CLI parsing so a stale persisted `addr` cannot pin a previous listen address across restarts. Structural settings (addr, cwd, dataDir, piBinary, server timeouts) still require a restart. The embedded Admin UI uses the stack's black, white, and gray palette, with responsive cards, forms, device controls, and a mobile bottom-sheet pairing dialog.
 - `diagnostics.go` — aggregated health snapshot (sessions, workers, uptime, versions).
 - `command_receipts.go` — persisted receipts for delivered commands so clients can reconcile "did my prompt actually arrive" after reconnects.
 - `scheduler_handler.go` — scheduler introspection endpoint.

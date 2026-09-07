@@ -82,6 +82,43 @@ func TestAdminSettingsOverrideEnvironment(t *testing.T) {
 	}
 }
 
+func TestPersistAdminConfigRoundTripsEffectiveAddr(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("PI_SERVER_DATA_DIR", dataDir)
+	t.Setenv("PI_SERVER_ADDR", "")
+	cfg := ConfigFromEnv()
+	if cfg.Addr != "0.0.0.0:3142" {
+		t.Fatalf("expected default addr, got %q", cfg.Addr)
+	}
+	// Simulate a stale persisted addr pinning localhost.
+	stale := settingsFromConfig(cfg)
+	stale.Addr = "127.0.0.1:3141"
+	if err := writeJSONAtomic(filepath.Join(dataDir, adminConfigFilename), stale); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fresh load would see the stale value, then PersistAdminConfig rewrites it
+	// back to the effective value the process is about to use.
+	loaded := ConfigFromEnv()
+	if loaded.Addr != "127.0.0.1:3141" {
+		t.Fatalf("stale addr should load first, got %q", loaded.Addr)
+	}
+	if err := PersistAdminConfig(loaded); err != nil {
+		t.Fatal(err)
+	}
+	var onDisk AdminSettings
+	data, err := os.ReadFile(filepath.Join(dataDir, adminConfigFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &onDisk); err != nil {
+		t.Fatal(err)
+	}
+	if onDisk.Addr != loaded.Addr {
+		t.Fatalf("persisted addr = %q, want effective %q", onDisk.Addr, loaded.Addr)
+	}
+}
+
 func TestIsTailscaleIP(t *testing.T) {
 	for _, tc := range []struct {
 		ip   string

@@ -142,6 +142,17 @@ func loadAdminSettings(cfg *Config) {
 	}
 }
 
+// PersistAdminConfig writes the current effective configuration back to
+// admin-config.json. Called after CLI parsing so the persisted file reflects
+// the values the server is actually about to use, preventing a stale file from
+// pinning a previous listen address or data directory across restarts.
+func PersistAdminConfig(cfg Config) error {
+	if cfg.AdminConfigPath == "" {
+		return errors.New("admin config path is not set")
+	}
+	return writeJSONAtomic(cfg.AdminConfigPath, settingsFromConfig(cfg))
+}
+
 var adminSettingKeys = []string{
 	"addr", "piBinary", "extensions", "cwd", "dataDir", "allowedOrigins", "allowedRoots", "allowedWorkerHosts",
 	"shutdownTimeout", "requestTimeout", "readTimeout", "writeTimeout", "idleTimeout", "maxSessions", "maxActiveRuns",
@@ -150,3 +161,61 @@ var adminSettingKeys = []string{
 }
 
 func cloneStrings(values []string) []string { return append([]string(nil), values...) }
+
+// startAdminConfigWatch polls admin-config.json and hot-applies the safe
+// subset when its content changes. This lets an operator or the server itself
+// revise capacity, origins, roots, worker allowlists, and durations while the
+// process is live, matching the behavior of the Admin settings endpoint.
+func (s *Server) startAdminConfigWatch() {
+	if s.adminConfigStop != nil {
+		return
+	}
+	s.adminConfigStop = make(chan struct{})
+	path := s.cfg.AdminConfigPath
+	var lastMtime time.Time
+	if info, err := os.Stat(path); err == nil {
+		lastMtime = info.ModTime()
+	}
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.adminConfigStop:
+				return
+			case <-ticker.C:
+				info, err := os.Stat(path)
+				if err != nil || info.ModTime().Equal(lastMtime) {
+					continue
+				}
+				lastMtime = info.ModTime()
+				data, err := os.ReadFile(path)
+				if err != nil {
+					s.logger.Warn("could not read admin config", "error", err)
+					continue
+				}
+				var settings AdminSettings
+				if err := json.Unmarshal(data, &settings); err != nil {
+					s.logger.Warn("could not parse admin config", "error", err)
+					continue
+				}
+				var validated Config
+				validated = s.cfg
+				if err := settings.apply(&validated); err != nil {
+					s.logger.Warn("ignoring invalid admin config", "error", err)
+					continue
+				}
+				// Only apply the hot-reloadable subset to live state.
+				s.applyRuntimeSettings(settings)
+				s.logger.Info("admin config hot-applied")
+			}
+		}
+	}()
+}
+
+func (s *Server) stopAdminConfigWatch() {
+	if s.adminConfigStop != nil {
+		close(s.adminConfigStop)
+		s.adminConfigStop = nil
+	}
+}

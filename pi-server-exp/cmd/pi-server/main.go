@@ -90,6 +90,13 @@ func main() {
 		logger.Error("configuration validation failed", "error", err)
 		os.Exit(1)
 	}
+	// Persist the effective configuration so a stale admin-config.json cannot
+	// pin a previous listen address or data directory on the next startup.
+	if cfg.AdminConfigLoaded || fileExists(cfg.AdminConfigPath) {
+		if err := server.PersistAdminConfig(cfg); err != nil {
+			logger.Warn("could not persist admin configuration", "error", err)
+		}
+	}
 	// Always refresh the bridge config so an interactive Pi TUI follows the
 	// current relay URL/port even in the no-auth trusted-LAN setup. The token
 	// is empty when authentication is disabled.
@@ -300,6 +307,11 @@ func isTerminal(f *os.File) bool {
 		return false
 	}
 	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // openLogFile opens (or creates) a file for appending log output.

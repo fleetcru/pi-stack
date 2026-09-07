@@ -349,6 +349,15 @@ func (s *Server) adminPutSettings(w http.ResponseWriter, r *http.Request) {
 		writeErrorText(w, http.StatusInternalServerError, "could not persist settings: "+err.Error())
 		return
 	}
+	s.applyRuntimeSettings(settings)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "restartRequired": restartSettingsDiffer(settings, settingsFromConfig(s.cfg))})
+}
+
+// applyRuntimeSettings applies the safe, hot-reloadable subset of AdminSettings
+// to live server state. Structural fields (addr, cwd, dataDir, piBinary, and
+// server timeouts) are intentionally not mutated here because they are fixed at
+// process start; the caller reports those via restartSettingsDiffer.
+func (s *Server) applyRuntimeSettings(settings AdminSettings) {
 	s.sessions.mu.Lock()
 	s.sessions.maxSessions = settings.MaxSessions
 	s.sessions.mu.Unlock()
@@ -362,7 +371,6 @@ func (s *Server) adminPutSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.admin.mu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "restartRequired": restartSettingsDiffer(settings, settingsFromConfig(s.cfg))})
 }
 
 func (s *Server) adminLogout(w http.ResponseWriter, r *http.Request) {
