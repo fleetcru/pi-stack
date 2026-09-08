@@ -91,8 +91,12 @@ jobs:
                 echo "No stable Companion vX.Y.Z tag found"
                 exit 1
               fi
-              IFS=. read -r MAJOR MINOR PATCH <<< "$LATEST_STABLE"
-              VERSION_NAME="${MAJOR}.${MINOR}.$((PATCH + 1))-dev.${CIRCLE_BUILD_NUM}"
+              MAJOR="${LATEST_STABLE%%.*}"
+              VERSION_REMAINDER="${LATEST_STABLE#*.}"
+              MINOR="${VERSION_REMAINDER%%.*}"
+              PATCH="${VERSION_REMAINDER#*.}"
+              NEXT_PATCH=$(expr "$PATCH" + 1)
+              VERSION_NAME="${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${CIRCLE_BUILD_NUM}"
             fi
             echo "export VERSION_NAME=$VERSION_NAME" >> "$BASH_ENV"
             echo "export VERSION_CODE=$(date +%s)" >> "$BASH_ENV"
