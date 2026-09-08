@@ -136,6 +136,9 @@ class PiServerClient(
     return doPost(server, "/v1/sessions/$sessionId/git/$action", body.toString(), JsonObject.serializer())
   }
 
+  fun getAvailableModels(server: ServerEntry): HttpResult<JsonObject> =
+    doGet(server, "/v1/models", emptyMap(), JsonObject.serializer())
+
   fun getSessionModels(server: ServerEntry, sessionId: String): HttpResult<JsonObject> =
     doGet(server, "/v1/sessions/$sessionId/models", emptyMap(), JsonObject.serializer())
 

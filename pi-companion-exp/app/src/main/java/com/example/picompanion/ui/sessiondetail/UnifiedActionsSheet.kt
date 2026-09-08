@@ -75,14 +75,14 @@ fun UnifiedActionsSheet(
   var worktreePath by remember { mutableStateOf("") }
   var existingWorktreeBranch by remember { mutableStateOf(false) }
 
-  // Model state — derived directly from controls so it updates when models load
+  // Model state is derived from controls so it updates when model sources load.
   val providers = controls.models.map { it.provider }.distinct()
-  var provider by remember(controls.selectedProvider, providers) { mutableStateOf(controls.selectedProvider ?: providers.firstOrNull()) }
-  // Reset provider when controls change (e.g., after loadModelControls completes)
-  LaunchedEffect(controls.models) {
-    if (provider == null && providers.isNotEmpty()) {
-      provider = controls.selectedProvider ?: providers.first()
-    }
+  val preferredProvider = controls.selectedProvider
+    ?.takeIf { it in providers }
+    ?: providers.firstOrNull()
+  var provider by remember { mutableStateOf(preferredProvider) }
+  LaunchedEffect(providers, controls.selectedProvider) {
+    if (provider !in providers) provider = preferredProvider
   }
   var providerMenuOpen by remember { mutableStateOf(false) }
   val visibleModels = controls.models.filter { it.provider == provider }

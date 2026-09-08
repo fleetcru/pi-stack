@@ -1,8 +1,10 @@
 package com.example.picompanion.ui.sessiondetail
 
+import android.content.ClipData
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
+import android.widget.Toast
 import java.text.DateFormat
 import java.util.Date
 import androidx.compose.foundation.Image
@@ -14,25 +16,35 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.halilibo.richtext.commonmark.Markdown
 import com.halilibo.richtext.ui.material3.RichText as MarkdownRichText
@@ -72,8 +84,13 @@ fun ChatBubble(
           if (text.isNotBlank()) Spacer(Modifier.height(8.dp))
         }
         if (text.isNotBlank()) Text(text = text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.surface)
-        if (displayTime != null) Text(displayTime, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.padding(top = 4.dp))
       }
+      MessageMetadata(
+        displayTime = displayTime,
+        text = text,
+        isUser = true,
+        modifier = Modifier.padding(top = 2.dp),
+      )
     }
   } else {
     if (text.isBlank() && imageUris.isEmpty() && imageData.isEmpty()) return
@@ -97,7 +114,59 @@ fun ChatBubble(
           }
         }
       }
-      if (displayTime != null) Text(displayTime, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
+      MessageMetadata(
+        displayTime = displayTime,
+        text = text,
+        isUser = false,
+        modifier = Modifier.padding(top = 2.dp),
+      )
+    }
+  }
+}
+
+@Composable
+private fun MessageMetadata(
+  displayTime: String?,
+  text: String,
+  isUser: Boolean,
+  modifier: Modifier = Modifier,
+) {
+  if (displayTime == null && text.isBlank()) return
+  val clipboard = LocalClipboard.current
+  val context = LocalContext.current
+  val scope = rememberCoroutineScope()
+  Row(
+    modifier = modifier,
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(2.dp),
+  ) {
+    if (displayTime != null) {
+      Text(
+        displayTime,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.outline,
+        modifier = Modifier.padding(start = 4.dp),
+      )
+    }
+    if (text.isNotBlank()) {
+      IconButton(
+        onClick = {
+          scope.launch {
+            clipboard.setClipEntry(
+              ClipEntry(ClipData.newPlainText(if (isUser) "User message" else "Assistant response", text)),
+            )
+            Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+          }
+        },
+        modifier = Modifier.minimumInteractiveComponentSize(),
+      ) {
+        Icon(
+          Icons.Default.ContentCopy,
+          contentDescription = if (isUser) "Copy user message" else "Copy assistant response",
+          modifier = Modifier.size(16.dp),
+          tint = MaterialTheme.colorScheme.outline,
+        )
+      }
     }
   }
 }

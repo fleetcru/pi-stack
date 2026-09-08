@@ -21,6 +21,7 @@ import com.example.picompanion.data.model.parseExtensionUiRequest
 import com.example.picompanion.ui.sessions.SessionInventoryState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -81,6 +82,7 @@ class SessionDetailViewModel(
   val sessionProject: StateFlow<String> = _sessionProject.asStateFlow()
   private val _modelControls = MutableStateFlow(ModelControls())
   val modelControls: StateFlow<ModelControls> = _modelControls.asStateFlow()
+  private var modelSelectionRevision = 0L
   private val _relayHealth = MutableStateFlow<RelayHealth?>(null)
   val relayHealth: StateFlow<RelayHealth?> = _relayHealth.asStateFlow()
   private val _refreshing = MutableStateFlow(false)
@@ -858,6 +860,7 @@ class SessionDetailViewModel(
         val model = raw["model"]?.jsonObject
         val provider = model?.getString("provider") ?: "?"
         val modelId = model?.getString("id") ?: "?"
+        modelSelectionRevision++
         _modelControls.update { it.copy(selectedProvider = provider, selectedModelId = modelId) }
         return // don't show system message — the model picker reflects this
       }
@@ -1348,25 +1351,37 @@ class SessionDetailViewModel(
 
   fun loadModelControls() {
     val server = activeServer ?: return
+    val selectionRevision = modelSelectionRevision
     viewModelScope.launch {
-      val (modelsResult, stateResult) = withContext(Dispatchers.IO) {
-        client.getSessionModels(server, sessionId) to client.getSessionState(server, sessionId)
+      val (sessionModelsResult, availableModelsResult, stateResult) = withContext(Dispatchers.IO) {
+        val sessionModels = async { client.getSessionModels(server, sessionId) }
+        val availableModels = async { client.getAvailableModels(server) }
+        val state = async { client.getSessionState(server, sessionId) }
+        Triple(sessionModels.await(), availableModels.await(), state.await())
       }
-      val models = (modelsResult as? com.example.picompanion.data.api.HttpResult.Success)?.value
-        ?.get("data")?.jsonObject?.get("models") as? JsonArray
-      val choices = models?.mapNotNull { raw ->
-        val model = raw as? JsonObject ?: return@mapNotNull null
-        val provider = model.getString("provider") ?: return@mapNotNull null
-        val id = model.getString("id") ?: return@mapNotNull null
-        ModelChoice(provider, id, model.getString("name") ?: id)
-      } ?: emptyList()
-      val state = (stateResult as? com.example.picompanion.data.api.HttpResult.Success)?.value?.get("data")?.jsonObject
-      _modelControls.value = ModelControls(
-        models = choices,
-        selectedProvider = state?.get("model")?.jsonObject?.getString("provider"),
-        selectedModelId = state?.get("model")?.jsonObject?.getString("id"),
-        thinkingLevel = state?.getString("thinkingLevel"),
+      val sessionChoices = parseModelChoices(
+        (sessionModelsResult as? com.example.picompanion.data.api.HttpResult.Success)?.value,
       )
+      val availableChoices = parseModelChoices(
+        (availableModelsResult as? com.example.picompanion.data.api.HttpResult.Success)?.value,
+      )
+      val state = (stateResult as? com.example.picompanion.data.api.HttpResult.Success)
+        ?.value?.get("data")?.jsonObject
+      _modelControls.update { current ->
+        val selectionIsCurrent = selectionRevision == modelSelectionRevision
+        current.copy(
+          // Keep event-provided choices if either HTTP request fails or returns a
+          // partial relay fallback. A slow response must never erase providers.
+          models = mergeModelChoices(sessionChoices, availableChoices, current.models),
+          selectedProvider = if (selectionIsCurrent) {
+            state?.get("model")?.jsonObject?.getString("provider") ?: current.selectedProvider
+          } else current.selectedProvider,
+          selectedModelId = if (selectionIsCurrent) {
+            state?.get("model")?.jsonObject?.getString("id") ?: current.selectedModelId
+          } else current.selectedModelId,
+          thinkingLevel = state?.getString("thinkingLevel") ?: current.thinkingLevel,
+        )
+      }
     }
   }
 
@@ -1375,6 +1390,8 @@ class SessionDetailViewModel(
     viewModelScope.launch {
       when (val result = withContext(Dispatchers.IO) { client.setSessionModel(server, sessionId, provider, modelId) }) {
         is com.example.picompanion.data.api.HttpResult.Success -> {
+          modelSelectionRevision++
+          _modelControls.update { it.copy(selectedProvider = provider, selectedModelId = modelId) }
           appendItem(SessionTimelineItem.System("Model changed: $provider/$modelId"))
           loadModelControls()
         }
@@ -1602,6 +1619,27 @@ class SessionDetailViewModel(
 data class RelayHealth(val connected: Boolean, val latencyMs: Long?)
 
 data class ModelChoice(val provider: String, val id: String, val name: String)
+
+internal fun parseModelChoices(payload: JsonObject?): List<ModelChoice> {
+  val models = ((payload?.get("data") as? JsonObject) ?: payload)
+    ?.get("models") as? JsonArray
+    ?: return emptyList()
+  return models.mapNotNull { raw ->
+    val model = raw as? JsonObject ?: return@mapNotNull null
+    val provider = (model["provider"] as? JsonPrimitive)?.contentOrNull
+      ?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+    val id = (model["id"] as? JsonPrimitive)?.contentOrNull
+      ?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+    val name = (model["name"] as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank) ?: id
+    ModelChoice(provider, id, name)
+  }
+}
+
+internal fun mergeModelChoices(vararg choices: List<ModelChoice>): List<ModelChoice> {
+  val seen = HashSet<Pair<String, String>>()
+  return choices.asSequence().flatten().filter { seen.add(it.provider to it.id) }.toList()
+}
+
 data class ModelControls(
   val models: List<ModelChoice> = emptyList(),
   val selectedProvider: String? = null,

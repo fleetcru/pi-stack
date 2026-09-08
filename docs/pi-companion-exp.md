@@ -8,7 +8,7 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 `SessionDetailViewModel` also renders provider and Pi errors from completed assistant messages in the timeline and clears the sending state.
 
 ### API
-- `data/api/PiServerClient.kt` — the OkHttp-based REST client: capabilities, session CRUD, prompt/RPC POSTs, git endpoints, file browsing, extension-UI responses, worker and daemon endpoints. Parses into the model classes; every response used with `response.use {}` to avoid connection leaks.
+- `data/api/PiServerClient.kt` — the OkHttp-based REST client: capabilities, global and per-session model lists, session CRUD, prompt/RPC POSTs, git endpoints, file browsing, extension-UI responses, worker and daemon endpoints. Parses into the model classes; every response uses `response.use {}` to avoid connection leaks.
 - `data/api/HttpResult.kt` — sealed result wrapper (Success/HttpError/NetworkError) the repositories and ViewModels pattern-match on.
 - `data/api/JsonConfig.kt` — shared kotlinx-serialization configuration (lenient parsing, unknown-key tolerance) so server JSON variations don't crash the app.
 
@@ -56,14 +56,14 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 - `SessionListItem.kt` — row composable.
 
 ### Session detail (`ui/sessiondetail/`) — the biggest area
-- `SessionDetailViewModel.kt` — the core: loads JSONL history via the parser, runs the event pipeline (`Channel → tracker → handleEvent → _items`), keeps `_items` updates atomic (CAS), serializes assistant bubble transitions under `assistantMutex`, guards against stale HTTP overwrites with `historyGeneration`, and handles extension-UI questions. A `ConnectivityManager.NetworkCallback` schedules backoff reconnects on `onLost` and a clean `transport.disconnect` + immediate reconnect on `onAvailable`, so a brief Wi-Fi/data blip self-heals without a manual refresh.
+- `SessionDetailViewModel.kt` — the core: loads JSONL history via the parser, runs the event pipeline (`Channel → tracker → handleEvent → _items`), keeps `_items` updates atomic (CAS), serializes assistant bubble transitions under `assistantMutex`, guards against stale HTTP overwrites with `historyGeneration`, and handles extension-UI questions. Model controls merge the global server catalog, session catalog, and live relay events by provider/model ID; failed or late HTTP responses cannot erase providers or overwrite a newer model-selection event. A `ConnectivityManager.NetworkCallback` schedules backoff reconnects on `onLost` and a clean `transport.disconnect` + immediate reconnect on `onAvailable`, so a brief Wi-Fi/data blip self-heals without a manual refresh.
 - `SessionTransportCoordinator.kt` — owns ticket acquisition and socket lifecycle independently of UI state so reconnects don't leak or drop resources.
 - `SessionHistoryParser.kt` — pure (CPU-only, off-main-thread) conversion of persisted Pi JSONL into chat items; must understand every history shape listed in AGENTS.md.
 - `SessionHistoryState.kt` — history load state machine (loading/pages/resync) with tests.
 - `SessionStateCache.kt` — small in-memory LRU so switching sessions back and forth is instant.
 - `PendingPromptQueue.kt` — queues prompts sent while the agent is mid-run; drains when the turn settles.
 - `PromptImageEncoder.kt` — image → base64 attachment prep.
-- `SessionDetailScreen.kt` — the chat screen composition (LazyColumn of timeline items, keyed uniquely via seen-set + index fallback). Item placement only animates after the first scroll settles, avoiding a visible "screen jump" while cache, history, and live events fill the list on open.
+- `SessionDetailScreen.kt` — the chat screen composition (LazyColumn of timeline items, keyed uniquely via seen-set + index fallback). Item placement only animates after the first scroll settles, avoiding a visible "screen jump" while cache, history, and live events fill the list on open. `ChatBubble.kt` provides a visible clipboard action for both user text and completed or streaming assistant text.
 - `ChatBubble.kt`, `TimelineRows.kt`, `ChatEmptyState.kt`, `SessionHeader.kt`, `MessageInputBar.kt` — individual timeline/message UI pieces.
 - `ExtensionUiDialog.kt` — renders blocking `ask_user`/select/confirm/input questions from Pi and posts the response.
 - `FileBrowserSheet.kt`, `UnifiedActionsSheet.kt` — bottom sheets for file browsing and session actions (model, thinking level, abort, git quick actions).
