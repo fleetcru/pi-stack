@@ -9,6 +9,8 @@ import com.example.picompanion.data.settings.AppSettings
 import com.example.picompanion.data.settings.ServerEntry
 import com.example.picompanion.data.updater.AppUpdater
 import com.example.picompanion.data.updater.CompanionRelease
+import com.example.picompanion.data.updater.InstallResultEvent
+import com.example.picompanion.data.updater.InstallResultEvents
 import com.example.picompanion.di.AppModule
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +47,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
   private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
   val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
+
+  init {
+    viewModelScope.launch {
+      InstallResultEvents.events.collect { result ->
+        if (_updateState.value !is UpdateState.Installing) return@collect
+        _updateState.value = when (result) {
+          InstallResultEvent.Success -> UpdateState.UpToDate
+          is InstallResultEvent.Failure -> UpdateState.Failed(result.message)
+        }
+      }
+    }
+  }
 
   val currentVersion: String
     get() = updater.currentVersionName()
@@ -88,14 +102,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
         updater.validateDownloadedApk(apk)
         _updateState.value = UpdateState.Installing
-        updater.install(apk) { success, message ->
-          if (success) {
-            // The system is replacing the app; the process will be killed.
-            _updateState.value = UpdateState.UpToDate
-          } else {
-            _updateState.value = UpdateState.Failed(message ?: "Update could not be installed")
-          }
-        }
+        updater.install(apk)
       } catch (cancelled: CancellationException) {
         _updateState.value = UpdateState.Idle
         throw cancelled

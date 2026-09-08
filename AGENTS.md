@@ -424,7 +424,8 @@ Key invariants:
 - Select releases by Semantic Version precedence, not publish time or digits stripped from filenames.
 - APK downloads must use HTTPS on approved GitHub asset hosts, match the API-advertised size, stay below 200 MB, and move from a private `.part` file only after completion.
 - Before PackageInstaller receives an APK, verify its application ID, signing certificate against the installed app, and a strictly greater Android `versionCode`.
-- `STATUS_PENDING_USER_ACTION` must open Android's confirmation intent. Ignoring it leaves installs stuck indefinitely on devices that require confirmation.
+- The PackageInstaller status `IntentSender` and `InstallResultReceiver` are the authoritative completion path on every supported Android version. Do not rely on a process-bound `SessionCallback` for final UI state.
+- `STATUS_PENDING_USER_ACTION` must open Android's confirmation intent. If it cannot open, abandon the session and report failure so the UI can retry instead of remaining stuck.
 
 ## Scripts
 

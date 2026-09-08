@@ -8,10 +8,7 @@ import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.content.pm.Signature
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.provider.Settings
-import android.util.Log
 import androidx.core.content.pm.PackageInfoCompat
 import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
@@ -156,53 +153,35 @@ class AppUpdater(
     return DownloadedApk(versionCode = versionCode, packageName = downloaded.packageName)
   }
 
-  /** Stages an APK in PackageInstaller and reports the final session result. */
-  suspend fun install(
-    apkFile: File,
-    onFinished: (success: Boolean, message: String?) -> Unit,
-  ) {
-    withContext(Dispatchers.IO) {
-      val installer = context.packageManager.packageInstaller
-      val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
-        setAppPackageName(context.packageName)
-      }
-      val sessionId = installer.createSession(params)
-      val mainHandler = Handler(Looper.getMainLooper())
-      val callback = object : PackageInstaller.SessionCallback() {
-        override fun onCreated(sessionId: Int) {}
-        override fun onBadgingChanged(sessionId: Int) {}
-        override fun onActiveChanged(sessionId: Int, active: Boolean) {}
-        override fun onProgressChanged(sessionId: Int, progress: Float) {}
-        override fun onFinished(sessionId: Int, success: Boolean) {
-          Log.i("AppUpdater", "Install finished success=$success session=$sessionId")
-          runCatching { installer.unregisterSessionCallback(this) }
-          apkFile.delete()
-          mainHandler.post {
-            onFinished(success, if (success) null else "Android rejected the update")
-          }
+  /**
+   * Stages and commits an APK. Final success or failure is delivered through
+   * [InstallResultReceiver], Android's durable PackageInstaller status channel.
+   */
+  suspend fun install(apkFile: File) = withContext(Dispatchers.IO) {
+    val installer = context.packageManager.packageInstaller
+    val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+      setAppPackageName(context.packageName)
+    }
+    val sessionId = installer.createSession(params)
+    try {
+      installer.openSession(sessionId).use { session ->
+        session.openWrite("pi-companion", 0, apkFile.length()).use { output ->
+          apkFile.inputStream().use { input -> input.copyTo(output) }
+          session.fsync(output)
         }
+        val statusPending = PendingIntent.getBroadcast(
+          context,
+          sessionId,
+          Intent(context, InstallResultReceiver::class.java),
+          PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+        )
+        session.commit(statusPending.intentSender)
       }
-      installer.registerSessionCallback(callback)
-      try {
-        installer.openSession(sessionId).use { session ->
-          session.openWrite("pi-companion", 0, apkFile.length()).use { output ->
-            apkFile.inputStream().use { input -> input.copyTo(output) }
-            session.fsync(output)
-          }
-          val statusPending = PendingIntent.getBroadcast(
-            context,
-            sessionId,
-            Intent(context, InstallResultReceiver::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
-          )
-          session.commit(statusPending.intentSender)
-        }
-      } catch (error: Exception) {
-        apkFile.delete()
-        runCatching { installer.abandonSession(sessionId) }
-        runCatching { installer.unregisterSessionCallback(callback) }
-        mainHandler.post { onFinished(false, error.message ?: "Install failed") }
-      }
+    } catch (error: Exception) {
+      runCatching { installer.abandonSession(sessionId) }
+      throw error
+    } finally {
+      apkFile.delete()
     }
   }
 

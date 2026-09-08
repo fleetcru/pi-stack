@@ -79,8 +79,8 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 ### Updater (`data/updater/`)
 - `ReleaseStore.kt` — queries the public GitHub Releases API for `fleetcru/pi-stack` with bounded timeouts. It accepts exactly one APK whose strict `pi-companion-<semver>.apk` name matches the release tag, ignores prereleases by default, and selects the highest Semantic Version rather than the latest timestamp.
 - `GitHubRelease.kt` — release API models plus strict Semantic Version parsing and precedence, including stable, alpha, beta, and release-candidate ordering.
-- `AppUpdater.kt` — accepts only HTTPS downloads from approved GitHub asset hosts, enforces the API-advertised size and a 200 MB cap, writes through an atomic `.part` file, and reports progress. Before installation it requires the expected application ID, a signing certificate matching the installed app, and a strictly newer Android `versionCode`. It stages the verified APK through `PackageInstaller` and removes cached files afterward.
-- `InstallResultReceiver.kt` — handles PackageInstaller status broadcasts, opens Android's required user-confirmation intent, and reports failures instead of leaving installation stuck silently.
+- `AppUpdater.kt` — accepts only HTTPS downloads from approved GitHub asset hosts, enforces the API-advertised size and a 200 MB cap, writes through an atomic `.part` file, and reports progress. Before installation it requires the expected application ID, a signing certificate matching the installed app, and a strictly newer Android `versionCode`. It stages the verified APK through `PackageInstaller`, commits with a status `IntentSender`, and removes cached files afterward.
+- `InstallResultReceiver.kt` — owns the authoritative PackageInstaller result path on every supported API. It opens Android's required user-confirmation intent, abandons sessions whose confirmation cannot open, and publishes final success/failure into a process-local flow consumed by `SettingsViewModel`. Toasts preserve failure visibility when the settings UI is absent.
 
 ## Theme
 
