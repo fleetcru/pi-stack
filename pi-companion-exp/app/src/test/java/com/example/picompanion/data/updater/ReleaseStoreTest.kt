@@ -74,6 +74,48 @@ class ReleaseStoreTest {
   }
 
   @Test
+  fun rollingDevelopmentReleaseNeverEntersStableChannel() {
+    val development = release(
+      tag = "companion-dev",
+      publishedAt = "2026-09-08T12:00:00Z",
+      prerelease = true,
+      assetNames = listOf("pi-companion-0.1.1-dev.42.apk"),
+    )
+    val stable = release("v0.1.0", "2026-09-07T12:00:00Z")
+
+    assertEquals("v0.1.0", store.selectNewestCompanionRelease(listOf(development, stable))?.tagName)
+  }
+
+  @Test
+  fun acceptsOnlyTheExplicitRollingDevelopmentRelease() {
+    val valid = release(
+      tag = "companion-dev",
+      publishedAt = "2026-09-08T12:00:00Z",
+      prerelease = true,
+      assetNames = listOf("pi-companion-0.1.1-dev.42.apk"),
+    )
+    assertEquals("0.1.1-dev.42", store.selectDevelopmentRelease(valid)?.versionName)
+
+    assertNull(store.selectDevelopmentRelease(valid.copy(prerelease = false)))
+    assertNull(store.selectDevelopmentRelease(valid.copy(tagName = "other-dev")))
+    assertNull(
+      store.selectDevelopmentRelease(
+        valid.copy(assets = valid.assets + valid.assets.first().copy(name = "pi-companion-0.1.1-dev.43.apk")),
+      ),
+    )
+  }
+
+  @Test
+  fun numericDevelopmentBuildsUseSemVerOrdering() {
+    val build9 = companionRelease("0.1.1-dev.9", prerelease = true)
+    val build10 = companionRelease("0.1.1-dev.10", prerelease = true)
+
+    assertTrue(build10.isNewerThan(build9.versionName))
+    assertFalse(build9.isNewerThan(build10.versionName))
+    assertTrue(companionRelease("0.1.1").isNewerThan(build10.versionName))
+  }
+
+  @Test
   fun semVerComparisonHandlesStableAndPrereleasePrecedence() {
     val stable = companionRelease("1.0.0")
     val beta1 = companionRelease("1.0.0-beta.1", prerelease = true)

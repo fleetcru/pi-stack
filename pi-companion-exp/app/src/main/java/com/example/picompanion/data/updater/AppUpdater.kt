@@ -46,9 +46,9 @@ class AppUpdater(
     "package:${context.packageName}".toUri(),
   )
 
-  /** Stable releases only. Prerelease updates require an explicit future opt-in. */
-  suspend fun newestRelease(): CompanionRelease? = withContext(Dispatchers.IO) {
-    releaseStore.newestCompanionRelease(includePrereleases = false)
+  /** Fetches the stable channel and the explicit rolling development channel. */
+  suspend fun releaseCatalog(): CompanionReleaseCatalog? = withContext(Dispatchers.IO) {
+    releaseStore.companionReleaseCatalog()
   }
 
   /** Downloads to a temporary private file and atomically promotes it on success. */

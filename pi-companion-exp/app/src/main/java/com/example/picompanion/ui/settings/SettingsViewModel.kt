@@ -40,7 +40,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     data object UpToDate : UpdateState
     data class Downloading(val percent: Int) : UpdateState
     data object Installing : UpdateState
-    data class UpdateAvailable(val release: CompanionRelease) : UpdateState
+    data class UpdateChannels(
+      val stable: CompanionRelease?,
+      val stableIsNewer: Boolean,
+      val development: CompanionRelease?,
+      val developmentIsNewer: Boolean,
+    ) : UpdateState
     data class Failed(val message: String) : UpdateState
     data class PermissionRequired(val release: CompanionRelease) : UpdateState
   }
@@ -67,22 +72,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     if (_updateState.value is UpdateState.Checking || _updateState.value is UpdateState.Downloading || _updateState.value is UpdateState.Installing) return
     viewModelScope.launch {
       _updateState.value = UpdateState.Checking
-      val release = updater.newestRelease()
-      if (release == null) {
+      val catalog = updater.releaseCatalog()
+      if (catalog == null) {
         _updateState.value = UpdateState.Failed("Could not reach GitHub releases")
         return@launch
       }
-      // If the newest release is not actually newer than the installed build,
-      // report up-to-date instead of offering a downgrade/no-op install.
-      if (!release.isNewerThan(updater.currentVersionName())) {
-        _updateState.value = UpdateState.UpToDate
-        return@launch
-      }
-      if (!updater.canRequestInstall()) {
-        _updateState.value = UpdateState.PermissionRequired(release)
-        return@launch
-      }
-      _updateState.value = UpdateState.UpdateAvailable(release)
+      val current = updater.currentVersionName()
+      _updateState.value = UpdateState.UpdateChannels(
+        stable = catalog.stable,
+        stableIsNewer = catalog.stable?.isNewerThan(current) == true,
+        development = catalog.development,
+        developmentIsNewer = catalog.development?.isNewerThan(current) == true,
+      )
     }
   }
 
@@ -116,13 +117,14 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
   /**
    * Re-evaluates install permission after the user returns from the system
-   * "install unknown apps" screen. If permission was just granted, kick off a
-   * fresh check so the update option appears without the user tapping again.
+   * "install unknown apps" screen. If permission was granted, continue the
+   * exact installation the user already selected without another network check.
    */
   fun refreshInstallPermission() {
     val pending = _updateState.value as? UpdateState.PermissionRequired ?: return
     if (updater.canRequestInstall()) {
-      _updateState.value = UpdateState.UpdateAvailable(pending.release)
+      _updateState.value = UpdateState.Idle
+      downloadAndInstall(pending.release)
     }
   }
 

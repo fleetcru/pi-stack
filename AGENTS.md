@@ -45,8 +45,8 @@ CircleCI builds the signed Companion APK. The GitHub Actions workflow remains av
 - Commits run the Android workflow only when `pi-companion-exp/**` or `.circleci/**` changed. Other commits run only the small path-check job.
 - Tags matching `v*` always run the Android workflow, regardless of changed paths. The setup `path-filtering/filter` job must explicitly allow `v*` tags; without that filter CircleCI accepts the tag pipeline but compiles it to `jobs: {}`.
 - The Android job uses `cimg/android:2026.08.1` with the `large` Docker resource class.
-- Main-branch builds store `pi-companion-<version>.apk` as a CircleCI artifact but do not create a GitHub Release.
-- CircleCI is the only automatic publisher for `v*` tags. `.github/workflows/build-android.yml` remains a manual `workflow_dispatch` fallback and must not add a `v*` push trigger, because two publishers can race to create the same release. Manual runs validate a SemVer `version_name` and always create a uniquely numbered prerelease.
+- Main-branch builds store `pi-companion-<next-patch>-dev.<build>.apk` as a CircleCI artifact and replace the APK on the rolling `companion-dev` GitHub prerelease. The publisher uploads first, removes older dev APKs second, and lets the highest CircleCI build number win overlapping pipelines.
+- CircleCI is the only automatic publisher for `v*` tags and the rolling `companion-dev` prerelease. `.github/workflows/build-android.yml` remains a manual `workflow_dispatch` fallback and must not add a `v*` push trigger, because two stable publishers can race to create the same release. Manual runs validate a SemVer `version_name` and always create a uniquely numbered prerelease.
 
 Validate both configurations after changing either file:
 
@@ -86,7 +86,7 @@ Increment versions as follows:
 
 Versions below `1.0.0` mean the product is still evolving and may introduce breaking changes in a minor release. Start at `v0.1.0` for an initial experimental/public Companion release, or at `v1.0.0` only when declaring its interfaces and update behavior stable. Do not use CI build numbers in stable tags. CircleCI generates Android `versionCode` independently from the build timestamp.
 
-Tags are immutable release identifiers. Never move, overwrite, or reuse a published tag. Ask the user for the exact product and version before creating one. Companion tags are reserved for `v*`; server and tray tags use their product prefixes so they do not trigger the Companion workflow.
+Version tags are immutable release identifiers. Never move, overwrite, or reuse a published version tag. Ask the user for the exact product and version before creating one. Companion version tags are reserved for `v*`; server and tray tags use their product prefixes so they do not trigger the Companion workflow. `companion-dev` is the one non-versioned exception: its tag stays fixed while CircleCI replaces the rolling prerelease APK and release notes.
 
 ### Creating a GitHub Release
 
@@ -419,8 +419,8 @@ Key invariants:
 
 ### Companion self-updater
 
-- Stable users receive only stable GitHub Releases. Prereleases require an explicit future opt-in.
-- A release must contain exactly one `pi-companion-<semver>.apk` asset, and `<semver>` must match the `v<semver>` release tag.
+- Settings shows separate Stable and Development channels. Stable selection ignores all prereleases; Development reads only the explicit rolling `companion-dev` prerelease.
+- A stable release must contain exactly one `pi-companion-<semver>.apk` asset, and `<semver>` must match the `v<semver>` release tag. The rolling release also contains exactly one SemVer-named APK, but its fixed tag is `companion-dev`.
 - Select releases by Semantic Version precedence, not publish time or digits stripped from filenames.
 - APK downloads must use HTTPS on approved GitHub asset hosts, match the API-advertised size, stay below 200 MB, and move from a private `.part` file only after completion.
 - Before PackageInstaller receives an APK, verify its application ID, signing certificate against the installed app, and a strictly greater Android `versionCode`.

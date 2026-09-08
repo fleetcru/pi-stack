@@ -42,6 +42,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -78,6 +79,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.picompanion.data.settings.ServerEntry
+import com.example.picompanion.data.updater.CompanionRelease
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 
@@ -266,7 +268,7 @@ fun SettingsScreen(
 private fun UpdateSection(
   state: SettingsViewModel.UpdateState,
   onCheck: () -> Unit,
-  onInstall: (com.example.picompanion.data.updater.CompanionRelease) -> Unit,
+  onInstall: (CompanionRelease) -> Unit,
   onGrantPermission: () -> Unit,
 ) {
   when (state) {
@@ -302,18 +304,25 @@ private fun UpdateSection(
         Text("Installing update…", style = MaterialTheme.typography.bodySmall)
       }
     }
-    is SettingsViewModel.UpdateState.UpdateAvailable -> {
-      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(16.dp))
-          Text(
-            text = if (state.release.prerelease) "Pre-release available: ${state.release.tagName}" else "Update available: ${state.release.tagName}",
-            style = MaterialTheme.typography.bodySmall,
-          )
-        }
-        Button(onClick = { onInstall(state.release) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
-          Text("Download and install")
-        }
+    is SettingsViewModel.UpdateState.UpdateChannels -> {
+      Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        UpdateChannelOption(
+          title = "Stable",
+          release = state.stable,
+          isNewer = state.stableIsNewer,
+          description = "Versioned release recommended for normal use.",
+          installLabel = "Install stable update",
+          onInstall = onInstall,
+        )
+        HorizontalDivider()
+        UpdateChannelOption(
+          title = "Development",
+          release = state.development,
+          isNewer = state.developmentIsNewer,
+          description = "Latest signed main-branch build. It may be unstable.",
+          installLabel = "Install development build",
+          onInstall = onInstall,
+        )
         RefreshButton(onClick = onCheck)
       }
     }
@@ -340,6 +349,37 @@ private fun UpdateSection(
         }
         RefreshButton(onClick = onCheck)
       }
+    }
+  }
+}
+
+@Composable
+private fun UpdateChannelOption(
+  title: String,
+  release: CompanionRelease?,
+  isNewer: Boolean,
+  description: String,
+  installLabel: String,
+  onInstall: (CompanionRelease) -> Unit,
+) {
+  Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+    Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+    Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(
+      release?.let { "Available: ${it.versionName}" } ?: "No build published",
+      style = MaterialTheme.typography.labelMedium,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (release != null && isNewer) {
+      Button(
+        onClick = { onInstall(release) },
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+      ) {
+        Text(installLabel)
+      }
+    } else if (release != null) {
+      Text("Installed version is current or newer", style = MaterialTheme.typography.bodySmall)
     }
   }
 }

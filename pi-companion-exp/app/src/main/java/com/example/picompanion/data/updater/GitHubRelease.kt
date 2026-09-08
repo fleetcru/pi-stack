@@ -18,6 +18,11 @@ data class GitHubAsset(
   @SerialName("size") val size: Long,
 )
 
+data class CompanionReleaseCatalog(
+  val stable: CompanionRelease?,
+  val development: CompanionRelease?,
+)
+
 /** A validated Companion APK release. */
 data class CompanionRelease(
   val tagName: String,

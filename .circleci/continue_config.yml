@@ -6,8 +6,8 @@ parameters:
     default: false
 
 # Android companion build on CircleCI's purpose-built cimg/android image.
-# Main builds store a signed APK as a CircleCI artifact. Version-tag builds
-# pass that APK to a separate job that publishes a GitHub Release.
+# Main builds store a signed APK and replace the rolling companion-dev GitHub
+# prerelease. Version-tag builds publish immutable versioned GitHub Releases.
 
 orbs:
   android: circleci/android@3.2.0
@@ -74,11 +74,25 @@ jobs:
           name: Generate version
           command: |
             set -euo pipefail
-            # Tag pushes carry the version; otherwise use a CI build number.
+            # Tag pushes carry the stable/prerelease version. Main builds use
+            # the next patch after the latest stable tag, followed by a numeric
+            # dev identifier so SemVer ordering works in the in-app updater.
             if [[ -n "${CIRCLE_TAG:-}" ]]; then
               VERSION_NAME="${CIRCLE_TAG#v}"
             else
-              VERSION_NAME="${VERSION_NAME:-1.0.0-ci${CIRCLE_BUILD_NUM}}"
+              git fetch --force --tags origin
+              LATEST_STABLE=$(git tag --list 'v*' \
+                | sed 's/^v//' \
+                | grep -E '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' \
+                | sort -V \
+                | tail -1 \
+                || true)
+              if [[ -z "$LATEST_STABLE" ]]; then
+                echo "No stable Companion vX.Y.Z tag found"
+                exit 1
+              fi
+              IFS=. read -r MAJOR MINOR PATCH <<< "$LATEST_STABLE"
+              VERSION_NAME="${MAJOR}.${MINOR}.$((PATCH + 1))-dev.${CIRCLE_BUILD_NUM}"
             fi
             echo "export VERSION_NAME=$VERSION_NAME" >> "$BASH_ENV"
             echo "export VERSION_CODE=$(date +%s)" >> "$BASH_ENV"
@@ -139,6 +153,87 @@ jobs:
           paths:
             - release-artifacts
 
+  publish-development:
+    docker:
+      - image: cimg/base:stable
+    resource_class: small
+    steps:
+      - attach_workspace:
+          at: /tmp/workspace
+      - github-cli/setup:
+          token: GH_TOKEN
+      - run:
+          name: Publish rolling development APK
+          command: |
+            set -euo pipefail
+            shopt -s nullglob
+            APKS=(/tmp/workspace/release-artifacts/pi-companion-*.apk)
+            if [[ "${#APKS[@]}" -ne 1 ]]; then
+              echo "Expected exactly one staged Companion APK, found ${#APKS[@]}"
+              exit 1
+            fi
+            APK="${APKS[0]}"
+            VERSION_NAME=$(basename "$APK" .apk)
+            VERSION_NAME="${VERSION_NAME#pi-companion-}"
+            test -s "$APK"
+
+            RELEASE_TAG="companion-dev"
+            CURRENT_BUILD="${CIRCLE_BUILD_NUM}"
+            if ! gh release view "$RELEASE_TAG" --repo fleetcru/pi-stack >/dev/null 2>&1; then
+              # Concurrent builds may race to create the one rolling release.
+              gh release create "$RELEASE_TAG" \
+                --repo fleetcru/pi-stack \
+                --target "$CIRCLE_SHA1" \
+                --title "Pi Companion development build" \
+                --notes "Preparing the latest signed main-branch build." \
+                --prerelease \
+                || gh release view "$RELEASE_TAG" --repo fleetcru/pi-stack >/dev/null
+            fi
+
+            EXISTING_BUILD=$(gh release view "$RELEASE_TAG" \
+              --repo fleetcru/pi-stack \
+              --json assets \
+              --jq '.assets[].name' \
+              | sed -nE 's/^pi-companion-.*-dev\.([0-9]+)\.apk$/\1/p' \
+              | sort -n \
+              | tail -1)
+            if [[ -n "$EXISTING_BUILD" && "$EXISTING_BUILD" -ge "$CURRENT_BUILD" ]]; then
+              echo "Development build $EXISTING_BUILD is newer than or equal to $CURRENT_BUILD; skipping stale publish"
+              exit 0
+            fi
+
+            # Upload first so a failed job never removes the last usable APK.
+            # Unique dev build filenames let overlapping jobs coexist briefly.
+            gh release upload "$RELEASE_TAG" "$APK" --repo fleetcru/pi-stack --clobber
+            HIGHEST_BUILD=$(gh release view "$RELEASE_TAG" \
+              --repo fleetcru/pi-stack \
+              --json assets \
+              --jq '.assets[].name' \
+              | sed -nE 's/^pi-companion-.*-dev\.([0-9]+)\.apk$/\1/p' \
+              | sort -n \
+              | tail -1)
+            if [[ "$HIGHEST_BUILD" -gt "$CURRENT_BUILD" ]]; then
+              gh release delete-asset "$RELEASE_TAG" "$(basename "$APK")" \
+                --repo fleetcru/pi-stack --yes \
+                || echo "Stale asset was already removed by another publisher"
+              echo "A newer development build $HIGHEST_BUILD won the publish race"
+              exit 0
+            fi
+
+            while IFS= read -r asset; do
+              [[ -z "$asset" || "$asset" == "$(basename "$APK")" ]] && continue
+              OLD_BUILD=$(printf '%s' "$asset" | sed -nE 's/^pi-companion-.*-dev\.([0-9]+)\.apk$/\1/p')
+              if [[ -n "$OLD_BUILD" && "$OLD_BUILD" -lt "$CURRENT_BUILD" ]]; then
+                gh release delete-asset "$RELEASE_TAG" "$asset" --repo fleetcru/pi-stack --yes \
+                  || echo "Old asset $asset was already removed by another publisher"
+              fi
+            done < <(gh release view "$RELEASE_TAG" --repo fleetcru/pi-stack --json assets --jq '.assets[].name')
+            gh release edit "$RELEASE_TAG" \
+              --repo fleetcru/pi-stack \
+              --title "Pi Companion development build" \
+              --notes "Automated signed build from main at commit ${CIRCLE_SHA1}. CircleCI build ${CIRCLE_BUILD_NUM}. This build may be unstable." \
+              --prerelease
+
   release:
     docker:
       - image: cimg/base:stable
@@ -193,6 +288,15 @@ workflows:
               only: main
             tags:
               only: /^v.*/
+      - publish-development:
+          context: pi-stack-signing
+          requires:
+            - build
+          filters:
+            branches:
+              only: main
+            tags:
+              ignore: /.*/
       - release:
           context: pi-stack-signing
           requires:

@@ -13,6 +13,15 @@ class ReleaseStore(
   private val okHttpClient: OkHttpClient = defaultHttpClient(),
   private val json: Json = apiJson,
 ) {
+  /** Returns stable and rolling development channels, or null if GitHub is unavailable. */
+  fun companionReleaseCatalog(): CompanionReleaseCatalog? {
+    val releases = fetchReleases() ?: return null
+    return CompanionReleaseCatalog(
+      stable = selectNewestCompanionRelease(releases),
+      development = fetchRelease(DEVELOPMENT_TAG)?.let(::selectDevelopmentRelease),
+    )
+  }
+
   /** Returns the highest valid Companion SemVer, or null on any fetch error. */
   fun newestCompanionRelease(includePrereleases: Boolean = false): CompanionRelease? {
     val releases = fetchReleases() ?: return null
@@ -47,6 +56,24 @@ class ReleaseStore(
         .thenBy { it.publishedAtMillis },
     )
 
+  /** Validates the one mutable prerelease used for signed main-branch builds. */
+  internal fun selectDevelopmentRelease(release: GitHubRelease): CompanionRelease? {
+    if (release.tagName != DEVELOPMENT_TAG || !release.prerelease) return null
+    val apk = release.assets.singleOrNull { asset ->
+      CompanionRelease.versionFromApkName(asset.name) != null
+    } ?: return null
+    if (apk.size <= 0) return null
+    val result = CompanionRelease(
+      tagName = release.tagName,
+      publishedAtMillis = parseIso(release.publishedAt),
+      prerelease = true,
+      apkUrl = apk.browserDownloadUrl,
+      apkName = apk.name,
+      apkSize = apk.size,
+    )
+    return result.takeIf { it.semanticVersion != null }
+  }
+
   private fun fetchReleases(): List<GitHubRelease>? = try {
     val request = Request.Builder()
       .url("https://api.github.com/repos/$repo/releases?per_page=20")
@@ -61,6 +88,20 @@ class ReleaseStore(
     null
   }
 
+  private fun fetchRelease(tag: String): GitHubRelease? = try {
+    val request = Request.Builder()
+      .url("https://api.github.com/repos/$repo/releases/tags/$tag")
+      .header("Accept", "application/vnd.github+json")
+      .header("X-GitHub-Api-Version", "2022-11-28")
+      .build()
+    okHttpClient.newCall(request).execute().use { response ->
+      if (!response.isSuccessful) return null
+      json.decodeFromString<GitHubRelease>(response.body.string())
+    }
+  } catch (_: Exception) {
+    null
+  }
+
   private fun parseIso(iso: String): Long = try {
     Instant.parse(iso).toEpochMilli()
   } catch (_: Exception) {
@@ -69,6 +110,7 @@ class ReleaseStore(
 
   companion object {
     const val RELEASE_REPO = "fleetcru/pi-stack"
+    const val DEVELOPMENT_TAG = "companion-dev"
 
     private fun defaultHttpClient() = OkHttpClient.Builder()
       .connectTimeout(15, TimeUnit.SECONDS)
