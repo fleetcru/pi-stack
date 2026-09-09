@@ -24,6 +24,7 @@ import {
   buildHistory,
   mergeTimeline,
   responseModels,
+  responseThinkingLevels,
   groupModelsByProvider,
   findExtensionRequest,
   toolDisplayName,
@@ -55,8 +56,8 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message"
 import { ChangedFilesList } from "@/components/changed-files-list"
@@ -78,7 +79,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const [deliveryNotice, setDeliveryNotice] = useState<string | undefined>()
   const [deliveryCommandId, setDeliveryCommandId] = useState<string | undefined>()
   const imageInputRef = useRef<HTMLInputElement>(null)
-  const imageAttachments = useImageAttachments(imageInputRef)
+  const { images: pendingImages, error: imageError, ...imageActions } = useImageAttachments(imageInputRef)
   const client = usePiServerClient()
   // Subscribe to filesystem watcher events so file changes are rendered in
   // the chat timeline as well as in the changed-files summary.
@@ -89,7 +90,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const historyQuery = useSessionHistory(sessionId)
   const gitStatusQuery = useSessionGitStatus(sessionId)
   const schedulerQuery = useSchedulerStatus()
-  const modelsQuery = useSessionData(sessionId, "models")
+  const modelsQuery = useSessionData(sessionId, "models", { refetchInterval: 5_000 })
   const commandsQuery = useSessionData(sessionId, "commands", { refetchInterval: 30_000 })
   const stateQuery = useSessionData(sessionId, "state", {
     // Poll only when the WebSocket is not open — the stream provides live state.
@@ -121,6 +122,9 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
       setExtensionResponding(false)
     }
   }, [client, ignoreExtension, sessionId])
+  const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const [selectedProvider, setSelectedProvider] = useState<string | undefined>()
+  const [modelSearch, setModelSearch] = useState("")
   const extension = useMemo(() => findExtensionRequest(socket.events), [socket.events])
   const visibleExtension = extension && !ignoredExtensionIds.includes(extension.id) ? extension : undefined
   const historyItems = useMemo(() =>
@@ -160,15 +164,11 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const models = responseModels(modelsQuery.data)
   const state = stateQuery.data?.data as { model?: { provider?: string; id?: string }; thinkingLevel?: string; isStreaming?: boolean; external?: boolean; relayConnected?: boolean; relayLatencyMs?: number } | undefined
   const modelGroups = useMemo(() => groupModelsByProvider(models), [models])
-  const [modelPickerOpen, setModelPickerOpen] = useState(false)
-  const [selectedProvider, setSelectedProvider] = useState<string | undefined>()
-  const [modelSearch, setModelSearch] = useState("")
-  const visibleProvider =
-    selectedProvider && modelGroups.some(([provider]) => provider === selectedProvider)
-      ? selectedProvider
-      : state?.model?.provider && modelGroups.some(([provider]) => provider === state.model?.provider)
-        ? state.model.provider
-        : modelGroups[0]?.[0]
+  const visibleProvider = selectedProvider && modelGroups.some(([provider]) => provider === selectedProvider)
+    ? selectedProvider
+    : state?.model?.provider && modelGroups.some(([provider]) => provider === state.model?.provider)
+      ? state.model.provider
+      : modelGroups[0]?.[0]
   const modelSearchLower = modelSearch.trim().toLowerCase()
   const visibleModels = (modelGroups.find(([provider]) => provider === visibleProvider)?.[1] ?? [])
     .filter((model) => !modelSearchLower || (model.name || "").toLowerCase().includes(modelSearchLower) || model.id.toLowerCase().includes(modelSearchLower))
@@ -176,21 +176,31 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
     ? modelGroups.filter(([provider]) => provider.toLowerCase().includes(modelSearchLower))
     : modelGroups
   const selectedModel = models.find((model) => model.provider === state?.model?.provider && model.id === state?.model?.id)
+  const thinkingLevels = responseThinkingLevels(modelsQuery.data, selectedModel)
   const modelLabel = selectedModel?.name || state?.model?.id || "Choose model"
   // The shared socket hook derives this incrementally from the event stream.
   const wsRuntimeState = socket.health.runtime
+
+  // Fire OS notifications when session state transitions
+  useSessionNotifications(sessionId, wsRuntimeState)
   // Use WS runtime state when available (WS open), fall back to HTTP polling (WS closed).
   const isWorking = socket.status === "open"
     ? wsRuntimeState?.state === "working" || wsRuntimeState?.state === "starting" || wsRuntimeState?.state === "reconnecting"
     : state?.isStreaming === true
-
-  // Fire OS notifications when session state transitions
-  useSessionNotifications(sessionId, wsRuntimeState)
   const relayStatus = state?.external
     ? state.relayConnected
       ? `Relay connected${typeof state.relayLatencyMs === "number" ? ` · ${state.relayLatencyMs} ms` : ""}`
       : "Relay disconnected — commands queue on the server"
     : state ? "Local RPC" : undefined
+
+  async function abortSession() {
+    try {
+      await client.abort(sessionId)
+      setDeliveryNotice("Stopping Pi…")
+    } catch (error) {
+      setDeliveryNotice(error instanceof Error ? error.message : "Could not stop Pi")
+    }
+  }
 
   async function selectModel(provider: string, modelId: string) {
     try {
@@ -202,28 +212,21 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
     }
   }
 
-  async function abortSession() {
-    try {
-      await client.abort(sessionId)
-      setDeliveryNotice("Stopping Pi…")
-    } catch (error) {
-      setDeliveryNotice(error instanceof Error ? error.message : "Could not stop Pi")
-    }
-  }
-
   async function sendPrompt(mode: "prompt" | "steer" = "prompt") {
     const message = prompt.trim()
-    if (!message && imageAttachments.images.length === 0) return
+    if (!message && pendingImages.length === 0) return
     try {
       setDeliveryNotice("Sending…")
-      const images = await imageAttachments.toImageContent()
+      const images = await imageActions.toImageContent()
       const request = { message, images: images.length > 0 ? images : undefined }
       const response = mode === "steer" ? await client.steer(sessionId, request) : await client.prompt(sessionId, request)
       const commandId = (response as Record<string, unknown>).commandId
       setDeliveryCommandId(typeof commandId === "string" ? commandId : undefined)
       setPrompt("")
-      imageAttachments.clearImages()
-      setDeliveryNotice(mode === "steer" ? "Steering Pi now…" : "Sent to bridged Pi. It will arrive at the next safe turn boundary.")
+      imageActions.clearImages()
+      setDeliveryNotice(mode === "steer"
+        ? "Steering Pi now…"
+        : state?.external ? "Sent to bridged Pi. It will arrive at the next safe turn boundary." : "Sent to local Pi. Waiting for response…")
     } catch (error) {
       setDeliveryNotice(error instanceof Error ? error.message : "Could not send message to Pi")
     }
@@ -243,78 +246,6 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
           <Button size="xs" variant="ghost" onClick={() => ignoreExtension(visibleExtension.id)}>Ignore</Button>
         </div>
       )}
-      <Dialog
-        open={modelPickerOpen}
-        onOpenChange={(open) => {
-          setModelPickerOpen(open)
-          if (open) { setSelectedProvider(state?.model?.provider); setModelSearch("") }
-        }}
-      >
-          <DialogContent className="max-w-3xl sm:max-w-3xl gap-0 overflow-hidden p-0">
-            <DialogHeader className="px-6 pt-6 pb-4">
-              <DialogTitle>Choose a model</DialogTitle>
-              <DialogDescription>Select a provider, then choose one of its available models.</DialogDescription>
-            </DialogHeader>
-            <Separator />
-            <div className="flex h-[32rem] min-h-0">
-              <aside className="flex w-52 shrink-0 flex-col border-r">
-                <p className="px-4 pt-4 pb-2 text-xs font-medium text-muted-foreground">Providers</p>
-                <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
-                  <div className="flex flex-col gap-1">
-                    {visibleProviderGroups.map(([provider, providerModels]) => (
-                      <Button
-                        key={provider}
-                        type="button"
-                        variant={provider === visibleProvider ? "secondary" : "ghost"}
-                        size="sm"
-                        className="w-full justify-between"
-                        onClick={() => setSelectedProvider(provider)}
-                      >
-                        <span className="truncate">{provider}</span>
-                        <span>{providerModels.length}</span>
-                      </Button>
-                    ))}
-                  </div>
-                </ScrollArea>
-              </aside>
-              <section className="flex min-w-0 flex-1 flex-col">
-                <div className="flex items-center gap-3 px-5 pt-4 pb-2">
-                  <p className="shrink-0 text-xs font-medium text-muted-foreground">{visibleProvider || "Models"}</p>
-                  <Input
-                    value={modelSearch}
-                    onChange={(event) => setModelSearch(event.target.value)}
-                    placeholder="Search models…"
-                    className="h-8 min-w-0 flex-1 text-sm"
-                  />
-                </div>
-                <ScrollArea className="min-h-0 flex-1 px-3 pb-4">
-                  <div className="flex flex-col gap-1">
-                    {visibleModels.map((model) => {
-                      const active = model.provider === state?.model?.provider && model.id === state?.model?.id
-                      return (
-                        <Button
-                          key={`${model.provider}:${model.id}`}
-                          type="button"
-                          variant={active ? "secondary" : "ghost"}
-                          className="w-full justify-between"
-                          onClick={() => void selectModel(model.provider, model.id)}
-                        >
-                          <span className="min-w-0 truncate text-left">{model.name || model.id}</span>
-                          {active && <CircleCheck data-icon="inline-end" />}
-                        </Button>
-                      )
-                    })}
-                    {visibleProvider && visibleModels.length === 0 && (
-                      <p className="px-2 py-4 text-sm text-muted-foreground">
-                        {modelSearchLower ? "No models match your search." : "No models are available for this provider."}
-                      </p>
-                    )}
-                  </div>
-                </ScrollArea>
-              </section>
-            </div>
-          </DialogContent>
-        </Dialog>
       {visibleExtension && (
         <Dialog open={extensionDialogOpen} onOpenChange={setExtensionDialogOpen}>
           <DialogContent>
@@ -330,6 +261,78 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
           </DialogContent>
         </Dialog>
       )}
+      <Dialog
+        open={modelPickerOpen}
+        onOpenChange={(open) => {
+          setModelPickerOpen(open)
+          if (open) { setSelectedProvider(state?.model?.provider); setModelSearch("") }
+        }}
+      >
+        <DialogContent className="max-w-3xl sm:max-w-3xl gap-0 overflow-hidden p-0">
+          <DialogHeader className="px-6 pt-6 pb-4">
+            <DialogTitle>Choose a model</DialogTitle>
+            <DialogDescription>Select a provider, then choose one of its available models.</DialogDescription>
+          </DialogHeader>
+          <Separator />
+          <div className="flex h-[32rem] min-h-0">
+            <aside className="flex w-52 shrink-0 flex-col border-r">
+              <p className="px-4 pt-4 pb-2 text-xs font-medium text-muted-foreground">Providers</p>
+              <ScrollArea className="min-h-0 flex-1 px-2 pb-3">
+                <div className="flex flex-col gap-1">
+                  {visibleProviderGroups.map(([provider, providerModels]) => (
+                    <Button
+                      key={provider}
+                      type="button"
+                      variant={provider === visibleProvider ? "secondary" : "ghost"}
+                      size="sm"
+                      className="w-full justify-between"
+                      onClick={() => setSelectedProvider(provider)}
+                    >
+                      <span className="truncate">{provider}</span>
+                      <span>{providerModels.length}</span>
+                    </Button>
+                  ))}
+                </div>
+              </ScrollArea>
+            </aside>
+            <section className="flex min-w-0 flex-1 flex-col">
+              <div className="flex items-center gap-3 px-5 pt-4 pb-2">
+                <p className="shrink-0 text-xs font-medium text-muted-foreground">{visibleProvider || "Models"}</p>
+                <Input
+                  value={modelSearch}
+                  onChange={(event) => setModelSearch(event.target.value)}
+                  placeholder="Search models…"
+                  className="h-8 min-w-0 flex-1 text-sm"
+                />
+              </div>
+              <ScrollArea className="min-h-0 flex-1 px-3 pb-4">
+                <div className="flex flex-col gap-1">
+                  {visibleModels.map((model) => {
+                    const active = model.provider === state?.model?.provider && model.id === state?.model?.id
+                    return (
+                      <Button
+                        key={`${model.provider}:${model.id}`}
+                        type="button"
+                        variant={active ? "secondary" : "ghost"}
+                        className="w-full justify-between"
+                        onClick={() => void selectModel(model.provider, model.id)}
+                      >
+                        <span className="min-w-0 truncate text-left">{model.name || model.id}</span>
+                        {active && <CircleCheck data-icon="inline-end" />}
+                      </Button>
+                    )
+                  })}
+                  {visibleProvider && visibleModels.length === 0 && (
+                    <p className="px-2 py-4 text-sm text-muted-foreground">
+                      {modelSearchLower ? "No models match your search." : "No models are available for this provider."}
+                    </p>
+                  )}
+                </div>
+              </ScrollArea>
+            </section>
+          </div>
+        </DialogContent>
+      </Dialog>
       <div className="flex min-h-0 flex-1 flex-col">
         <MessageScroller>
           <MessageScrollerViewport>
@@ -364,16 +367,20 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                       </Button>
                     </div>
                   )}
-                  {timeline.map((item) => (
-                    <MessageScrollerItem
-                      className="w-full"
-                      key={item.id}
-                      messageId={item.id}
-                      scrollAnchor={item.kind === "assistant"}
-                    >
-                      <TimelineRow item={item} />
-                    </MessageScrollerItem>
-                  ))}
+                  {timeline.map((item, index) => {
+                    const nextItem = timeline[index + 1]
+                    const isFollowedByTool = item.kind === "tool" && nextItem?.kind === "tool"
+                    return (
+                      <MessageScrollerItem
+                        className={isFollowedByTool ? "w-full -mb-6" : "w-full"}
+                        key={item.id}
+                        messageId={item.id}
+                        scrollAnchor={item.kind === "assistant"}
+                      >
+                        <TimelineRow item={item} />
+                      </MessageScrollerItem>
+                    )
+                  })}
                   {gitStatusQuery.data?.status.changes?.length ? <ChangedFilesList sessionId={sessionId} changes={gitStatusQuery.data.status.changes} /> : null}
                 </MessageGroup>
               )}
@@ -392,19 +399,24 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
           >
             <div
               className="rounded-2xl bg-muted/70 shadow-sm"
-              onPaste={imageAttachments.handlePaste}
-              onDragOver={imageAttachments.handleDragOver}
-              onDrop={imageAttachments.handleDrop}
+              onPaste={imageActions.handlePaste}
+              onDragOver={imageActions.handleDragOver}
+              onDrop={imageActions.handleDrop}
             >
               {slashPaletteOpen && (
                 <div role="listbox" aria-label="Slash commands" className="absolute bottom-full left-0 z-20 mb-2 w-[min(34rem,calc(100vw-2.5rem))] overflow-hidden rounded-xl border border-border/70 bg-popover p-1.5 text-popover-foreground shadow-xl">
-                  <div className="max-h-[min(28rem,55vh)] overflow-y-auto">{slashMatches.map((command, index) => <button key={command.name} type="button" role="option" aria-selected={index === slashIndex} className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left ${index === slashIndex ? "bg-accent text-accent-foreground" : "hover:bg-accent/60"}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { setPrompt(`${command.name} `); setSlashOpen(false) }}><span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"><Zap className="size-3.5" /></span><span className="min-w-0 flex-1"><code className="whitespace-nowrap text-sm font-medium">{command.name}</code><span className="ml-3 truncate text-xs text-muted-foreground">{command.description}</span></span></button>)}</div>
+                  <div className="max-h-[min(28rem,55vh)] overflow-y-auto">{slashMatches.map((command, index) => (
+                    <button key={command.name} type="button" role="option" aria-selected={index === slashIndex} className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left ${index === slashIndex ? "bg-accent text-accent-foreground" : "hover:bg-accent/60"}`} onMouseDown={(event) => event.preventDefault()} onClick={() => { setPrompt(`${command.name} `); setSlashOpen(false) }}>
+                      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"><Zap className="size-3.5" /></span>
+                      <span className="min-w-0 flex-1"><code className="whitespace-nowrap text-sm font-medium">{command.name}</code><span className="ml-3 truncate text-xs text-muted-foreground">{command.description}</span></span>
+                    </button>
+                  ))}</div>
                   <div className="mt-1 border-t px-2.5 pt-1.5 text-[10px] text-muted-foreground">↑↓ navigate&nbsp; · &nbsp;Tab insert&nbsp; · &nbsp;Enter send</div>
                 </div>
               )}
-              {imageAttachments.images.length > 0 && (
+              {pendingImages.length > 0 && (
                 <div className="flex flex-wrap gap-2 px-4 pt-3 pb-1">
-                  {imageAttachments.images.map((img) => (
+                  {pendingImages.map((img) => (
                     <div key={img.id} className="group relative shrink-0">
                       <div className="h-16 w-16 overflow-hidden rounded-lg border border-border">
                         <img
@@ -415,7 +427,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                       </div>
                       <button
                         type="button"
-                        onClick={() => imageAttachments.removeImage(img.id)}
+                        onClick={() => imageActions.removeImage(img.id)}
                         className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-border bg-background text-muted-foreground opacity-0 transition-opacity hover:bg-destructive hover:text-white group-hover:opacity-100"
                         aria-label="Remove image"
                       >
@@ -425,8 +437,8 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   ))}
                 </div>
               )}
-              {imageAttachments.error && (
-                <p className="px-4 pt-2 text-xs text-destructive">{imageAttachments.error}</p>
+              {imageError && (
+                <p className="px-4 pt-2 text-xs text-destructive">{imageError}</p>
               )}
               <InputGroup className="rounded-2xl !border-0 !shadow-none !outline-none !ring-0 !ring-offset-0 has-[data-slot=input-group-control:focus-visible]:!ring-0 has-[data-slot=input-group-control:focus-visible]:!border-0">
               <InputGroupTextarea
@@ -468,7 +480,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   <Sparkles data-icon="inline-start" />
                   <span className="truncate">{modelLabel}</span>
                 </Button>
-                <Select
+                {thinkingLevels.length > 0 ? <Select
                   value={state?.thinkingLevel ?? null}
                   onValueChange={(value) => void client.sessionPost(sessionId, "thinking-level", { level: String(value) }).then(() => void stateQuery.refetch()).catch((error: unknown) => setDeliveryNotice(error instanceof Error ? error.message : "Could not change thinking level"))}
                 >
@@ -479,10 +491,10 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   <SelectContent align="start">
                     <SelectGroup>
                       <SelectLabel>Thinking / effort</SelectLabel>
-                      {['off', 'low', 'medium', 'high'].map((level) => <SelectItem key={level} value={level}>{level}</SelectItem>)}
+                      {thinkingLevels.map((level) => <SelectItem key={level} value={level}>{level}</SelectItem>)}
                     </SelectGroup>
                   </SelectContent>
-                </Select>
+                </Select> : <Button size="sm" variant="outline" disabled className="min-w-32 rounded-xl border-border/70 bg-muted/70 text-foreground opacity-100"><Brain className="size-3.5 text-primary" /><span className="truncate">{state?.thinkingLevel ? `Thinking: ${state.thinkingLevel}` : "Thinking unavailable"}</span></Button>}
                   </div>
                 <input
                   ref={imageInputRef}
@@ -490,14 +502,14 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   accept="image/*"
                   multiple
                   className="hidden"
-                  onChange={imageAttachments.handlePickerChange}
+                  onChange={imageActions.handlePickerChange}
                 />
                 <InputGroupButton
                   type="button"
                   size="icon-xs"
                   variant="ghost"
                   className="rounded-xl text-muted-foreground"
-                  onClick={imageAttachments.openPicker}
+                  onClick={imageActions.openPicker}
                   aria-label="Attach image"
                   title="Attach image (or paste/drop)"
                 >
@@ -508,7 +520,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   size="sm"
                   variant="outline"
                   className="rounded-xl"
-                  disabled={!prompt.trim() && imageAttachments.images.length === 0}
+                  disabled={!prompt.trim() && pendingImages.length === 0}
                   onClick={() => void sendPrompt("steer")}
                 >
                   Steer
@@ -517,7 +529,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   type={isWorking ? "button" : "submit"}
                   size="icon-sm"
                   className={`ml-auto rounded-full text-white ${isWorking ? "bg-red-600 hover:bg-red-500" : "bg-blue-600 hover:bg-blue-500"}`}
-                  disabled={isWorking ? false : !prompt.trim() && imageAttachments.images.length === 0}
+                  disabled={isWorking ? false : !prompt.trim() && pendingImages.length === 0}
                   onClick={isWorking ? () => void abortSession() : undefined}
                   aria-label={isWorking ? "Stop Pi" : "Send prompt"}
                   title={isWorking ? "Stop Pi" : "Send prompt"}
@@ -536,7 +548,8 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
           )}
           {deliveryStage && <p className="mx-auto mt-2 max-w-3xl text-xs text-muted-foreground" role="status">{deliveryStage}</p>}
           <p className="mx-auto mt-2 max-w-3xl text-xs text-muted-foreground" role="status">
-            Event stream: {socket.status}{socket.health.runtime?.state ? ` · ${socket.health.runtime.state}` : ""}{socket.health.resynchronizing ? " · restoring history" : ""}{(schedulerQuery.data?.admission.queued ?? 0) > 0 ? ` · queue: ${schedulerQuery.data?.admission.queued} waiting, ${schedulerQuery.data?.admission.active} active` : ""}
+            Event stream: {socket.status}{socket.health.runtime?.state ? ` · ${socket.health.runtime.state}` : ""}{socket.health.resynchronizing ? " · restoring history" : ""}
+            {(schedulerQuery.data?.admission.queued ?? 0) > 0 ? ` · queue: ${schedulerQuery.data?.admission.queued} waiting, ${schedulerQuery.data?.admission.active} active` : ""}
           </p>
           {socket.error && (
             <p className="mx-auto mt-2 max-w-3xl text-xs text-destructive">
@@ -568,7 +581,17 @@ function ChatTurn({ item }: { item: TextItem }) {
               className={`max-w-full text-sm leading-6 [overflow-wrap:normal] ${user ? "w-auto whitespace-pre-wrap bg-muted/80" : "w-full text-foreground"}`}
             >
               {user ? (
-                item.text
+                <>
+                  {item.images?.map((image, index) => (
+                    <img
+                      key={`${image.mimeType}-${index}`}
+                      src={image.data.startsWith("data:") ? image.data : `data:${image.mimeType};base64,${image.data}`}
+                      alt="Attached image"
+                      className="mb-2 max-h-96 max-w-full rounded-lg object-contain last:mb-0"
+                    />
+                  ))}
+                  {item.text}
+                </>
               ) : (
                 <DeferredMarkdown text={item.text || "Thinking…"} streaming={item.streaming} />
               )}
