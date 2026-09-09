@@ -98,6 +98,28 @@ func schemas() map[string]any {
 		"ThinkingRequest":       obj(map[string]any{"level": str()}, "level"),
 		"ModeRequest":           obj(map[string]any{"mode": str()}, "mode"),
 		"EnabledRequest":        obj(map[string]any{"enabled": schemaBool()}, "enabled"),
+		"AdminSettings": obj(map[string]any{
+			"addr": str(), "piBinary": str(), "extensions": arr(str()), "cwd": str(), "dataDir": str(),
+			"allowedOrigins": arr(str()), "allowedRoots": arr(str()), "allowedWorkerHosts": arr(str()),
+			"shutdownTimeout": str(), "requestTimeout": str(), "readTimeout": str(), "writeTimeout": str(), "idleTimeout": str(),
+			"maxSessions": map[string]any{"type": "integer"}, "maxActiveRuns": map[string]any{"type": "integer"},
+			"maxRunsPerSession": map[string]any{"type": "integer"}, "maxRunsPerWorker": map[string]any{"type": "integer"},
+			"maxQueuedRuns": map[string]any{"type": "integer"}, "distributedRunTimeout": str(),
+			"restartMax": map[string]any{"type": "integer"}, "restartBackoff": str(),
+			"eventHistoryMax": map[string]any{"type": "integer"}, "eventHistoryBytes": map[string]any{"type": "integer"},
+			"maxWatches": map[string]any{"type": "integer"}, "debug": schemaBool(),
+		}, "addr", "piBinary", "dataDir"),
+		"AdminState": obj(map[string]any{
+			"csrf":                  str(),
+			"authenticationEnabled": schemaBool(),
+			"overview":              map[string]any{"type": "object", "additionalProperties": true},
+			"settings":              ref("AdminSettings"),
+			"effectiveSettings":     ref("AdminSettings"),
+			"sources":               map[string]any{"type": "object", "additionalProperties": str()},
+			"pairingEndpoints":      arr(map[string]any{"type": "object", "additionalProperties": true}),
+			"runtimeFields":         arr(str()),
+			"restartRequired":       schemaBool(),
+		}, "settings", "effectiveSettings", "restartRequired"),
 	}
 }
 
@@ -110,6 +132,9 @@ func paths() map[string]any {
 	p["/metrics"] = map[string]any{"get": op("Prometheus operational metrics", "RPCResponse", "")}
 	p["/v1/devices"] = map[string]any{"get": op("List trusted devices", "RPCResponse", ""), "post": op("Create trusted device credential", "RPCResponse", "")}
 	p["/v1/devices/{id}"] = map[string]any{"delete": op("Revoke trusted device credential", "RPCResponse", "")}
+	p["/v1/devices/{id}/purge"] = map[string]any{"delete": op("Delete trusted device credential", "RPCResponse", "")}
+	p["/v1/admin/state"] = map[string]any{"get": op("Admin state snapshot", "AdminState", "")}
+	p["/v1/admin/settings"] = map[string]any{"put": op("Update admin settings", "AdminSettings", "AdminSettings")}
 	p["/v1/scheduler"] = map[string]any{"get": op("Scheduler admission status", "RPCResponse", "")}
 	p["/openapi.json"] = map[string]any{"get": op("OpenAPI document", "RPCResponse", "")}
 	p["/v1/capabilities"] = map[string]any{"get": op("API capabilities", "Capabilities", "")}

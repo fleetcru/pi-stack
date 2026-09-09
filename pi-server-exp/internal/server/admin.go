@@ -142,7 +142,7 @@ func (s *Server) adminAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/admin/api/state":
-		s.adminGetState(w, session)
+		s.adminGetState(w, session.CSRF)
 	case r.Method == http.MethodGet && r.URL.Path == "/admin/api/devices":
 		s.adminGetDevices(w)
 	case r.Method == http.MethodPost && r.URL.Path == "/admin/api/devices":
@@ -226,7 +226,43 @@ func pairingEndpoints(addr string) []pairingEndpoint {
 	return append(lan, tailscale...)
 }
 
-func (s *Server) adminGetState(w http.ResponseWriter, session adminSession) {
+// adminStateV1 serves GET /v1/admin/state for Desktop and other bearer-token
+// clients. It reuses the same state snapshot logic as the cookie admin UI; the
+// CSRF field is empty because bearer requests do not use CSRF tokens.
+func (s *Server) adminStateV1(w http.ResponseWriter, r *http.Request) {
+	if !s.requireBearerAdmin(w, r) {
+		return
+	}
+	s.adminGetState(w, "")
+}
+
+// adminSettingsV1 serves PUT /v1/admin/settings for bearer-token clients,
+// delegating to the same settings application logic as the cookie admin UI.
+func (s *Server) adminSettingsV1(w http.ResponseWriter, r *http.Request) {
+	if !s.requireBearerAdmin(w, r) {
+		return
+	}
+	s.adminPutSettings(w, r)
+}
+
+// requireBearerAdmin allows the request only when authentication is disabled or
+// the exact bootstrap bearer token is presented. Paired-device tokens never
+// satisfy this check, so they cannot read admin state or change settings.
+func (s *Server) requireBearerAdmin(w http.ResponseWriter, r *http.Request) bool {
+	if s.cfg.AuthToken == "" {
+		return true
+	}
+	provided := r.Header.Get("Authorization")
+	ok := len(provided) == len("Bearer "+s.cfg.AuthToken) &&
+		subtle.ConstantTimeCompare([]byte(provided), []byte("Bearer "+s.cfg.AuthToken)) == 1
+	if !ok {
+		writeErrorCode(w, r, http.StatusUnauthorized, CodeUnauthorized, "admin bearer token required")
+		return false
+	}
+	return true
+}
+
+func (s *Server) adminGetState(w http.ResponseWriter, csrf string) {
 	snapshot := s.admission.Snapshot()
 	effective := settingsFromConfig(s.cfg)
 	effective.MaxSessions = int(atomic.LoadInt64(&s.maxSessionsAtomic))
@@ -267,7 +303,7 @@ func (s *Server) adminGetState(w http.ResponseWriter, session adminSession) {
 		transports[spec.Transport]++
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"csrf": session.CSRF, "authenticationEnabled": s.cfg.AuthToken != "",
+		"csrf": csrf, "authenticationEnabled": s.cfg.AuthToken != "",
 		"overview": map[string]any{
 			"apiVersion": APIVersion, "uptimeSeconds": int64(time.Since(s.startedAt).Seconds()),
 			"sessions": map[string]any{"active": s.sessions.ActiveCount(), "registered": len(s.sessions.ListSpecs()), "byTransport": transports, "max": atomic.LoadInt64(&s.maxSessionsAtomic)},

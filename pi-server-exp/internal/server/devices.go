@@ -172,6 +172,22 @@ func publicDevice(record deviceRecord) map[string]any {
 	}
 }
 
+func (s *Server) purgeDevice(w http.ResponseWriter, r *http.Request) {
+	if !s.requireBootstrap(w, r) {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if !s.devices.delete(id) {
+		writeErrorCode(w, r, http.StatusNotFound, CodeNotFound, "device not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
+}
+
 func (s *Server) requireBootstrap(w http.ResponseWriter, r *http.Request) bool {
 	if s.cfg.AuthToken == "" || r.Header.Get("Authorization") != "Bearer "+s.cfg.AuthToken {
 		writeErrorCode(w, r, http.StatusForbidden, CodeForbidden, "bootstrap authorization required")
