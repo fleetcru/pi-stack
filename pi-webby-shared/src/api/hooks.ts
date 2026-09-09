@@ -138,10 +138,10 @@ export function useDirectoryRoots(workerId = "local") {
   })
 }
 
-export function useWorkers() {
+export function useWorkers(enabled = true) {
   const client = usePiServerClient()
   const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.workers(client.cacheScope), queryFn: () => client.listWorkers(), select: (result) => result.workers, refetchInterval: 30_000, enabled: configured })
+  return useQuery({ queryKey: piQueryKeys.workers(client.cacheScope), queryFn: () => client.listWorkers(), select: (result) => result.workers, refetchInterval: 30_000, enabled: configured && enabled })
 }
 
 export function useSessions() {
@@ -150,16 +150,16 @@ export function useSessions() {
   return useQuery({ queryKey: piQueryKeys.sessions(client.cacheScope), queryFn: () => client.listSessions(), refetchInterval: 20_000, enabled: configured })
 }
 
-export function useGlobalSessions() {
+export function useGlobalSessions(enabled = true) {
   const client = usePiServerClient()
   const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.globalSessions(client.cacheScope), queryFn: () => client.listGlobalSessions(), refetchInterval: 20_000, enabled: configured })
+  return useQuery({ queryKey: piQueryKeys.globalSessions(client.cacheScope), queryFn: () => client.listGlobalSessions(), refetchInterval: 20_000, enabled: configured && enabled })
 }
 
-export function useMachineSessions() {
+export function useMachineSessions(enabled = true) {
   const client = usePiServerClient()
   const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.machineSessions(client.cacheScope), queryFn: () => client.listMachineSessions(), refetchInterval: 30_000, enabled: configured })
+  return useQuery({ queryKey: piQueryKeys.machineSessions(client.cacheScope), queryFn: () => client.listMachineSessions(), refetchInterval: 30_000, enabled: configured && enabled })
 }
 
 export function useSessionHistory(sessionId?: string) {

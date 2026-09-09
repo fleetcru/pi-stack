@@ -1,8 +1,7 @@
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
-    WindowEvent,
+    AppHandle, Listener, Manager, WindowEvent,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -18,6 +17,12 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            // Keep the main window hidden while WebView2 and the React shell load.
+            // React emits `pi-app-ready` after its first render, at which point the
+            // window is shown without exposing the native startup frame.
+            let ready_app = app.handle().clone();
+            app.listen("pi-app-ready", move |_| show_main_window(&ready_app));
 
             // System tray
             let show_item = MenuItem::with_id(app, "show", "Show Pi Desktop", true, None::<&str>)?;
@@ -72,4 +77,11 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
