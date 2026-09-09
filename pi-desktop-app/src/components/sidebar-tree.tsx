@@ -144,12 +144,14 @@ export function TreeNode({
       <button
         type="button"
         onClick={onClick}
+        aria-expanded={hasChildren ? expanded : undefined}
+        title={label}
         className={cn(
-          "group flex h-7 w-full items-center gap-1.5 rounded-md pr-2 text-left text-xs text-sidebar-foreground transition-colors hover:bg-sidebar-accent",
+          "group flex h-8 w-full items-center gap-2 rounded-lg pr-2 text-left text-xs font-medium text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
           selected && "bg-sidebar-accent text-sidebar-accent-foreground",
           !onClick && "cursor-default hover:bg-transparent"
         )}
-        style={{ paddingLeft: `${8 + depth * 14}px` }}
+        style={{ paddingLeft: `${8 + depth * 16}px` }}
       >
         {hasChildren ? (
           expanded ? (
@@ -162,7 +164,7 @@ export function TreeNode({
         )}
         <span className="text-muted-foreground">{icon}</span>
         <span className="min-w-0 flex-1 truncate">{label}</span>
-        {badge && <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] tabular-nums text-muted-foreground">{badge}</span>}
+        {badge && <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-normal tabular-nums text-muted-foreground">{badge}</span>}
         {status && <StatusDot status={status} />}
       </button>
       {hasChildren && expanded && <div>{children}</div>}
@@ -196,9 +198,10 @@ function SessionLeaf({
       <button
         type="button"
         onClick={() => onSelect(session.id)}
+        title={label}
         className={cn(
-          "flex h-7 w-full items-center gap-1.5 rounded-md pr-2 pl-10 text-left text-xs text-sidebar-foreground transition-colors hover:bg-sidebar-accent",
-          selected && "bg-sidebar-accent text-sidebar-accent-foreground"
+          "flex h-8 w-full items-center gap-2 rounded-lg pr-2 pl-11 text-left text-xs text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+          selected && "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
         )}
       >
         <span className="w-3 shrink-0" />
@@ -208,7 +211,9 @@ function SessionLeaf({
           {pinned && <Star className="mr-0.5 inline size-3 shrink-0 fill-amber-400 text-amber-400" />}
           {label}
         </span>
-        <StatusDot status={sessionStatus(session.status, (session.state?.runtimeStatus as { state?: string } | undefined)?.state)} />
+        <span className="group-hover/leaf:opacity-0">
+          <StatusDot status={sessionStatus(session.status, (session.state?.runtimeStatus as { state?: string } | undefined)?.state)} />
+        </span>
       </button>
       {/* Status detail label */}
       {(() => {
@@ -225,7 +230,7 @@ function SessionLeaf({
       <button
         type="button"
         onClick={(event) => { event.stopPropagation(); togglePin(session.id) }}
-        className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 opacity-0 transition-opacity hover:bg-muted group-hover/leaf:opacity-100"
+        className="absolute top-1/2 right-1 -translate-y-1/2 rounded-md p-1 opacity-0 transition-opacity hover:bg-muted group-hover/leaf:opacity-100 focus-visible:opacity-100"
         aria-label={pinned ? "Unpin session" : "Pin session"}
         title={pinned ? "Unpin" : "Pin"}
       >
@@ -248,6 +253,7 @@ function ProjectBranch({
   onSelectSession,
   pinnedSessionIds,
   source,
+  forceExpanded = false,
 }: {
   project: string
   sessions: Array<{ id: string; status?: string; title?: string; updatedAt?: string; state?: Record<string, unknown> }>
@@ -255,8 +261,9 @@ function ProjectBranch({
   onSelectSession: (sessionId?: string) => void
   pinnedSessionIds: Record<string, true>
   source?: string
+  forceExpanded?: boolean
 }) {
-  const nodeId = `project:${project}`
+  const nodeId = `project:${source ?? "unknown"}:${project}`
   const expanded = useAppStore((state) =>
     Boolean(state.expandedTreeNodes[nodeId])
   )
@@ -275,7 +282,8 @@ function ProjectBranch({
       if (aPin !== bPin) return bPin - aPin
       const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0
       const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0
-      return bTime - aTime
+      if (aTime !== bTime) return bTime - aTime
+      return a.id.localeCompare(b.id)
     })
     const staleThreshold = now - STALE_THRESHOLD_MS
     const recent: typeof sorted = []
@@ -294,9 +302,9 @@ function ProjectBranch({
   return (
     <TreeNode
       depth={1}
-      expanded={expanded}
+      expanded={forceExpanded || expanded}
       icon={<FolderGit2 className="size-3.5" />}
-      label={project}
+      label={`${project} (${sessions.length})`}
       onClick={() => toggle(nodeId)}
     >
       {recent.map((session) => (
@@ -314,8 +322,8 @@ function ProjectBranch({
           <button
             type="button"
             onClick={() => setOlderExpanded((open) => !open)}
-            className="flex h-6 w-full items-center gap-1.5 rounded-md px-3 text-[10px] text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
-            style={{ paddingLeft: `${8 + 2 * 14}px` }}
+            className="flex h-7 w-full items-center gap-1.5 rounded-lg px-3 text-[10px] text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            style={{ paddingLeft: `${8 + 2 * 16}px` }}
           >
             {olderExpanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
             <span className="opacity-60">Older ({older.length})</span>
@@ -346,6 +354,7 @@ function WorkerBranch({
   selectedSessionId,
   onSelectSession,
   pinnedSessionIds,
+  filterActive = false,
 }: {
   workerId: string
   sessions: Array<{
@@ -360,25 +369,23 @@ function WorkerBranch({
   selectedSessionId?: string
   onSelectSession: (sessionId?: string) => void
   pinnedSessionIds: Record<string, true>
+  filterActive?: boolean
 }) {
   const nodeId = `worker:${workerId}`
   const expanded = useAppStore((state) =>
     Boolean(state.expandedTreeNodes[nodeId])
   )
   const toggle = useAppStore((state) => state.toggleTreeNode)
-  const projects = groupByProject(sessions)
-
-  // Auto-expand when filtering
-  const hasFilter = sessions.length > 0
+  const projects = [...groupByProject(sessions).entries()].sort(([a], [b]) => a.localeCompare(b))
 
   return (
     <TreeNode
-      expanded={expanded || hasFilter}
+      expanded={expanded || filterActive}
       icon={<Wifi className="size-3.5" />}
       label={workerId === "local" ? "Local" : workerId === "external" ? "Live TUI bridge" : workerId}
       onClick={() => toggle(nodeId)}
     >
-      {Array.from(projects.entries()).map(([project, projectSessions]) => (
+      {projects.map(([project, projectSessions]) => (
         <ProjectBranch
           key={project}
           project={project}
@@ -387,6 +394,7 @@ function WorkerBranch({
           onSelectSession={onSelectSession}
           pinnedSessionIds={pinnedSessionIds}
           source={workerId}
+          forceExpanded={filterActive}
         />
       ))}
       {sessions.length === 0 && <EmptyTreeState compact />}
@@ -435,7 +443,13 @@ export function SessionTree({
     return filterText ? <p className="px-3 py-4 text-center text-xs text-muted-foreground">No matching sessions</p> : <EmptyTreeState />
   }
 
-  return Array.from(workers.entries()).map(([workerId, workerSessions]) => (
+  const sortedWorkers = [...workers.entries()].sort(([a], [b]) => {
+    if (a === "local") return -1
+    if (b === "local") return 1
+    return a.localeCompare(b)
+  })
+
+  return sortedWorkers.map(([workerId, workerSessions]) => (
     <WorkerBranch
       key={workerId}
       workerId={workerId}
@@ -443,6 +457,7 @@ export function SessionTree({
       selectedSessionId={selectedSessionId}
       onSelectSession={onSelectSession}
       pinnedSessionIds={pinnedSessionIds}
+      filterActive={Boolean(filterText)}
     />
   ))
 }

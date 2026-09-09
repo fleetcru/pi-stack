@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 	"time"
 )
@@ -242,6 +243,12 @@ func (r *SessionRegistry) ListSpecs() []SessionSpec {
 			}
 		}
 	}
+	sort.Slice(specs, func(i, j int) bool {
+		if !specs[i].UpdatedAt.Equal(specs[j].UpdatedAt) {
+			return specs[i].UpdatedAt.After(specs[j].UpdatedAt)
+		}
+		return specs[i].ID < specs[j].ID
+	})
 	return specs
 }
 

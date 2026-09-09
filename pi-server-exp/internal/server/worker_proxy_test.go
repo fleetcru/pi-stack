@@ -50,6 +50,57 @@ func TestRemoteWorkerHealthProxy(t *testing.T) {
 	}
 }
 
+func TestRemoteWorkerDirectoryProxy(t *testing.T) {
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/directories" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("path") != "/srv/project" {
+			t.Fatalf("missing directory path query: %s", r.URL.RawQuery)
+		}
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			t.Fatal("missing auth")
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"path": "/srv/project", "directories": []any{}})
+	}))
+	defer remote.Close()
+
+	s := New(Config{CWD: ".", DataDir: t.TempDir()}, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	if err := s.workers.Add(Worker{ID: "r1", URL: remote.URL, Token: "tok"}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/workers/r1/directories?path=/srv/project", nil)
+	w := httptest.NewRecorder()
+	s.workerGet(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRemoteWorkerModelsProxy(t *testing.T) {
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			t.Fatal("missing auth")
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"models": []any{}})
+	}))
+	defer remote.Close()
+
+	s := New(Config{CWD: ".", DataDir: t.TempDir()}, slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	if err := s.workers.Add(Worker{ID: "r1", URL: remote.URL, Token: "tok"}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/workers/r1/models", nil)
+	w := httptest.NewRecorder()
+	s.workerGet(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+}
+
 func TestOpenAPIHasSchemasAndRemoteWS(t *testing.T) {
 	s := New(Config{CWD: ".", DataDir: t.TempDir()}, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 	w := httptest.NewRecorder()
@@ -64,7 +115,13 @@ func TestOpenAPIHasSchemasAndRemoteWS(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "CreateSessionRequest") {
 		t.Fatal("missing schema")
 	}
-	if !strings.Contains(w.Body.String(), "/v1/workers/{id}/sessions/{sessionId}/ws") {
-		t.Fatal("missing remote ws path")
+	for _, path := range []string{
+		"/v1/workers/{id}/sessions/{sessionId}/ws",
+		"/v1/workers/{id}/directories",
+		"/v1/workers/{id}/models",
+	} {
+		if !strings.Contains(w.Body.String(), path) {
+			t.Fatalf("missing worker path %s", path)
+		}
 	}
 }

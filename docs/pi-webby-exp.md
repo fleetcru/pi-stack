@@ -16,12 +16,12 @@ React 19 + Vite 8 + Tailwind v4 + shadcn/ui browser client for pi-server. Most d
 
 ## Major components (`src/components/`)
 
-- `workspace-shell.tsx` — the main three-panel layout: sidebar (session tree), center workspace, right inspector. Manages panel resizing, collapse states, the command palette, theme toggle, and navigation between sessions. Lazy-loads the heavy workspace component.
+- `workspace-shell.tsx` — the main three-panel layout: sidebar (session tree), center workspace, right inspector. Manages panel resizing, collapse states, the command palette, theme toggle, and navigation between sessions. The sidebar brand and workspace header provide direct home actions, so returning to the quick-session composer never depends on browser history. The worker-management button opens its dialog on desktop and mobile. Heavy workspace components are lazy-loaded.
   Before connecting, its empty state offers one-click local server setup. After connecting with no session selected, it centers the quick-session composer.
 - `session-workspace.tsx` — the chat view. Subscribes to the active session socket, renders streaming assistant text, tool-call cards (bash, read, edit…), message markdown (react-markdown + sanitize), image attachments, prompt bar with model/thinking selectors, and stop/retry actions.
 - `session-inspector.tsx` — right panel: session details, file tree browser with file preview, git status/branches/worktrees, and the guided commit/push flow (`resolveGitQuickAction` computing Commit → Commit & push → Push → blocked, with the GitHub compare link when `githubRepo` is known).
-- `sidebar-tree.tsx` — grouped session list (local, remote, relay, machine-discovered) with search and per-session context menus.
-- `quick-session-composer.tsx` — centered empty-workspace composer. It loads the server's available providers/models, applies an optional model choice, creates a local session in the server's default folder, and sends the first message. "Choose project" opens the full dialog for workers, worktrees, and other options.
+- `sidebar-tree.tsx` — grouped session list (local, remote, relay, machine-discovered) with search and per-session context menus. Worker, project, and session rows use roomier targets, project session counts, clearer selection, and accessible hover/focus pin controls.
+- `quick-session-composer.tsx` — compact empty-workspace composer. It uses a wide, low-profile prompt card with a searchable, provider-grouped model picker and send button. Inline controls below the card select an allowed project root and local or remote worker; both roots and models refresh for the selected worker. "More options" opens the full dialog for worktrees and batch-session settings.
 - `create-session-dialog.tsx` — full new-session form: cwd picker, args, worktree toggle, extension options.
   The form also supports an optional initial message, sent immediately after creation so sessions can run in the background.
 - `server-connections-dialog.tsx` — manage multiple pi-server connections (name, URL, token, remember-token) backed by the persisted store. Connection hints use the shared `3142` server port.

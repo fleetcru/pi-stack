@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router"
 import { usePanelRef } from "react-resizable-panels"
 import {
+  House,
   LoaderCircle,
   Moon,
   PanelLeftClose,
@@ -13,6 +14,7 @@ import {
   PanelRight,
   Search,
   Server,
+  Cpu,
   Sun,
 } from "lucide-react"
 
@@ -23,6 +25,7 @@ import { CreateSessionDialog } from "@/components/create-session-dialog"
 import { QuickSessionComposer } from "@/components/quick-session-composer"
 import { GlobalSessionList, MachineSessionList } from "@/components/machine-session-list"
 import { ServerConnectionsDialog } from "@/components/server-connections-dialog"
+import { WorkerManagementDialog } from "@/components/worker-management-dialog"
 const SessionInspector = lazy(() => import("@/components/session-inspector").then((module) => ({ default: module.SessionInspector })) )
 const SessionWorkspace = lazy(() => import("@/components/session-workspace"))
 import { SessionTree, TreeNode } from "@/components/sidebar-tree"
@@ -42,6 +45,7 @@ export function WorkspaceShell() {
   const [inspectorOpen, setInspectorOpen] = useState(true)
   const [createSessionOpen, setCreateSessionOpen] = useState(false)
   const [serverConnectionsOpen, setServerConnectionsOpen] = useState(false)
+  const [workerManagementOpen, setWorkerManagementOpen] = useState(false)
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
   const leftPanelRef = usePanelRef()
   const connection = useAppStore((state) => state.connection)
@@ -83,6 +87,7 @@ export function WorkspaceShell() {
       <main className="flex h-svh items-center justify-center bg-background p-5 text-foreground">
         <FirstServerOnboarding onOpenServers={() => setServerConnectionsOpen(true)} />
         <ServerConnectionsDialog open={serverConnectionsOpen} onOpenChange={setServerConnectionsOpen} />
+        <WorkerManagementDialog open={workerManagementOpen} onOpenChange={setWorkerManagementOpen} />
       </main>
     )
   }
@@ -122,6 +127,7 @@ export function WorkspaceShell() {
           <aside className="flex h-full min-w-0 flex-col rounded-xl border border-border bg-muted/[0.15] shadow-sm select-none">
             {leftSidebarCollapsed ? (
               <CollapsedSidebar
+                onHome={() => openSession(undefined)}
                 onExpand={() => {
                   leftPanelRef.current?.expand()
                   setLeftSidebarCollapsed(false)
@@ -130,24 +136,26 @@ export function WorkspaceShell() {
             ) : (
               <>
                 <ServerTreeHeader
+                  onHome={() => openSession(undefined)}
                   onCreate={() => setCreateSessionOpen(true)}
                   onManageServers={() => setServerConnectionsOpen(true)}
+                  onManageWorkers={() => setWorkerManagementOpen(true)}
                   onCollapse={() => {
                     leftPanelRef.current?.collapse()
                     setLeftSidebarCollapsed(true)
                   }}
                 />
                 <Separator />
-                <div className="px-2 pt-2">
+                <div className="px-3 pt-3 pb-1">
                   <div className="relative">
-                    <Search className="pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
+                    <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
                     <input
                       type="text"
-                      placeholder="Filter sessions..."
+                      placeholder="Search sessions"
                       aria-label="Filter sessions"
                       value={filterText}
                       onChange={(event) => setFilterText(event.target.value)}
-                      className="h-7 w-full rounded-md border border-border bg-muted/40 pl-7 pr-2 text-xs text-foreground placeholder:text-muted-foreground focus:border-primary/40 focus:outline-none"
+                      className="h-8 w-full rounded-lg border border-border bg-background pl-8 pr-2.5 text-xs text-foreground shadow-xs placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/20"
                     />
                   </div>
                 </div>
@@ -156,7 +164,7 @@ export function WorkspaceShell() {
                     <TreeNode
                       expanded
                       icon={<Server className="size-3.5" />}
-                      label="Pi Server"
+                      label={connection.name || "Pi Server"}
                       status={health?.ok ? "active" : "idle"}
                       badge={health?.capacity ? `${health.capacity.activeSessions}/${health.capacity.maxSessions}` : undefined}
                     >
@@ -198,7 +206,9 @@ export function WorkspaceShell() {
           <section className="flex h-full min-w-0 flex-col rounded-xl border border-border bg-background shadow-sm select-none">
             <WorkspaceHeader
               inspectorOpen={inspectorOpen}
+              onHome={() => openSession(undefined)}
               onToggleInspector={() => setInspectorOpen((open) => !open)}
+              showHome={Boolean(selectedSession)}
               title={
                 selectedSession?.title ||
                 selectedSession?.project ||
@@ -241,8 +251,10 @@ export function WorkspaceShell() {
           onOpenSession={openSession}
           onOpenGlobal={(globalId) => void client.attachGlobalSession(globalId).then((result) => openSession(result.id)).catch(() => {})}
           onOpenMachine={async (id) => { const result = await client.openMachineSession(id); openSession(result.id) }}
+          onHome={() => openSession(undefined)}
           onCreate={() => setCreateSessionOpen(true)}
           onManageServers={() => setServerConnectionsOpen(true)}
+          onManageWorkers={() => setWorkerManagementOpen(true)}
         />
       </div>
       <CreateSessionDialog
@@ -253,6 +265,10 @@ export function WorkspaceShell() {
         open={serverConnectionsOpen}
         onOpenChange={setServerConnectionsOpen}
       />
+      <WorkerManagementDialog
+        open={workerManagementOpen}
+        onOpenChange={setWorkerManagementOpen}
+      />
     </main>
   )
 }
@@ -262,7 +278,7 @@ function FirstServerOnboarding({ onOpenServers }: { onOpenServers: () => void })
     <section className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-sm">
       <div className="mb-4 flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground"><Server className="size-5" /></div>
       <h1 className="text-lg font-semibold">Connect your first Pi server</h1>
-      <p className="mt-2 text-sm leading-6 text-muted-foreground">Webby does not assume a local server. Add the trusted pi-server URL you want to use, then create or open a session.</p>
+      <p className="mt-2 text-sm leading-6 text-muted-foreground">Desktop does not assume a local server. Add the trusted pi-server URL you want to use, then create or open a session.</p>
       <div className="mt-5 rounded-lg bg-muted/50 p-3 font-mono text-xs text-muted-foreground">http://your-laptop-ip:3142</div>
       <Button className="mt-5 w-full" onClick={onOpenServers}>Add Pi server</Button>
     </section>
@@ -278,8 +294,10 @@ function MobileWorkspace({
   onOpenSession,
   onOpenGlobal,
   onOpenMachine,
+  onHome,
   onCreate,
   onManageServers,
+  onManageWorkers,
 }: {
   selectedSession?: ApiSession
   sessions: ApiSession[]
@@ -289,8 +307,10 @@ function MobileWorkspace({
   onOpenSession: (id?: string) => void
   onOpenGlobal: (id: string) => void
   onOpenMachine: (id: string) => Promise<void>
+  onHome: () => void
   onCreate: () => void
   onManageServers: () => void
+  onManageWorkers: () => void
 }) {
   const { theme, setTheme } = useTheme()
   const isDark = theme === "dark"
@@ -301,6 +321,7 @@ function MobileWorkspace({
     <section className="flex h-full min-w-0 flex-col rounded-xl border border-border bg-background shadow-sm">
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-3">
         <Button size="icon-sm" variant="ghost" aria-label="Open sessions" onClick={() => setSessionsOpen(true)}><Menu /></Button>
+        {selectedSession && <Button size="icon-sm" variant="ghost" aria-label="Go to home" title="Home" onClick={onHome}><House /></Button>}
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-medium">{selectedSession?.title || selectedSession?.project || "Pi"}</h1>
           <p className="text-xs text-muted-foreground">{selectedSession ? "Agent workspace" : "Select a session"}</p>
@@ -315,7 +336,9 @@ function MobileWorkspace({
             <div className="flex items-center justify-between gap-2 pr-8">
               <SheetTitle>Sessions</SheetTitle>
               <div className="flex items-center gap-1">
+                <Button size="icon-xs" variant="ghost" aria-label="Go to home" onClick={() => { setSessionsOpen(false); onHome() }}><House /></Button>
                 <Button size="icon-xs" variant="ghost" aria-label="Manage Pi servers" onClick={onManageServers}><Server /></Button>
+                <Button size="icon-xs" variant="ghost" aria-label="Manage workers" onClick={onManageWorkers}><Cpu /></Button>
                 <Button size="icon-xs" variant="ghost" aria-label={isDark ? "Use light theme" : "Use dark theme"} onClick={() => setTheme(isDark ? "light" : "dark")}>
                   {isDark ? <Sun /> : <Moon />}
                 </Button>
@@ -345,7 +368,7 @@ function MobileWorkspace({
       </Sheet>
       <Sheet open={inspectorOpen} onOpenChange={setInspectorOpen}>
         <SheetContent side="right" className="w-[92vw] max-w-md p-0" showCloseButton>
-          <Suspense fallback={<div className="h-full animate-pulse rounded-xl bg-muted/30" />}><SessionInspector session={selectedSession} /></Suspense>
+          <SessionInspector session={selectedSession} />
         </SheetContent>
       </Sheet>
     </section>
@@ -354,19 +377,26 @@ function MobileWorkspace({
 
 function ServerTreeHeader({
   onCollapse,
+  onHome,
   onCreate,
   onManageServers,
+  onManageWorkers,
 }: {
   onCollapse: () => void
+  onHome: () => void
   onCreate: () => void
   onManageServers: () => void
+  onManageWorkers: () => void
 }) {
   const { theme, setTheme } = useTheme()
   const isDark = theme === "dark"
 
   return (
-    <div className="flex h-14 items-center justify-between px-3">
-      <span className="text-sm font-medium tracking-tight">Pi</span>
+    <div className="flex h-14 items-center justify-between px-2.5">
+      <Button size="sm" variant="ghost" className="px-2 font-semibold" onClick={onHome} aria-label="Go to home">
+        <House data-icon="inline-start" />
+        Pi
+      </Button>
       <div className="flex items-center gap-0.5">
         <ThemeToggle
           isDark={isDark}
@@ -381,6 +411,7 @@ function ServerTreeHeader({
         >
           <Server />
         </Button>
+        <Button size="icon-xs" variant="ghost" aria-label="Manage workers" title="Manage workers" onClick={onManageWorkers}><Cpu /></Button>
         <Button
           size="icon-xs"
           variant="ghost"
@@ -404,13 +435,13 @@ function ServerTreeHeader({
   )
 }
 
-function CollapsedSidebar({ onExpand }: { onExpand: () => void }) {
+function CollapsedSidebar({ onExpand, onHome }: { onExpand: () => void; onHome: () => void }) {
   const { theme, setTheme } = useTheme()
   const isDark = theme === "dark"
 
   return (
     <div className="flex h-full flex-col items-center py-3">
-      <span className="text-sm font-medium tracking-tight">Pi</span>
+      <Button size="icon-xs" variant="ghost" aria-label="Go to home" title="Home" onClick={onHome}><House /></Button>
       <Separator className="my-3" />
       <Button
         size="icon-xs"
@@ -452,18 +483,29 @@ function ThemeToggle({
 
 function WorkspaceHeader({
   inspectorOpen,
+  onHome,
   onToggleInspector,
+  showHome,
   title,
 }: {
   inspectorOpen: boolean
+  onHome: () => void
   onToggleInspector: () => void
+  showHome: boolean
   title: string
 }) {
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between px-5">
-      <div className="min-w-0">
-        <h1 className="truncate text-sm font-medium tracking-tight">{title}</h1>
-        <p className="mt-0.5 text-xs text-muted-foreground">Agent workspace</p>
+    <header className="flex h-14 shrink-0 items-center justify-between px-3">
+      <div className="flex min-w-0 items-center gap-2">
+        {showHome && (
+          <Button size="icon-sm" variant="ghost" aria-label="Go to home" title="Home" onClick={onHome}>
+            <House />
+          </Button>
+        )}
+        <div className="min-w-0">
+          <h1 className="truncate text-sm font-medium tracking-tight">{title}</h1>
+          <p className="mt-0.5 text-xs text-muted-foreground">{showHome ? "Agent workspace" : "Start or open a session"}</p>
+        </div>
       </div>
       <Button
         size="icon-xs"

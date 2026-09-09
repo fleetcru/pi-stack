@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -94,6 +95,41 @@ func TestHistoryOwnershipReclaimsStaleLock(t *testing.T) {
 	// A second session must still be rejected by the live owner.
 	if err := s.reserveHistoryOwner(SessionSpec{ID: "two", SessionPath: path}); err == nil {
 		t.Fatal("expected duplicate history ownership to be rejected after reclaim")
+	}
+}
+
+func TestSessionRegistryListSpecsDeterministicOrder(t *testing.T) {
+	r := NewSessionRegistry("", 0)
+	cfg := Config{}
+	now := time.Now().UTC().Truncate(time.Second)
+	// Several sessions share the same UpdatedAt to exercise the ID tie-break,
+	// covering the map-iteration ordering instability seen in the sidebar.
+	for _, id := range []string{"zeta", "alpha", "middle"} {
+		spec := SessionSpec{ID: id, CWD: ".", UpdatedAt: now}
+		if err := r.Add(NewPiProcess(spec, cfg, testLogger()), spec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One later session with a fresh timestamp must still sort first.
+	later := SessionSpec{ID: "aaa-latest", CWD: ".", UpdatedAt: now.Add(time.Minute)}
+	if err := r.Add(NewPiProcess(later, cfg, testLogger()), later); err != nil {
+		t.Fatal(err)
+	}
+
+	specs := r.ListSpecs()
+	if len(specs) != 4 {
+		t.Fatalf("unexpected spec count: %d", len(specs))
+	}
+	if specs[0].ID != "aaa-latest" {
+		t.Fatalf("most recent spec not first: %s", specs[0].ID)
+	}
+	// The three equal-timestamp specs must be alphabetically ordered.
+	got := []string{specs[1].ID, specs[2].ID, specs[3].ID}
+	want := []string{"alpha", "middle", "zeta"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("tie-break order mismatch at %d: got %s want %s", i, got[i], want[i])
+		}
 	}
 }
 

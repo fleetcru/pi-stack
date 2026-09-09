@@ -64,7 +64,8 @@ export const piQueryKeys = {
   scheduler: (baseUrl: string) => ["pi-server", baseUrl, "scheduler"] as const,
   capabilities: (baseUrl: string) =>
     ["pi-server", baseUrl, "capabilities"] as const,
-  models: (baseUrl: string) => ["pi-server", baseUrl, "models"] as const,
+  models: (baseUrl: string, workerId: string) => ["pi-server", baseUrl, "workers", workerId, "models"] as const,
+  directories: (baseUrl: string, workerId: string) => ["pi-server", baseUrl, "workers", workerId, "directories"] as const,
   workers: (baseUrl: string) => ["pi-server", baseUrl, "workers"] as const,
   sessions: (baseUrl: string) => ["pi-server", baseUrl, "sessions"] as const,
   globalSessions: (baseUrl: string) => ["pi-server", baseUrl, "global-sessions"] as const,
@@ -97,13 +98,13 @@ export function useServerHealth() {
   return useQuery({ queryKey: piQueryKeys.health(client.cacheScope), queryFn: () => client.health(), refetchInterval: 30_000, enabled: configured })
 }
 
-export function useAvailableModels() {
+export function useAvailableModels(workerId = "local") {
   const client = usePiServerClient()
   const configured = useServerConfigured()
   return useQuery({
-    queryKey: piQueryKeys.models(client.cacheScope),
-    queryFn: () => client.listAvailableModels(),
-    enabled: configured,
+    queryKey: piQueryKeys.models(client.cacheScope, workerId),
+    queryFn: () => client.listAvailableModels(workerId),
+    enabled: configured && Boolean(workerId),
     staleTime: 5 * 60_000,
   })
 }
@@ -123,6 +124,18 @@ export function useServerCapabilities() {
   const client = usePiServerClient()
   const configured = useServerConfigured()
   return useQuery({ queryKey: piQueryKeys.capabilities(client.cacheScope), queryFn: () => client.capabilities(), staleTime: Infinity, enabled: configured })
+}
+
+export function useDirectoryRoots(workerId = "local") {
+  const client = usePiServerClient()
+  const configured = useServerConfigured()
+  return useQuery({
+    queryKey: piQueryKeys.directories(client.cacheScope, workerId),
+    queryFn: () => client.listDirectories(undefined, workerId),
+    enabled: configured && Boolean(workerId),
+    select: (result) => result.roots?.length ? result.roots : result.directories ?? [],
+    staleTime: 30_000,
+  })
 }
 
 export function useWorkers() {

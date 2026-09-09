@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"os"
+	"sort"
 	"sync"
 	"time"
 )
@@ -65,6 +66,12 @@ func (r *RemoteSessionRegistry) List() []RemoteSession {
 	for _, s := range r.sessions {
 		out = append(out, s)
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
 	return out
 }
 func (r *RemoteSessionRegistry) Save() error {

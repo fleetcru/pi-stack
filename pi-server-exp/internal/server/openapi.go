@@ -134,6 +134,8 @@ func paths() map[string]any {
 		"post": op("Immediate worker health probe", "RPCResponse", ""),
 	}
 	post("/v1/workers/{id}/sessions", "Create session on worker", "CreateSessionRequest")
+	p["/v1/workers/{id}/directories"] = map[string]any{"get": op("Browse a worker's allowed session directories", "RPCResponse", "")}
+	p["/v1/workers/{id}/models"] = map[string]any{"get": op("List models available on a worker", "AvailableModels", "")}
 	get("/v1/workers/{id}/sessions/{sessionId}/ws", "Proxy remote worker WebSocket")
 	get("/v1/directories", "Browse allowed session directories")
 	get("/v1/files", "List directory files")

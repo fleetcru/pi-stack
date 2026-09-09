@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,8 +43,8 @@ type persistedWorker struct {
 	Tags  []string `json:"tags,omitempty"`
 }
 type WorkerRegistry struct {
-	mu      sync.RWMutex
-	path    string
+	mu          sync.RWMutex
+	path        string
 	workers     map[string]Worker
 	generations map[string]uint64
 }
@@ -105,6 +106,18 @@ func (r *WorkerRegistry) List() []Worker {
 	for _, w := range r.workers {
 		out = append(out, w)
 	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ID == out[j].ID {
+			return false
+		}
+		if out[i].ID == "local" {
+			return true
+		}
+		if out[j].ID == "local" {
+			return false
+		}
+		return out[i].ID < out[j].ID
+	})
 	return out
 }
 func (r *WorkerRegistry) UpdateCapacity(id string, active, max int) {
@@ -490,6 +503,22 @@ func (s *Server) workerGet(w http.ResponseWriter, r *http.Request) {
 		s.probeWorkerHealth(w, r, worker)
 		return
 	}
+	if wp.rest == "directories" {
+		if worker.ID == "local" {
+			s.listDirectories(w, r)
+			return
+		}
+		s.proxyWorker(w, r, worker, "/v1/directories")
+		return
+	}
+	if wp.rest == "models" {
+		if worker.ID == "local" {
+			s.listAvailableModels(w, r)
+			return
+		}
+		s.proxyWorker(w, r, worker, "/v1/models")
+		return
+	}
 	if strings.HasPrefix(wp.rest, "sessions/") {
 		if worker.ID == "local" {
 			http.NotFound(w, r)
@@ -612,7 +641,6 @@ func (s *Server) proxyWorker(w http.ResponseWriter, r *http.Request, worker Work
 	_, _ = io.Copy(w, resp.Body)
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
-
 
 func (r *WorkerRegistry) CurrentGeneration(id string) uint64 {
 	r.mu.RLock()

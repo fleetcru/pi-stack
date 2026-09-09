@@ -22,9 +22,9 @@ Tauri v2 desktop client. The React side is a near-mirror of pi-webby (same share
 - `hooks/use-session-notifications.ts` — watches a session's `runtime_state` and fires a native notification on `working → idle`, i.e. "Pi finished your task" while you're in another window.
 
 ### Components
-- `components/workspace-shell.tsx`, `quick-session-composer.tsx`, `session-workspace.tsx`, `session-inspector.tsx`, `sidebar-tree.tsx`, `create-session-dialog.tsx`, `server-connections-dialog.tsx`, `machine-session-list.tsx`, `changed-files-list.tsx`, `capacity-control.tsx`, `theme-provider.tsx` — functionally identical to their pi-webby-exp counterparts (kept in sync by `sync-components.ps1/.sh`); see the webby doc for details. The empty workspace has the same quick-session composer with provider/model selection, and connection hints use port `3142`.
+- `components/workspace-shell.tsx`, `quick-session-composer.tsx`, `session-workspace.tsx`, `session-inspector.tsx`, `sidebar-tree.tsx`, `create-session-dialog.tsx`, `server-connections-dialog.tsx`, `worker-management-dialog.tsx`, `machine-session-list.tsx`, `changed-files-list.tsx`, `capacity-control.tsx`, `theme-provider.tsx` — functionally aligned with their pi-webby-exp counterparts; see the webby doc for details. Home navigation, the roomier session tree, worker management, worker-aware project roots, and the searchable model picker are carried across to desktop. Desktop keeps its explicit first-server setup instead of assuming localhost, and connection hints use port `3142`.
 - `components/ui/*` — shadcn/ui primitives, same set as webby.
 
 ## Sync discipline
 
-Because webby and desktop share component sources, edits should be made once and propagated with the sync scripts at the repo root; diverging copies is the main maintenance hazard here.
+Because webby and desktop share component sources, edits should be made in webby first and then propagated to desktop. The root sync scripts cover shared `components/ui` primitives only; app-level components such as `workspace-shell.tsx`, `sidebar-tree.tsx`, and `quick-session-composer.tsx` must be copied or merged separately while preserving desktop-only behavior.

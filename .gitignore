@@ -5,6 +5,7 @@
 *.err
 *.out
 nul
+.playwright-mcp/
 # Auto-created per-session git worktrees (pi-server createWorktree.enabled)
 .pi-worktrees/
 .gocache-audit/

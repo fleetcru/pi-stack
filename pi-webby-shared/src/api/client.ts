@@ -259,8 +259,11 @@ export class PiServerClient {
     return this.request("/v1/capabilities")
   }
 
-  listAvailableModels(): Promise<{ models: AvailableServerModel[] }> {
-    return this.request("/v1/models")
+  listAvailableModels(workerId = "local"): Promise<{ models: AvailableServerModel[] }> {
+    const endpoint = workerId === "local"
+      ? "/v1/models"
+      : `/v1/workers/${encodeURIComponent(workerId)}/models`
+    return this.request(endpoint)
   }
 
   updateCapacity(maxSessions: number): Promise<{ activeSessions: number; maxSessions: number }> {
@@ -444,9 +447,12 @@ export class PiServerClient {
     return this.pushSessionGit(id, remote, branch, true)
   }
 
-  listDirectories(path?: string): Promise<DirectoryListResponse> {
+  listDirectories(path?: string, workerId = "local"): Promise<DirectoryListResponse> {
     const query = path ? `?${new URLSearchParams({ path })}` : ""
-    return this.request(`/v1/directories${query}`)
+    const endpoint = workerId === "local"
+      ? "/v1/directories"
+      : `/v1/workers/${encodeURIComponent(workerId)}/directories`
+    return this.request(`${endpoint}${query}`)
   }
 
   getFileTree(

@@ -68,7 +68,7 @@ Go 1.23 HTTP/WebSocket daemon. Spawns Pi CLI processes, speaks strict LF-delimit
 
 ## Workers (remote Pi instances)
 
-- `workers.go` — worker registry: registration, tokens (`SensitiveString` redacts itself in logs and `%v`), persisted to disk.
+- `workers.go` — worker registry: registration, tokens (`SensitiveString` redacts itself in logs and `%v`), persisted to disk. Worker-scoped `GET /v1/workers/{id}/directories` and `/models` proxy each worker's allowed roots and model catalog so new-session controls reflect the selected machine.
 - `worker_heartbeat.go` — periodic worker health checks; marks workers stale/offline.
 - `worker_paths.go` — parsing of worker-scoped URL paths.
 - `remote_sessions.go` — registry of sessions that live on workers, persisted locally.
