@@ -141,6 +141,22 @@ describe("QuickSessionComposer", () => {
     expect(hooks.sessionPost.mock.invocationCallOrder[0]).toBeLessThan(hooks.prompt.mock.invocationCallOrder[0])
   })
 
+  it("applies the selected thinking effort before sending", async () => {
+    hooks.createSession.mockResolvedValue({ id: "session-1" })
+    hooks.sessionPost.mockResolvedValue({ ok: true })
+    hooks.prompt.mockResolvedValue({ ok: true })
+    const user = userEvent.setup()
+
+    render(<QuickSessionComposer onCreated={vi.fn()} onMoreOptions={vi.fn()} />)
+    await user.click(screen.getByRole("combobox", { name: "Thinking effort" }))
+    await user.click(await screen.findByRole("option", { name: "High" }))
+    await user.type(screen.getByRole("textbox"), "Inspect the API")
+    await user.click(screen.getByRole("button", { name: "Create session and send message" }))
+
+    await waitFor(() => expect(hooks.sessionPost).toHaveBeenCalledWith("session-1", "thinking-level", { level: "high" }))
+    expect(hooks.sessionPost.mock.invocationCallOrder[0]).toBeLessThan(hooks.prompt.mock.invocationCallOrder[0])
+  })
+
   it("can return to the session default after selecting a model", async () => {
     hooks.createSession.mockResolvedValue({ id: "session-1" })
     hooks.prompt.mockResolvedValue({ ok: true })

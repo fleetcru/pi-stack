@@ -153,7 +153,7 @@ go build ./cmd/pi-server
 
 **Path:** `pi-webby-exp/` · **Stack:** React 19, Vite 8, TypeScript, shadcn/ui, Tailwind v4
 
-Browser client for pi-server.
+Browser client for pi-server. Shares API client and components with pi-desktop-app; see the "Component sync discipline" note under the pi-desktop section. When you change a shared component or UI primitive here, propagate it to Desktop in the same session (preserving Desktop's documented exceptions).
 
 | Area | Files |
 |---|---|
@@ -209,6 +209,12 @@ cd pi-companion-exp
 **Path:** `pi-desktop-app/` · **Stack:** Tauri v2, React, TypeScript, Vite
 
 Desktop client with native OS integration via Tauri. Shares API client and components with pi-webby.
+
+**Component sync discipline:** Webby and Desktop intentionally share most UI component sources. When you change a shared component or UI primitive (composer, sidebar-tree, session-workspace, session-inspector, create-session-dialog, server-connections-dialog, worker-management-dialog, machine-session-list, changed-files-list, capacity-control, theme-provider, and the `components/ui/*` shadcn primitives), propagate the change to the other app in the same session. Copy the file and reapply the small, intentional desktop-only differences rather than keeping the two copies diverging. Desktop-only exceptions that must be preserved on sync:
+- `session-workspace.tsx` — the `useSessionNotifications` import and call (OS notifications on `working → idle`).
+- `workspace-shell.tsx` — the `FirstServerOnboarding` (explicit first-server setup; no auto-localhost).
+- `server-connections-dialog.tsx` — device wording ("on this device", "local app storage", "other software running as your user") plus the invalid-URL hint.
+The root `sync-components.ps1` / `sync-components.sh` cover shared `components/ui` primitives only; app-level components must be copied or merged manually while preserving the exceptions above.
 
 ```bash
 cd pi-desktop-app

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { ArrowUp, Folder, LoaderCircle, Monitor, SlidersHorizontal, Sparkles } from "lucide-react"
+import { ArrowUp, BrainCircuit, Folder, LoaderCircle, Monitor, SlidersHorizontal, Sparkles } from "lucide-react"
 
 import { useAvailableModels, useCreateSession, useDirectoryRoots, usePiServerClient, useWorkers } from "@/api/hooks"
 import { Button } from "@/components/ui/button"
@@ -7,6 +7,18 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+
+const THINKING_LEVELS = [
+  { value: "__default", label: "Default effort" },
+  { value: "off", label: "Off" },
+  { value: "minimal", label: "Minimal" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "max", label: "Maximum" },
+  { value: "xhigh", label: "Extra high" },
+  { value: "ultra", label: "Ultra" },
+] as const
 
 export function QuickSessionComposer({
   onCreated,
@@ -23,6 +35,7 @@ export function QuickSessionComposer({
   const [cwd, setCwd] = useState("")
   const [provider, setProvider] = useState("")
   const [modelId, setModelId] = useState("")
+  const [thinkingLevel, setThinkingLevel] = useState("__default")
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const createSession = useCreateSession()
   const client = usePiServerClient()
@@ -62,6 +75,9 @@ export function QuickSessionComposer({
         if (provider && modelId) {
           await client.sessionPost(session.id, "model", { provider, modelId })
         }
+        if (thinkingLevel !== "__default") {
+          await client.sessionPost(session.id, "thinking-level", { level: thinkingLevel })
+        }
         await client.prompt(session.id, { message })
       } catch (cause) {
         setDraftSessionId(session.id)
@@ -85,7 +101,7 @@ export function QuickSessionComposer({
     <div className="w-full max-w-4xl">
       <form
         onSubmit={submit}
-        className="overflow-hidden rounded-2xl border border-border bg-card transition-colors focus-within:border-foreground/20"
+        className="overflow-hidden rounded-[20px] border border-border/80 bg-card shadow-[0_18px_60px_-36px_rgba(0,0,0,0.75)] ring-1 ring-foreground/[0.025] transition-[border-color,box-shadow] focus-within:border-foreground/30 focus-within:shadow-[0_22px_70px_-38px_rgba(0,0,0,0.9)]"
       >
         <Textarea
           autoFocus
@@ -99,9 +115,9 @@ export function QuickSessionComposer({
           }}
           placeholder="Do anything..."
           aria-label="First message for the new session"
-          className="min-h-14 resize-none border-0 bg-transparent px-4 pt-4 pb-1 text-sm shadow-none focus-visible:ring-0"
+          className="min-h-20 resize-none rounded-none border-0 bg-transparent px-5 pt-5 pb-3 text-sm leading-6 shadow-none focus-visible:ring-0"
         />
-        <div className="flex items-center gap-1 overflow-x-auto px-3 pt-1 pb-2">
+        <div className="flex items-center gap-1 overflow-x-auto border-t border-border/55 bg-muted/15 px-3 py-2">
           <Popover open={modelPickerOpen} onOpenChange={setModelPickerOpen}>
             <PopoverTrigger
               render={
@@ -168,6 +184,27 @@ export function QuickSessionComposer({
               </Command>
             </PopoverContent>
           </Popover>
+          <Select value={thinkingLevel} onValueChange={(value) => setThinkingLevel(String(value))}>
+            <SelectTrigger
+              size="sm"
+              className="max-w-44 shrink-0 border-transparent bg-transparent px-2 text-muted-foreground shadow-none hover:bg-muted"
+              aria-label="Thinking effort"
+              title="Thinking effort"
+            >
+              <BrainCircuit />
+              <span className="truncate text-foreground">
+                {THINKING_LEVELS.find((level) => level.value === thinkingLevel)?.label ?? "Default effort"}
+              </span>
+            </SelectTrigger>
+            <SelectContent side="bottom" align="start" alignItemWithTrigger={false}>
+              <SelectGroup>
+                <SelectLabel>Thinking / effort</SelectLabel>
+                {THINKING_LEVELS.map((level) => (
+                  <SelectItem key={level.value} value={level.value}>{level.label}</SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
           <div className="min-w-2 flex-1" />
           <span className="hidden shrink-0 px-2 text-[11px] text-muted-foreground sm:inline">Ctrl/⌘ + Enter</span>
           <Button
@@ -214,6 +251,7 @@ export function QuickSessionComposer({
             setCwd("")
             setProvider("")
             setModelId("")
+            setThinkingLevel("__default")
             setDraftSessionId(undefined)
           }}
         >
