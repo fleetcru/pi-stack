@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,12 +16,27 @@ import (
 
 type eventJournal struct {
 	mu           sync.Mutex
+	cond         *sync.Cond
 	file         *os.File
 	path         string
 	records      int
 	bytes        int64
 	syncInterval time.Duration
 	lastSync     time.Time
+	logger       *slog.Logger
+	// ops is the pending write queue drained by a single writer goroutine.
+	// Appends and compactions are serialized through it so the dispatch path
+	// never blocks on disk I/O, and no two goroutines touch the file.
+	ops     []journalOp
+	writer  bool
+	stopped bool
+	wg      sync.WaitGroup
+}
+
+type journalOp struct {
+	record  *EventRecord
+	compact []EventRecord
+	done    chan error
 }
 
 type persistedEventRecord struct {
@@ -29,8 +45,9 @@ type persistedEventRecord struct {
 	Event     RPCEvent  `json:"event"`
 }
 
-// syncInterval controls fsync batching. Zero preserves strict per-event durability.
-// The optional form preserves compatibility with existing callers and tests.
+// openEventJournal opens (or creates) the append-only journal for a session.
+// syncInterval controls fsync batching. Zero preserves strict per-event
+// durability. The optional logger receives asynchronous write failures.
 func openEventJournal(dataDir, sessionID string, syncIntervals ...time.Duration) (*eventJournal, []EventRecord, uint64, error) {
 	var syncInterval time.Duration
 	if len(syncIntervals) > 0 {
@@ -61,7 +78,9 @@ func openEventJournal(dataDir, sessionID string, syncIntervals ...time.Duration)
 		_ = file.Close()
 		return nil, nil, 0, err
 	}
-	return &eventJournal{file: file, path: path, records: len(records), bytes: info.Size(), syncInterval: syncInterval}, records, lastID, nil
+	j := &eventJournal{file: file, path: path, records: len(records), bytes: info.Size(), syncInterval: syncInterval}
+	j.cond = sync.NewCond(&j.mu)
+	return j, records, lastID, nil
 }
 
 func safeEventJournalName(sessionID string) string {
@@ -121,13 +140,107 @@ func readEventJournal(path string) ([]EventRecord, uint64, error) {
 	return records, lastID, nil
 }
 
+// append queues a record for the writer goroutine and returns immediately.
+// Disk failures are reported through the journal logger, not the caller.
 func (j *eventJournal) append(record EventRecord) error {
 	if j == nil {
 		return nil
 	}
 	j.mu.Lock()
-	defer j.mu.Unlock()
-	if j.file == nil {
+	if j.stopped {
+		j.mu.Unlock()
+		return nil
+	}
+	j.enqueueLocked(journalOp{record: &record})
+	j.mu.Unlock()
+	return nil
+}
+
+// requestCompact schedules a journal rewrite without waiting. The dispatch
+// path uses this so a multi-second compaction never stalls event processing.
+func (j *eventJournal) requestCompact(records []EventRecord) {
+	if j == nil {
+		return
+	}
+	j.mu.Lock()
+	if j.stopped {
+		j.mu.Unlock()
+		return
+	}
+	j.enqueueLocked(journalOp{compact: records})
+	j.mu.Unlock()
+}
+
+// compact schedules a rewrite and waits for it. Startup and tests use this.
+func (j *eventJournal) compact(records []EventRecord) error {
+	if j == nil {
+		return nil
+	}
+	done := make(chan error, 1)
+	j.mu.Lock()
+	if j.stopped {
+		j.mu.Unlock()
+		return nil
+	}
+	j.enqueueLocked(journalOp{compact: records, done: done})
+	j.mu.Unlock()
+	return <-done
+}
+
+// enqueueLocked starts the writer on first use and wakes it. Caller holds mu.
+func (j *eventJournal) enqueueLocked(op journalOp) {
+	j.ops = append(j.ops, op)
+	if !j.writer {
+		j.writer = true
+		j.wg.Add(1)
+		go j.writerLoop()
+	}
+	j.cond.Signal()
+}
+
+// writerLoop is the only goroutine that touches the journal file.
+func (j *eventJournal) writerLoop() {
+	defer j.wg.Done()
+	for {
+		j.mu.Lock()
+		for len(j.ops) == 0 && !j.stopped {
+			j.cond.Wait()
+		}
+		if len(j.ops) == 0 && j.stopped {
+			file := j.file
+			j.file = nil
+			j.writer = false
+			j.mu.Unlock()
+			if file != nil {
+				_ = file.Sync()
+				_ = file.Close()
+			}
+			return
+		}
+		op := j.ops[0]
+		j.ops = j.ops[1:]
+		file := j.file
+		j.mu.Unlock()
+
+		var err error
+		switch {
+		case op.record != nil:
+			err = j.writeRecord(file, *op.record)
+		case op.compact != nil:
+			err = j.rewrite(file, op.compact)
+		}
+		if op.done != nil {
+			op.done <- err
+			close(op.done)
+		} else if err != nil && j.logger != nil {
+			j.logger.Warn("event journal write failed", "path", j.path, "error", err)
+		}
+	}
+}
+
+// writeRecord marshals and appends one record. Runs on the writer goroutine.
+func (j *eventJournal) writeRecord(file *os.File, record EventRecord) error {
+	if file == nil {
 		return nil
 	}
 	data, err := json.Marshal(persistedEventRecord{
@@ -137,23 +250,30 @@ func (j *eventJournal) append(record EventRecord) error {
 		return err
 	}
 	data = append(data, '\n')
-	if _, err := j.file.Write(data); err != nil {
+	if _, err := file.Write(data); err != nil {
 		if errors.Is(err, os.ErrClosed) {
+			j.mu.Lock()
 			j.file = nil
+			j.mu.Unlock()
 			return nil
 		}
 		return err
 	}
-	// Strict mode fsyncs every event. A positive interval safely batches fsyncs
-	// while preserving ordered append; close and compaction always force a sync.
-	if j.syncInterval <= 0 || j.lastSync.IsZero() || time.Since(j.lastSync) >= j.syncInterval {
-		if err := j.file.Sync(); err != nil {
-			return err
-		}
-		j.lastSync = time.Now()
-	}
+	j.mu.Lock()
+	syncInterval, lastSync := j.syncInterval, j.lastSync
 	j.records++
 	j.bytes += int64(len(data))
+	j.mu.Unlock()
+	// Strict mode fsyncs every event. A positive interval safely batches fsyncs
+	// while preserving ordered append; close and compaction always force a sync.
+	if syncInterval <= 0 || lastSync.IsZero() || time.Since(lastSync) >= syncInterval {
+		if err := file.Sync(); err != nil {
+			return err
+		}
+		j.mu.Lock()
+		j.lastSync = time.Now()
+		j.mu.Unlock()
+	}
 	return nil
 }
 
@@ -166,30 +286,39 @@ func (j *eventJournal) shouldCompact(maxRecords, maxBytes int) bool {
 	return (maxRecords > 0 && j.records > maxRecords*2) || (maxBytes > 0 && j.bytes > int64(maxBytes)*2)
 }
 
+// close stops the writer after draining every queued operation.
 func (j *eventJournal) close() error {
 	if j == nil {
 		return nil
 	}
 	j.mu.Lock()
-	defer j.mu.Unlock()
-	if j.file == nil {
+	j.stopped = true
+	j.cond.Broadcast()
+	started := j.writer
+	j.mu.Unlock()
+	if started {
+		j.wg.Wait()
 		return nil
 	}
-	if err := j.file.Sync(); err != nil {
+	// No writer was ever started (no appends); close directly.
+	j.mu.Lock()
+	file := j.file
+	j.file = nil
+	j.mu.Unlock()
+	if file == nil {
+		return nil
+	}
+	if err := file.Sync(); err != nil {
 		return err
 	}
-	err := j.file.Close()
-	j.file = nil
-	return err
+	return file.Close()
 }
 
-func (j *eventJournal) compact(records []EventRecord) error {
-	if j == nil {
-		return nil
-	}
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if j.file == nil {
+// rewrite atomically replaces the journal with the given records. Runs on the
+// writer goroutine, so appends queued after the snapshot land in the new file
+// in their original order once the swap completes.
+func (j *eventJournal) rewrite(file *os.File, records []EventRecord) error {
+	if file == nil {
 		return nil
 	}
 	temp, err := os.CreateTemp(filepath.Dir(j.path), ".events-*.tmp")
@@ -222,23 +351,31 @@ func (j *eventJournal) compact(records []EventRecord) error {
 		_ = os.Remove(tempName)
 		return err
 	}
-	if err := j.file.Close(); err != nil {
+	if err := file.Close(); err != nil {
 		_ = os.Remove(tempName)
 		return err
 	}
 	if err := os.Rename(tempName, j.path); err != nil {
 		return fmt.Errorf("replace event journal: %w", err)
 	}
-	file, err := os.OpenFile(j.path, os.O_APPEND|os.O_WRONLY, 0o640)
+	newFile, err := os.OpenFile(j.path, os.O_APPEND|os.O_WRONLY, 0o640)
 	if err != nil {
+		// The journal file is gone; disable further writes but keep running.
+		j.mu.Lock()
+		j.file = nil
+		j.mu.Unlock()
 		return err
 	}
-	j.file = file
+	j.mu.Lock()
+	j.file = newFile
 	j.records = len(records)
 	j.bytes = 0
 	j.lastSync = time.Now()
-	if info, statErr := file.Stat(); statErr == nil {
+	j.mu.Unlock()
+	if info, statErr := newFile.Stat(); statErr == nil {
+		j.mu.Lock()
 		j.bytes = info.Size()
+		j.mu.Unlock()
 	}
 	return nil
 }

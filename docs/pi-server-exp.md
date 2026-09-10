@@ -54,7 +54,7 @@ Go 1.23 HTTP/WebSocket daemon. Spawns Pi CLI processes, speaks strict LF-delimit
 
 ## Event journaling
 
-- `event_journal.go` — append-only per-session event journal on disk. It restores the ring buffer after restart and batches fsync calls on a 100 ms interval by default. Set `PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL=0` for strict per-event durability.
+- `event_journal.go` — append-only per-session event journal on disk. It restores the ring buffer after restart and batches fsync calls on a 100 ms interval by default (set `PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL=0` for strict per-event durability). All writes go through a single writer goroutine fed by a queue: `append` and `requestCompact` enqueue without blocking the dispatch path, so a multi-second compaction never stalls streamed events, and appends queued during a rewrite land in the new file in order. `close` drains the queue before exiting.
 - `daemon_handlers.go` — daemon status endpoint and cross-session event history queries.
 
 ## WebSocket transports

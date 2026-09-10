@@ -98,6 +98,10 @@ func NewPiProcess(spec SessionSpec, cfg Config, logger *slog.Logger) *PiProcess 
 		logger.Warn("durable event journal unavailable", "session", spec.ID, "error", err)
 	}
 	p := &PiProcess{id: spec.ID, cfg: cfg, spec: spec, logger: logger.With("session", spec.ID, "cwd", spec.CWD), waiters: map[string]responseWaiter{}, subs: map[chan RPCEvent]struct{}{}, eventMax: eventMax, eventMaxBytes: eventMaxBytes, journal: journal, events: restored, eventSeq: lastID, runtimeState: "created", taskID: spec.ID, runID: newRequestID()}
+	if journal != nil {
+		// Async write failures are logged from the journal's writer goroutine.
+		journal.logger = p.logger
+	}
 	for _, record := range p.events {
 		p.eventBytes += record.size
 	}
@@ -604,9 +608,10 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 	maxBytes := p.eventMaxBytes
 	p.mu.Unlock()
 
-	// Encoding and disk writes are deliberately outside p.mu. dispatchMu keeps
-	// records ordered while SubscribeSince can still take p.mu; a subscriber
-	// created here is included in the fan-out captured below.
+	// Encoding is deliberately outside p.mu. dispatchMu keeps records ordered
+	// while SubscribeSince can still take p.mu; a subscriber created here is
+	// included in the fan-out captured below. Journal writes are queued to its
+	// single writer goroutine and never block the event path.
 	retain := false
 	if encoded, err := json.Marshal(record.Event); err != nil {
 		p.logger.Warn("not retaining event that cannot be encoded", "error", err)
@@ -614,9 +619,7 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 		record.size = len(encoded)
 		retain = true
 		if journal != nil {
-			if err := journal.append(record); err != nil {
-				p.logger.Warn("failed to persist daemon event", "error", err)
-			}
+			journal.append(record)
 		}
 	} else {
 		p.logger.Warn("not retaining oversized event", "bytes", len(encoded), "limit", maxBytes)
@@ -643,9 +646,9 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 	}
 	p.mu.Unlock()
 	if compactRecords != nil {
-		if err := journal.compact(compactRecords); err != nil {
-			p.logger.Warn("failed to compact event journal", "error", err)
-		}
+		// Asynchronous by design: the writer goroutine rewrites the journal
+		// while this loop keeps processing events.
+		journal.requestCompact(compactRecords)
 	}
 	p.dispatchMu.Unlock()
 	for _, ch := range subs {
