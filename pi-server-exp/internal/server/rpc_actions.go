@@ -74,7 +74,7 @@ func (s *Server) handleConvenienceCommand(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) admitLocalRun(ctx context.Context, p *PiProcess) bool {
-	if !s.admission.Acquire(ctx, p.id, "local") {
+	if _, ok := s.admission.AcquireRun(ctx, p.id, "local"); !ok {
 		return false
 	}
 	if p.holdAdmission(func() { s.admission.Release(p.id, "local") }) {

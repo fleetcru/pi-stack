@@ -57,7 +57,11 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	if scope == "" {
 		scope = "local"
 	}
-	includeState := r.URL.Query().Get("include") == "state"
+	include := r.URL.Query().Get("include")
+	includeState := include == "state"
+	// include=runtime returns live status from in-memory server state only. It
+	// never issues get_state to a Pi process and never contacts workers.
+	includeRuntime := include == "runtime"
 	limit := positiveQueryInt(r, "limit", 0, 200)
 
 	if scope == "local" {
@@ -205,6 +209,32 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 			} else {
 				sum.State = map[string]any{"running": false}
 			}
+		} else if includeRuntime {
+			if spec.Transport == "relay" {
+				snap := s.external.stateSnapshot(spec.ID)
+				if snap == nil {
+					// Relay spec from a previous run with no live bridge — skip it.
+					continue
+				}
+				if status, _ := snap["status"].(string); status != "" {
+					sum.Status = status
+				}
+			} else if p, ok := s.sessions.Get(spec.ID); ok {
+				// In-memory only: Status() never issues get_state.
+				ps := p.Status()
+				running, _ := ps["running"].(bool)
+				rt, _ := ps["runtimeStatus"].(map[string]any)
+				state := map[string]any{"running": running}
+				if rt != nil {
+					state["runtimeStatus"] = rt
+					if rs, _ := rt["state"].(string); rs != "" {
+						sum.Status = rs
+					}
+				}
+				sum.State = state
+			} else {
+				sum.State = map[string]any{"running": false}
+			}
 		}
 		summaries = append(summaries, sum)
 	}
@@ -221,39 +251,55 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	for i, rec := range remotes {
 		byWorker[rec.WorkerID] = append(byWorker[rec.WorkerID], i)
 	}
-	var wg sync.WaitGroup
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	for workerID, indexes := range byWorker {
-		worker, ok := s.workers.Get(workerID)
-		if !ok {
-			for _, i := range indexes {
-				rec := remotes[i]
-				results[i] = remoteResult{summary: remoteSummaryStub(rec), fail: &partialFailure{WorkerID: rec.WorkerID, SessionID: rec.ID, Error: "mapped worker no longer exists", Code: CodeWorkerNotFound}}
+	// Runtime mode never contacts workers: report hub-side knowledge only.
+	if includeRuntime {
+		for i, rec := range remotes {
+			sum := remoteSummaryStub(rec)
+			if snap := s.external.stateSnapshot(rec.ID); snap != nil {
+				if status, _ := snap["status"].(string); status != "" {
+					sum.Status = status
+				}
 			}
-			continue
+			if s.distributedRunActive(rec.ID) {
+				sum.State = map[string]any{"running": true}
+			}
+			results[i] = remoteResult{summary: sum}
 		}
-		wg.Add(1)
-		go func(worker Worker, indexes []int) {
-			defer wg.Done()
-			details, err := s.fetchRemoteWorkerSessionSummaries(ctx, worker)
-			for _, i := range indexes {
-				rec := remotes[i]
-				sum := remoteSummaryStub(rec)
-				if err != nil {
-					results[i] = remoteResult{summary: sum, fail: &partialFailure{WorkerID: rec.WorkerID, SessionID: rec.ID, Error: "failed to load remote session summary", Code: CodeBadGateway}}
-					continue
+	} else {
+		var wg sync.WaitGroup
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		for workerID, indexes := range byWorker {
+			worker, ok := s.workers.Get(workerID)
+			if !ok {
+				for _, i := range indexes {
+					rec := remotes[i]
+					results[i] = remoteResult{summary: remoteSummaryStub(rec), fail: &partialFailure{WorkerID: rec.WorkerID, SessionID: rec.ID, Error: "mapped worker no longer exists", Code: CodeWorkerNotFound}}
 				}
-				if detail, ok := details[rec.WorkerSessionID]; ok {
-					sum = mergeRemoteSummary(sum, detail, includeState)
-				} else {
-					sum.Status = "missing"
-				}
-				results[i] = remoteResult{summary: sum}
+				continue
 			}
-		}(worker, indexes)
+			wg.Add(1)
+			go func(worker Worker, indexes []int) {
+				defer wg.Done()
+				details, err := s.fetchRemoteWorkerSessionSummaries(ctx, worker)
+				for _, i := range indexes {
+					rec := remotes[i]
+					sum := remoteSummaryStub(rec)
+					if err != nil {
+						results[i] = remoteResult{summary: sum, fail: &partialFailure{WorkerID: rec.WorkerID, SessionID: rec.ID, Error: "failed to load remote session summary", Code: CodeBadGateway}}
+						continue
+					}
+					if detail, ok := details[rec.WorkerSessionID]; ok {
+						sum = mergeRemoteSummary(sum, detail, includeState)
+					} else {
+						sum.Status = "missing"
+					}
+					results[i] = remoteResult{summary: sum}
+				}
+			}(worker, indexes)
+		}
+		wg.Wait()
 	}
-	wg.Wait()
 	for _, res := range results {
 		summaries = append(summaries, res.summary)
 		if res.fail != nil {

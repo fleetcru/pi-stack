@@ -69,6 +69,11 @@ type PiProcess struct {
 	// onMessageEnd is called when a message_end event is dispatched.
 	// Used to invalidate the history cache so REST requests return fresh data.
 	onMessageEnd func()
+	// onRuntimeState reports runtime transitions to the server-wide status hub.
+	onRuntimeState func(state, reason, detail, runID string)
+	// turnActive enforces one agent turn per PiProcess at a time. Steer and
+	// follow-up commands remain allowed while a turn is active.
+	turnActive bool
 	// onAgentSettled releases scheduler admission exactly once after a run.
 	onAgentSettled func()
 	admissionHeld  bool
@@ -185,8 +190,18 @@ func (p *PiProcess) Request(ctx context.Context, command RPCCommand) (RPCEvent, 
 		p.mu.Unlock()
 		return nil, errors.New("pi process not running")
 	}
+	if command["type"] == "prompt" {
+		if p.turnActive {
+			p.mu.Unlock()
+			return nil, errors.New("a turn is already active in this session")
+		}
+		p.turnActive = true
+	}
 	p.waiters[id] = waiter
 	_, err = p.stdin.Write(append(b, '\n'))
+	if err != nil && command["type"] == "prompt" {
+		p.turnActive = false
+	}
 	p.mu.Unlock()
 	if err != nil {
 		p.removeWaiter(id)
@@ -224,6 +239,16 @@ func (p *PiProcess) Send(command RPCCommand) error {
 		p.mu.Unlock()
 		return errors.New("pi process closed")
 	}
+	// Never allow parallel turns in one PiProcess: a second prompt while a
+	// turn is active would corrupt turn-scoped admission and run tracking.
+	// Steer and follow-up remain allowed because they join the active turn.
+	if command["type"] == "prompt" {
+		if p.turnActive {
+			p.mu.Unlock()
+			return errors.New("a turn is already active in this session")
+		}
+		p.turnActive = true
+	}
 	requestID, _ := command["id"].(string)
 	isUIResponse := command["type"] == "extension_ui_response"
 	if isUIResponse {
@@ -240,6 +265,9 @@ func (p *PiProcess) Send(command RPCCommand) error {
 	_, err = p.stdin.Write(append(b, '\n'))
 	if err == nil && isUIResponse {
 		p.pendingUIRequest = nil
+	}
+	if err != nil && command["type"] == "prompt" {
+		p.turnActive = false
 	}
 	p.mu.Unlock()
 	if err == nil && isUIResponse {
@@ -493,6 +521,15 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 			}
 		}
 	}
+	if ev["type"] == "runtime_state" {
+		// Process lifecycle transitions (Start/wait) bypass the stateChanged
+		// branch below because setRuntimeLocked already ran; report them here.
+		state, _ := ev["runtimeState"].(string)
+		reason, _ := ev["runtimeReason"].(string)
+		detail, _ := ev["runtimeDetail"].(string)
+		runID, _ := ev["_daemonRunId"].(string)
+		p.notifyRuntimeState(state, reason, detail, runID)
+	}
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
@@ -574,6 +611,9 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 		rtSince := p.runtimeSince
 		rtError := p.runtimeError
 		p.mu.RUnlock()
+		if hook := p.onRuntimeState; hook != nil {
+			hook(rtState, rtReason, rtDetail, p.runID)
+		}
 		rtEvent := RPCEvent{
 			"type":          "runtime_state",
 			"runtimeState":  rtState,
@@ -631,6 +671,14 @@ func (p *PiProcess) dispatchRuntimeState(ev RPCEvent) {
 			atomic.AddUint64(&p.droppedEvents, 1)
 			p.logger.Warn("dropping runtime state event for slow subscriber")
 		}
+	}
+}
+
+// notifyRuntimeState reports a transition to the status hub. Called without
+// p.mu held so hub fan-out never runs under the process lock.
+func (p *PiProcess) notifyRuntimeState(state, reason, detail, runID string) {
+	if hook := p.onRuntimeState; hook != nil {
+		hook(state, reason, detail, runID)
 	}
 }
 
@@ -716,6 +764,7 @@ func (p *PiProcess) holdAdmission(release func()) bool {
 
 func (p *PiProcess) releaseAdmission() {
 	p.mu.Lock()
+	p.turnActive = false
 	if !p.admissionHeld {
 		p.mu.Unlock()
 		return

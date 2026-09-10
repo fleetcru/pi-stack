@@ -56,6 +56,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := NewPiProcess(spec, s.cfg, s.logger)
+	s.wirePiProcess(p)
 	p.onMessageEnd = func() {
 		s.invalidateHistoryCache(spec.ID)
 		s.linkManagedSession(spec)
@@ -311,6 +312,7 @@ func (s *Server) getSession(id string) (*PiProcess, bool) {
 		return nil, false
 	}
 	p := NewPiProcess(spec, s.cfg, s.logger)
+	s.wirePiProcess(p)
 	p.onMessageEnd = func() {
 		s.invalidateHistoryCache(id)
 		s.linkManagedSession(spec)

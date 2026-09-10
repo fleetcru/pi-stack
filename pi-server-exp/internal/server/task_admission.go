@@ -2,8 +2,34 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"time"
 )
+
+// AdmissionRun is an observable queued or active run record.
+type AdmissionRun struct {
+	RunID     string    `json:"runId"`
+	SessionID string    `json:"sessionId"`
+	WorkerID  string    `json:"workerId"`
+	Phase     string    `json:"phase"`
+	Position  int       `json:"position,omitempty"`
+	QueuedAt  time.Time `json:"queuedAt"`
+}
+
+type admissionRunRecord struct {
+	sessionID string
+	workerID  string
+	queuedAt  time.Time
+}
+
+type admissionWaiter struct {
+	sessionID string
+	workerID  string
+	runID     string
+	queuedAt  time.Time
+	granted   chan struct{}
+}
 
 // TaskAdmission tracks active runs and grants queued work deterministically.
 type TaskAdmission struct {
@@ -16,12 +42,8 @@ type TaskAdmission struct {
 	workers    map[string]int
 	maxQueued  int
 	waiters    []*admissionWaiter
-}
-
-type admissionWaiter struct {
-	sessionID string
-	workerID  string
-	granted   chan struct{}
+	activeRuns map[string]admissionRunRecord
+	runSeq     uint64
 }
 
 func NewTaskAdmission(globalMax, perSession, perWorker int) *TaskAdmission {
@@ -29,7 +51,13 @@ func NewTaskAdmission(globalMax, perSession, perWorker int) *TaskAdmission {
 }
 
 func NewTaskAdmissionWithQueue(globalMax, perSession, perWorker, maxQueued int) *TaskAdmission {
-	return &TaskAdmission{globalMax: globalMax, perSession: perSession, perWorker: perWorker, maxQueued: maxQueued, sessions: map[string]int{}, workers: map[string]int{}}
+	return &TaskAdmission{globalMax: globalMax, perSession: perSession, perWorker: perWorker, maxQueued: maxQueued, sessions: map[string]int{}, workers: map[string]int{}, activeRuns: map[string]admissionRunRecord{}}
+}
+
+// newRunIDLocked allocates an observable run identifier. Caller holds mu.
+func (a *TaskAdmission) newRunIDLocked() string {
+	a.runSeq++
+	return fmt.Sprintf("run-%d", a.runSeq)
 }
 
 func (a *TaskAdmission) canAcquireLocked(sessionID, workerID string) bool {
@@ -38,10 +66,13 @@ func (a *TaskAdmission) canAcquireLocked(sessionID, workerID string) bool {
 		(a.perWorker <= 0 || a.workers[workerID] < a.perWorker)
 }
 
-func (a *TaskAdmission) acquireLocked(sessionID, workerID string) {
+func (a *TaskAdmission) acquireLocked(sessionID, workerID, runID string) {
 	a.active++
 	a.sessions[sessionID]++
 	a.workers[workerID]++
+	if runID != "" {
+		a.activeRuns[runID] = admissionRunRecord{sessionID: sessionID, workerID: workerID, queuedAt: time.Now().UTC()}
+	}
 }
 
 func (a *TaskAdmission) TryAcquire(sessionID, workerID string) bool {
@@ -51,32 +82,32 @@ func (a *TaskAdmission) TryAcquire(sessionID, workerID string) bool {
 	if len(a.waiters) > 0 || !a.canAcquireLocked(sessionID, workerID) {
 		return false
 	}
-	a.acquireLocked(sessionID, workerID)
+	a.acquireLocked(sessionID, workerID, a.newRunIDLocked())
 	return true
 }
 
-// Acquire waits in a bounded FIFO queue. When the oldest waiter is blocked by
-// a session/worker limit, the oldest eligible waiter may proceed so unrelated
-// capacity does not sit idle.
-func (a *TaskAdmission) Acquire(ctx context.Context, sessionID, workerID string) bool {
+// AcquireRun behaves like Acquire but also records the run under a caller
+// observable run ID so queued work can be listed and cancelled.
+func (a *TaskAdmission) AcquireRun(ctx context.Context, sessionID, workerID string) (string, bool) {
 	a.mu.Lock()
+	runID := a.newRunIDLocked()
 	if len(a.waiters) == 0 && a.canAcquireLocked(sessionID, workerID) {
-		a.acquireLocked(sessionID, workerID)
+		a.acquireLocked(sessionID, workerID, runID)
 		a.mu.Unlock()
-		return true
+		return runID, true
 	}
 	if a.maxQueued <= 0 || len(a.waiters) >= a.maxQueued {
 		a.mu.Unlock()
-		return false
+		return "", false
 	}
-	waiter := &admissionWaiter{sessionID: sessionID, workerID: workerID, granted: make(chan struct{})}
+	waiter := &admissionWaiter{sessionID: sessionID, workerID: workerID, runID: runID, queuedAt: time.Now().UTC(), granted: make(chan struct{})}
 	a.waiters = append(a.waiters, waiter)
 	a.dispatchWaitersLocked()
 	a.mu.Unlock()
 
 	select {
 	case <-waiter.granted:
-		return true
+		return runID, true
 	case <-ctx.Done():
 		a.mu.Lock()
 		for i, candidate := range a.waiters {
@@ -84,15 +115,23 @@ func (a *TaskAdmission) Acquire(ctx context.Context, sessionID, workerID string)
 				a.waiters = append(a.waiters[:i], a.waiters[i+1:]...)
 				a.dispatchWaitersLocked()
 				a.mu.Unlock()
-				return false
+				return "", false
 			}
 		}
 		// A grant raced with cancellation; consume it and return the capacity.
 		a.releaseLocked(sessionID, workerID)
 		a.dispatchWaitersLocked()
 		a.mu.Unlock()
-		return false
+		return "", false
 	}
+}
+
+// Acquire waits in a bounded FIFO queue. When the oldest waiter is blocked by
+// a session/worker limit, the oldest eligible waiter may proceed so unrelated
+// capacity does not sit idle.
+func (a *TaskAdmission) Acquire(ctx context.Context, sessionID, workerID string) bool {
+	_, ok := a.AcquireRun(ctx, sessionID, workerID)
+	return ok
 }
 
 func (a *TaskAdmission) dispatchWaitersLocked() {
@@ -109,7 +148,7 @@ func (a *TaskAdmission) dispatchWaitersLocked() {
 		}
 		waiter := a.waiters[granted]
 		a.waiters = append(a.waiters[:granted], a.waiters[granted+1:]...)
-		a.acquireLocked(waiter.sessionID, waiter.workerID)
+		a.acquireLocked(waiter.sessionID, waiter.workerID, waiter.runID)
 		close(waiter.granted)
 	}
 }
@@ -124,6 +163,12 @@ func (a *TaskAdmission) releaseLocked(sessionID, workerID string) bool {
 	}
 	if a.workers[workerID]--; a.workers[workerID] == 0 {
 		delete(a.workers, workerID)
+	}
+	for runID, record := range a.activeRuns {
+		if record.sessionID == sessionID && record.workerID == workerID {
+			delete(a.activeRuns, runID)
+			break
+		}
 	}
 	return true
 }
@@ -173,3 +218,41 @@ func (a *TaskAdmission) Snapshot() TaskAdmissionSnapshot {
 
 func (a *TaskAdmission) Active() int { return a.Snapshot().Active }
 func (a *TaskAdmission) Queued() int { return a.Snapshot().Queued }
+
+// DetailedRuns lists active and queued runs. Queued runs carry a 1-based
+// position in admission order; active runs report phase "active".
+func (a *TaskAdmission) DetailedRuns() []AdmissionRun {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	runs := make([]AdmissionRun, 0, len(a.activeRuns)+len(a.waiters))
+	for runID, record := range a.activeRuns {
+		runs = append(runs, AdmissionRun{RunID: runID, SessionID: record.sessionID, WorkerID: record.workerID, Phase: "active", QueuedAt: record.queuedAt})
+	}
+	for position, waiter := range a.waiters {
+		runs = append(runs, AdmissionRun{RunID: waiter.runID, SessionID: waiter.sessionID, WorkerID: waiter.workerID, Phase: "queued", Position: position + 1, QueuedAt: waiter.queuedAt})
+	}
+	return runs
+}
+
+// CancelQueued removes a queued waiter. Active runs cannot be cancelled here;
+// the caller aborts the target session instead.
+func (a *TaskAdmission) CancelQueued(runID string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for i, waiter := range a.waiters {
+		if waiter.runID == runID {
+			a.waiters = append(a.waiters[:i], a.waiters[i+1:]...)
+			a.dispatchWaitersLocked()
+			return true
+		}
+	}
+	return false
+}
+
+// ActiveRunTarget resolves the session and worker an active run occupies.
+func (a *TaskAdmission) ActiveRunTarget(runID string) (sessionID, workerID string, ok bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	record, found := a.activeRuns[runID]
+	return record.sessionID, record.workerID, found
+}

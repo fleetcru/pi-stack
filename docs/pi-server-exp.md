@@ -48,7 +48,7 @@ Go 1.23 HTTP/WebSocket daemon. Spawns Pi CLI processes, speaks strict LF-delimit
 
 ## Admission and scheduling
 
-- `task_admission.go` — hub-wide run admission: global max, per-session, and per-worker active-run limits with a bounded wait queue (`PI_SERVER_MAX_QUEUED_RUNS`).
+- `task_admission.go` — hub-wide run admission: global max, per-session, and per-worker active-run limits with a bounded wait queue (`PI_SERVER_MAX_QUEUED_RUNS`). Every grant is recorded as an observable run (`AdmissionRun`: runId, sessionId, workerId, phase `queued`/`active`, 1-based queue position, queuedAt) via `DetailedRuns()`, surfaced by `GET /v1/scheduler`. `POST /v1/runs/{runId}/cancel` removes queued work or aborts the locally managed active target session (active remote/relay runs return a conflict because only the owning runtime can abort them). A `turnActive` guard on `PiProcess.Send`/`Request` makes parallel turns in one Pi process impossible; steer/follow-up still join the active turn.
 - `task_scheduler.go` — priority queue of waiting runs; higher priority dequeues first.
 - `distributed_admission.go` — the same accounting for remote/relay runs: leases, per-session run tracking, and cleanup channels.
 - `distributed_persistence.go` — persists active distributed runs to disk so a server restart can re-subscribe to still-running remote work instead of losing them.
@@ -101,7 +101,13 @@ The `external-session-bridge.ts` extension in a user's Pi TUI connects back to t
 - `admin.go` / `admin_config.go` — runtime-adjustable admin settings (capacity limits, durations) that overlay the env config. `applyRuntimeSettings` hot-applies the safe subset, and a 2-second poller on `admin-config.json` re-applies it live when the file changes. `PersistAdminConfig` rewrites the effective configuration back to disk after CLI parsing so a stale persisted `addr` cannot pin a previous listen address across restarts. Structural settings (addr, cwd, dataDir, piBinary, server timeouts) still require a restart. The embedded HTML dashboard and its cookie/CSRF session machinery have been removed; administration is now done through the bearer-token JSON API used by Webby and Desktop: `GET /v1/admin/state` and `PUT /v1/admin/settings`. These require the configured bootstrap bearer token when auth is enabled (`requireBearerAdmin`), are open when auth is disabled, and never accept paired-device tokens. The settings PUT returns `restartRequired` for structural changes.
 - `diagnostics.go` — aggregated health snapshot (sessions, workers, uptime, versions).
 - `command_receipts.go` — persisted receipts for delivered commands so clients can reconcile "did my prompt actually arrive" after reconnects.
-- `scheduler_handler.go` — scheduler introspection endpoint.
+- `scheduler_handler.go` — scheduler introspection endpoint (admission snapshot, detailed queued/active run records, worker list).
+
+## Live status (server-wide)
+
+- `status_hub.go` — lightweight fan-out hub for `session_status` events (`type`, `sessionId`, `workerId`, `state`, `reason`, `detail`, `runId`, `updatedAt`). Instrumentation sources: local Pi runtime transitions (`PiProcess.onRuntimeState`), relay lifecycle (`agent_start`/`agent_settled` plus relay status changes), remote/distributed run admission/release, and worker health (failed heartbeat or worker removal publishes `offline`). Identical consecutive states are suppressed; the hub keeps a bounded 512-event replay ring and a current-state snapshot.
+- `status_ws.go` — `GET /v1/status/ws`: server-wide, read-only status socket. Browser clients authenticate with a single-use ticket from `POST /v1/status-tickets`, which is scoped to the status socket only and cannot be redeemed against any session WebSocket. On connect it sends `status_snapshot` (or `status_replay` when `?since=<cursor>` is still inside the ring; a cursor older than the ring gets a snapshot with `gap: true`), then live deltas with a monotonically increasing cursor. The existing detailed per-session sockets are unchanged.
+- Session inventory: `GET /v1/sessions?include=runtime` (with `scope=all`) returns live status from in-memory server state only — it never issues `get_state` to a Pi process and never contacts workers, so it is cheap enough for polling UIs.
 
 WebSocket events are deep-cloned before they enter replay/subscriber buffers.
 This prevents nested Pi message content from being mutated while a client is

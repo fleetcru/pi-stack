@@ -47,6 +47,7 @@ func (s *Server) acquireDistributedRun(ctx context.Context, sessionID, workerID 
 	s.distributedRuns[sessionID] = reservation
 	s.distributedMu.Unlock()
 	s.persistDistributedRuns()
+	s.publishSessionStatus(sessionID, workerID, "working", "remote", "Distributed run admitted", "")
 	return true
 }
 
@@ -71,6 +72,7 @@ func (s *Server) observeDistributedRun(sessionID, workerID, kind string) {
 	s.distributedRuns[sessionID] = reservation
 	s.distributedMu.Unlock()
 	s.persistDistributedRuns()
+	s.publishSessionStatus(sessionID, workerID, "working", kind, "Distributed run observed", "")
 }
 
 func (s *Server) distributedRunDone(sessionID string) <-chan struct{} {
@@ -109,6 +111,7 @@ func (s *Server) releaseDistributedRun(sessionID string) {
 	if ok {
 		s.admission.Release(sessionID, reservation.WorkerID)
 		s.persistDistributedRuns()
+		s.publishSessionStatus(sessionID, reservation.WorkerID, "idle", "remote", "Distributed run released", "")
 	}
 }
 

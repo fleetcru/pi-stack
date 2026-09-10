@@ -51,6 +51,19 @@ func schemas() map[string]any {
 		}, "apiVersion", "capabilities"),
 		"WSTicketRequest":  obj(map[string]any{"sessionId": str()}, "sessionId"),
 		"WSTicketResponse": obj(map[string]any{"ticket": str(), "expiresAt": str(), "ws": str()}, "ticket", "expiresAt", "ws"),
+		"StatusEvent": obj(map[string]any{
+			"type":      map[string]any{"type": "string", "enum": []string{"session_status"}},
+			"sessionId": str(), "workerId": str(),
+			"state":  map[string]any{"type": "string", "description": "created|starting|idle|working|waiting_for_input|failed|stopped|reconnecting|healthy|offline"},
+			"reason": str(), "detail": str(), "runId": str(), "updatedAt": str(),
+		}, "type", "state", "updatedAt"),
+		"StatusTicketResponse": obj(map[string]any{"ticket": str(), "expiresAt": str(), "ws": str()}, "ticket", "expiresAt", "ws"),
+		"AdmissionRun": obj(map[string]any{
+			"runId": str(), "sessionId": str(), "workerId": str(),
+			"phase":    map[string]any{"type": "string", "enum": []string{"queued", "active"}},
+			"position": map[string]string{"type": "integer"}, "queuedAt": str(),
+		}, "runId", "sessionId", "workerId", "phase"),
+		"CancelRunResponse": obj(map[string]any{"runId": str(), "sessionId": str(), "workerId": str(), "result": str()}, "runId", "result"),
 		"RPCCommand":       map[string]any{"type": "object", "additionalProperties": true, "required": []string{"type"}, "properties": map[string]any{"type": map[string]string{"type": "string"}}},
 		"RPCResponse":      map[string]any{"type": "object", "additionalProperties": true},
 		"SessionSpec": obj(map[string]any{
@@ -143,6 +156,9 @@ func paths() map[string]any {
 	p["/v1/capabilities"] = map[string]any{"get": op("API capabilities", "Capabilities", "")}
 	p["/v1/models"] = map[string]any{"get": op("List models available to new sessions", "AvailableModels", "")}
 	p["/v1/ws-tickets"] = map[string]any{"post": op("Issue WebSocket ticket", "WSTicketResponse", "WSTicketRequest")}
+	p["/v1/status-tickets"] = map[string]any{"post": op("Issue single-use server-wide status ticket", "StatusTicketResponse", "")}
+	p["/v1/status/ws"] = map[string]any{"get": op("Server-wide status WebSocket (snapshot on connect, deltas, bounded replay via ?since=)", "StatusEvent", "")}
+	p["/v1/runs/{runId}/cancel"] = map[string]any{"post": op("Cancel a queued run or abort the active target session", "CancelRunResponse", "")}
 	p["/v1/rpc/commands"] = map[string]any{"get": op("List wrapper endpoints", "RPCResponse", "")}
 	p["/v1/sessions"] = map[string]any{"get": op("List sessions (scope=local|all)", "RPCResponse", ""), "post": op("Create session", "RPCResponse", "CreateSessionRequest")}
 	p["/v1/remote-sessions"] = map[string]any{"get": op("List remote session mappings", "RPCResponse", "")}

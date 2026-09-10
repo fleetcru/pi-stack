@@ -26,6 +26,7 @@ type Server struct {
 	remoteSessions    *RemoteSessionRegistry
 	external          *ExternalRegistry
 	wsTickets         *wsTicketStore
+	status            *statusHub
 	devices           *deviceRegistry
 	receipts          *commandReceiptStore
 	httpClient        *http.Client
@@ -82,6 +83,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		remoteSessions:    NewRemoteSessionRegistry(filepath.Join(cfg.DataDir, "remote-sessions.json")),
 		external:          newExternalRegistry(filepath.Join(cfg.DataDir, "relay-commands.json")),
 		wsTickets:         newWSTicketStore(),
+		status:            newStatusHub(),
 		devices:           newDeviceRegistry(filepath.Join(cfg.DataDir, "devices.json")),
 		receipts:          newCommandReceiptStore(filepath.Join(cfg.DataDir, "command-receipts.json")),
 		httpClient:        &http.Client{Timeout: cfg.RequestTimeout, Transport: &http.Transport{MaxIdleConns: 64, MaxIdleConnsPerHost: 16, MaxConnsPerHost: 32, IdleConnTimeout: 90 * time.Second}},
@@ -115,11 +117,16 @@ func New(cfg Config, logger *slog.Logger) *Server {
 	s.external.onLifecycle = func(sessionID, eventType string) {
 		if eventType == "agent_start" {
 			s.observeDistributedRun(sessionID, "relay:"+sessionID, "relay")
+			s.publishSessionStatus(sessionID, "relay", "working", "relay", "Relay turn started", "")
 		} else if eventType == "agent_settled" {
 			// agent_end may be followed by automatic retry, compaction, or a queued
 			// continuation. Only settled means the relay run slot is reusable.
 			s.releaseDistributedRun(sessionID)
+			s.publishSessionStatus(sessionID, "relay", "idle", "relay", "Relay turn settled", "")
 		}
+	}
+	s.external.onStatus = func(sessionID, state string) {
+		s.publishSessionStatus(sessionID, "relay", state, "relay", "", "")
 	}
 	if err := s.sessions.Load(); err != nil {
 		logger.Warn("failed to load session registry", "error", err)
@@ -147,6 +154,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 	if err := s.workers.Load(); err != nil {
 		logger.Warn("failed to load worker registry", "error", err)
 	}
+	s.workers.onHealth = s.publishWorkerStatus
 	if err := s.remoteSessions.Load(); err != nil {
 		logger.Warn("failed to load remote session registry", "error", err)
 	}
@@ -248,6 +256,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("PUT /v1/workers/", s.workerPut)
 	mux.HandleFunc("DELETE /v1/workers/", s.workerDelete)
 	mux.HandleFunc("POST /v1/ws-tickets", s.createWSTicket)
+	mux.HandleFunc("POST /v1/status-tickets", s.createStatusTicket)
+	mux.HandleFunc("GET /v1/status/ws", s.statusWebSocket)
+	mux.HandleFunc("POST /v1/runs/", s.cancelRun)
 	mux.HandleFunc("POST /v1/external-sessions/register", s.externalRegister)
 	mux.HandleFunc("POST /v1/external-sessions/", s.externalPost)
 	mux.HandleFunc("GET /v1/external-sessions/", s.externalGet)

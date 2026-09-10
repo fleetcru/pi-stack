@@ -47,6 +47,9 @@ type WorkerRegistry struct {
 	path        string
 	workers     map[string]Worker
 	generations map[string]uint64
+	// onHealth reports worker health transitions to the status hub. Called
+	// without the registry lock held.
+	onHealth func(workerID string, healthy bool)
 }
 
 func NewWorkerRegistry(path string) *WorkerRegistry {
@@ -133,7 +136,7 @@ func (r *WorkerRegistry) UpdateCapacity(id string, active, max int) {
 
 func (r *WorkerRegistry) Heartbeat(id string, healthy bool) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	changed := false
 	w, ok := r.workers[id]
 	if ok {
 		w.LastHeartbeat = time.Now().UTC()
@@ -143,6 +146,11 @@ func (r *WorkerRegistry) Heartbeat(id string, healthy bool) {
 			w.Status = "unhealthy"
 		}
 		r.workers[id] = w
+		changed = true
+	}
+	r.mu.Unlock()
+	if changed && r.onHealth != nil {
+		r.onHealth(id, healthy)
 	}
 }
 
@@ -166,6 +174,9 @@ func (r *WorkerRegistry) Delete(id string) error {
 	r.mu.Lock()
 	delete(r.workers, id)
 	r.mu.Unlock()
+	if r.onHealth != nil {
+		r.onHealth(id, false) // removal surfaces as worker offline
+	}
 	return r.Save()
 }
 

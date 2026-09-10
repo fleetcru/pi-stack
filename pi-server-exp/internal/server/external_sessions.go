@@ -78,6 +78,9 @@ type ExternalRegistry struct {
 	commandPath string
 	persisted   persistedRelayCommands
 	onLifecycle func(sessionID, eventType string)
+	// onStatus reports relay status transitions (working/idle/waiting_for_input)
+	// to the server-wide status hub.
+	onStatus func(sessionID, state string)
 }
 
 func newExternalRegistry(commandPath string) *ExternalRegistry {
@@ -315,6 +318,12 @@ func (r *ExternalRegistry) publish(id string, ev RPCEvent) bool {
 			s.Status = "idle"
 		}
 	}
+	statusChanged := ev["type"] == "agent_start" || ev["type"] == "agent_settled" ||
+		ev["type"] == "extension_ui_request" || ev["type"] == "extension_ui_closed" ||
+		ev["type"] == "message_start" || ev["type"] == "message_update" ||
+		ev["type"] == "tool_execution_start" || ev["type"] == "tool_execution_update" ||
+		ev["type"] == "message_end"
+	status := s.Status
 	s.UpdatedAt = record.Timestamp
 	out := eventWithID(ev, record.ID)
 	out["_daemonTaskId"] = s.TaskID
@@ -325,6 +334,7 @@ func (r *ExternalRegistry) publish(id string, ev RPCEvent) bool {
 	}
 	eventType, _ := ev["type"].(string)
 	onLifecycle := r.onLifecycle
+	onStatus := r.onStatus
 	r.mu.Unlock()
 	for _, ch := range subs {
 		select {
@@ -334,6 +344,12 @@ func (r *ExternalRegistry) publish(id string, ev RPCEvent) bool {
 	}
 	if onLifecycle != nil && (eventType == "agent_start" || eventType == "agent_end" || eventType == "agent_settled") {
 		onLifecycle(id, eventType)
+	}
+	if onStatus != nil && statusChanged {
+		onStatus(id, status)
+	}
+	if onStatus != nil && statusChanged {
+		onStatus(id, status)
 	}
 	return true
 }
