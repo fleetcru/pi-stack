@@ -155,21 +155,6 @@ func (s *Server) statusWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(pongWait)) })
 	done := make(chan struct{})
 	defer close(done)
-	go func() {
-		defer func() { _ = conn.Close() }()
-		ticker := time.NewTicker(pingPeriod)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
-					return
-				}
-			case <-done:
-				return
-			}
-		}
-	}()
 	// Reader: drain and ignore any client frames; the socket is read-only.
 	go func() {
 		defer func() { _ = conn.Close() }()
@@ -179,8 +164,17 @@ func (s *Server) statusWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}()
+	// Pings are sent from the same loop as status frames. gorilla/websocket
+	// forbids concurrent writers on one connection; a separate ping goroutine
+	// racing WriteJSON corrupts frames and drops the connection in a loop.
+	pingTicker := time.NewTicker(pingPeriod)
+	defer pingTicker.Stop()
 	for {
 		select {
+		case <-pingTicker.C:
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
+				return
+			}
 		case ev := <-liveEvents:
 			// Snapshot/replay can overlap events already buffered for this subscriber.
 			// Sequence numbers make those duplicates harmless and expose any drop.

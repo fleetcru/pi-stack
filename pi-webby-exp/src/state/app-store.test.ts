@@ -245,6 +245,7 @@ describe("useAppStore", () => {
       sessionId: "session-a",
       workerId: "local",
       state: "working",
+      updatedAt: "t",
     })
     useAppStore.getState().applyStatusEvent({
       type: "session_status",
@@ -253,6 +254,7 @@ describe("useAppStore", () => {
       state: "queued",
       reason: "admission",
       runId: "run-b",
+      updatedAt: "t",
     })
     expect(useAppStore.getState().runtimeSessions["session-a"]?.state).toBe("working")
   })

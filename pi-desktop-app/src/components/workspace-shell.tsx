@@ -190,9 +190,7 @@ export function WorkspaceShell() {
                       badge={health?.capacity ? `${health.capacity.activeSessions}/${health.capacity.maxSessions}` : undefined}
                     >
                       <CapacityControl capacity={health?.capacity} client={client} />
-                      {runs.length > 0 && (
-                        <ActiveRunsList sessions={sessions} onOpenSession={openSession} />
-                      )}
+                      <ActiveRunsList sessions={sessions} onOpenSession={openSession} />
                       {sessionsLoading ? (
                         <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
                           <LoaderCircle className="size-3 animate-spin" />
