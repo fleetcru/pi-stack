@@ -9,6 +9,9 @@ import com.example.picompanion.data.model.ServerSession
 import com.example.picompanion.data.model.ServerWorker
 import com.example.picompanion.data.model.GlobalSession
 import com.example.picompanion.data.model.MachineSession
+import com.example.picompanion.data.model.LiveSessionStatus
+import com.example.picompanion.data.model.isActive
+import com.example.picompanion.data.model.withLiveStatus
 import com.example.picompanion.data.model.visibleGlobalSessions
 import com.example.picompanion.data.model.visibleMachineSessions
 import kotlinx.coroutines.Dispatchers
@@ -18,7 +21,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import android.content.Context
@@ -57,6 +62,29 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   init {
+    viewModelScope.launch {
+      combine(
+        AppModule.serverStatusStream.sessions,
+        AppModule.serverStatusStream.activeRuns,
+        AppModule.serverStatusStream.workerHealth,
+      ) { live, runs, health -> Triple(live, runs, health) }.collect { (live, runs, health) ->
+        _uiState.update { current ->
+          val content = current as? HomeUiState.Content ?: return@update current
+          content.copy(
+            sessions = content.sessions.map { it.withLiveStatus(live[it.id]) },
+            globalSessions = content.globalSessions.map { global ->
+              global.copy(session = global.session.withLiveStatus(live[global.session.id] ?: live[global.id]))
+            },
+            workers = content.workers.map { worker ->
+              health[worker.id]?.let { worker.copy(status = it) } ?: worker
+            },
+            activeRuns = (live.values.filter { it.isActive } + runs.values)
+              .distinctBy { it.runId ?: "session:${it.sessionId}" }
+              .sortedWith(compareBy<LiveSessionStatus> { it.state != "queued" }.thenBy { it.position ?: Int.MAX_VALUE }),
+          )
+        }
+      }
+    }
     refresh(showLoading = true)
   }
 
@@ -111,7 +139,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
       if (health is HttpResult.Failure && sessions is HttpResult.Failure) {
         _uiState.value = HomeUiState.Error(
-          message = (health as HttpResult.Failure).userMessage,
+          message = health.userMessage,
           serverName = server.name.ifBlank { server.url },
         )
         return@launch
@@ -131,15 +159,20 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         (global as? HttpResult.Success)?.value?.sessions ?: emptyList(),
       )
 
+      val live = AppModule.serverStatusStream.sessions.value
       _uiState.value = HomeUiState.Content(
         connected = connected,
         serverName = server.name.ifBlank { server.url },
-        sessions = sessionList,
+        sessions = sessionList.map { it.withLiveStatus(live[it.id]) },
         workers = workerList,
-        globalSessions = globalSessions,
+        globalSessions = globalSessions.map { global ->
+          global.copy(session = global.session.withLiveStatus(live[global.session.id] ?: live[global.id]))
+        },
         machineSessions = machineSessions,
         activeSessions = capacity?.activeSessions ?: sessionList.size,
         maxSessions = capacity?.maxSessions ?: 0,
+        activeRuns = (live.values.filter { it.isActive } + AppModule.serverStatusStream.activeRuns.value.values)
+          .distinctBy { it.runId ?: "session:${it.sessionId}" },
       )
       // Warm only the two most likely next sessions, after visible Home data is
       // ready. This avoids delaying the list while making taps feel immediate.
@@ -208,6 +241,32 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  fun cancelRun(run: LiveSessionStatus) {
+    viewModelScope.launch {
+      val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
+      val result = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        if (run.state == "queued" && !run.runId.isNullOrBlank()) {
+          client.cancelRun(server, run.runId)
+        } else if (run.workerId == "local") {
+          client.postSessionAction(server, run.sessionId, "abort")
+        } else return@withContext null
+      }
+      if (result is HttpResult.Failure) {
+        _uiState.update { current ->
+          val content = current as? HomeUiState.Content ?: return@update current
+          content.copy(actionError = result.userMessage)
+        }
+      }
+    }
+  }
+
+  fun consumeActionError() {
+    _uiState.update { current ->
+      val content = current as? HomeUiState.Content ?: return@update current
+      content.copy(actionError = null)
+    }
+  }
+
   fun updateCapacity(maxSessions: Int, onDone: () -> Unit = {}) {
     viewModelScope.launch {
       val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
@@ -230,6 +289,8 @@ sealed interface HomeUiState {
     val machineSessions: List<MachineSession> = emptyList(),
     val activeSessions: Int,
     val maxSessions: Int,
+    val activeRuns: List<LiveSessionStatus> = emptyList(),
+    val actionError: String? = null,
   ) : HomeUiState {
     val latestSession: ServerSession? get() = sessions.firstOrNull()
   }

@@ -10,6 +10,28 @@ export type PromptRequest = components["schemas"]["PromptRequest"]
 export type SessionMetadataUpdate =
   components["schemas"]["SessionMetadataUpdate"]
 export type WSTicket = components["schemas"]["WSTicketResponse"]
+/** Ticket for the server-wide status socket; scoped so it cannot open a session socket. */
+export interface StatusTicket {
+  ticket: string
+  expiresAt: string
+  ws: string
+}
+/** One admission-scheduler run from GET /v1/scheduler `runs`. */
+export interface SchedulerRun {
+  runId: string
+  sessionId: string
+  workerId: string
+  phase: "active" | "queued"
+  /** 1-based admission order for queued runs. */
+  position?: number
+  queuedAt: string
+}
+export interface CancelRunResponse {
+  runId: string
+  sessionId?: string
+  workerId?: string
+  result: "cancelled" | "aborting"
+}
 export type AdminSettings = components["schemas"]["AdminSettings"]
 
 export interface AdminSchedulerOverview {
@@ -241,6 +263,7 @@ export interface SchedulerStatus {
     workers: Record<string, number>
   }
   workers: ApiWorker[]
+  runs?: SchedulerRun[]
 }
 
 export interface HealthResponse {
@@ -342,8 +365,13 @@ export class PiServerClient {
     return this.request("/v1/capacity", { method: "PATCH", body: JSON.stringify({ maxSessions }) })
   }
 
+  /**
+   * Runtime-only inventory: metadata from the registry plus in-memory live
+   * status. Never issues get_state to a Pi process and never contacts
+   * workers, so it is safe to poll as a status-stream fallback.
+   */
   listSessions(): Promise<SessionListResponse> {
-    return this.request("/v1/sessions?scope=all&include=state")
+    return this.request("/v1/sessions?scope=all&include=runtime")
   }
 
   listGlobalSessions(): Promise<{ sessions: GlobalSession[]; partialFailures?: ApiPartialFailure[] }> {
@@ -610,6 +638,18 @@ export class PiServerClient {
     const suffix = force ? "?force=true" : ""
     return this.request(`/v1/workers/${encodeURIComponent(id)}${suffix}`, {
       method: "DELETE",
+    })
+  }
+
+  /** Issues a single-use ticket for the server-wide status WebSocket. */
+  issueStatusTicket(): Promise<StatusTicket> {
+    return this.request("/v1/status-tickets", { method: "POST" })
+  }
+
+  /** Cancels a queued admission run, or aborts an active local run. */
+  cancelRun(runId: string): Promise<CancelRunResponse> {
+    return this.request(`/v1/runs/${encodeURIComponent(runId)}/cancel`, {
+      method: "POST",
     })
   }
 

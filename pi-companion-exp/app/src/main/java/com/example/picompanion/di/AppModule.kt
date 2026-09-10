@@ -3,6 +3,7 @@ package com.example.picompanion.di
 import android.content.Context
 import com.example.picompanion.data.api.PiServerClient
 import com.example.picompanion.data.settings.SettingsDataStore
+import com.example.picompanion.data.websocket.ServerStatusStream
 
 /**
  * Lightweight service locator. Provides singleton instances of shared
@@ -22,6 +23,9 @@ object AppModule {
 
   /** Singleton HTTP client — shares one connection pool across the app. */
   val client: PiServerClient by lazy { PiServerClient() }
+
+  /** One server-wide status socket shared by Home and Sessions. */
+  val serverStatusStream: ServerStatusStream by lazy { ServerStatusStream(client) }
 
   /** Singleton DataStore — one file handle, one migration path. */
   val settingsDataStore: SettingsDataStore by lazy { SettingsDataStore(appContext) }

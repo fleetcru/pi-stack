@@ -102,6 +102,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		startedAt:         time.Now(),
 		admin:             newAdminState(cfg),
 	}
+	s.wireAdmissionStatus()
 	if len(s.resolvedRoots) == 0 {
 		s.resolvedRoots = resolveAllowedRoots([]string{cfg.CWD})
 	}

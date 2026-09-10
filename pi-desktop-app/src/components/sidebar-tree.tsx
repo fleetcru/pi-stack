@@ -32,7 +32,8 @@ function sessionStatus(status?: string, runtimeState?: string): SessionStatus {
   const state = runtimeState ?? status
   switch (state) {
     case "working": return "working"
-    case "waiting_for_input": return "waiting"
+    case "waiting_for_input":
+    case "queued": return "waiting"
     case "starting":
     case "reconnecting": return "reconnecting"
     case "error":
@@ -40,7 +41,8 @@ function sessionStatus(status?: string, runtimeState?: string): SessionStatus {
     case "stopped": return "error"
     case "running": return "active"
     case "idle":
-    case "created": return "idle"
+    case "created":
+    case "cancelled": return "idle"
     default:
       if (state) console.warn(`[sessionStatus] unknown state: ${state}`)
       return "idle"
@@ -183,14 +185,18 @@ function SessionLeaf({
   pinned,
   onSelect,
 }: {
-  session: { id: string; status?: string; title?: string; updatedAt?: string; state?: Record<string, unknown> }
+  session: { id: string; status?: string; title?: string; updatedAt?: string; transport?: string; state?: Record<string, unknown> }
   source?: string
   selected: boolean
   pinned: boolean
   onSelect: (sessionId?: string) => void
 }) {
   const togglePin = useAppStore((state) => state.togglePinSession)
-  const isRelay = source === "external" || session.state?.external === true
+  // Select only this session's entry so unrelated status deltas do not
+  // re-render every row in the tree.
+  const liveStatus = useAppStore((state) => state.runtimeSessions[session.id])
+  // Runtime-only inventory omits state.external for relays, so also check transport.
+  const isRelay = source === "external" || session.state?.external === true || session.transport === "relay"
   const label = session.title || shortSessionID(session.id)
 
   return (
@@ -212,14 +218,15 @@ function SessionLeaf({
           {label}
         </span>
         <span className="group-hover/leaf:opacity-0">
-          <StatusDot status={sessionStatus(session.status, (session.state?.runtimeStatus as { state?: string } | undefined)?.state)} />
+          <StatusDot status={sessionStatus(session.status, liveStatus?.state ?? (session.state?.runtimeStatus as { state?: string } | undefined)?.state)} />
         </span>
       </button>
       {/* Status detail label */}
       {(() => {
         const rt = session.state?.runtimeStatus as { state?: string; detail?: string } | undefined
-        if (!rt || rt.state === "idle" || rt.state === "created") return null
-        const detail = rt.detail || rt.state
+        const state = liveStatus?.state ?? rt?.state
+        if (!state || state === "idle" || state === "created") return null
+        const detail = liveStatus?.detail || rt?.detail || state
         return (
           <div className="flex h-5 w-full items-center pl-14 pr-2">
             <span className="truncate text-[10px] text-muted-foreground/70">{detail}</span>

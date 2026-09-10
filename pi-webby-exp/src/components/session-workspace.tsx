@@ -88,8 +88,10 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const historyQuery = useSessionHistory(sessionId)
   const gitStatusQuery = useSessionGitStatus(sessionId)
   const schedulerQuery = useSchedulerStatus()
-  const modelsQuery = useSessionData(sessionId, "models", { refetchInterval: 5_000 })
-  const commandsQuery = useSessionData(sessionId, "commands", { refetchInterval: 30_000 })
+  // Models and commands change only after explicit configuration changes.
+  // Avoid waking every active workspace just to refetch static catalogs.
+  const modelsQuery = useSessionData(sessionId, "models")
+  const commandsQuery = useSessionData(sessionId, "commands")
   const stateQuery = useSessionData(sessionId, "state", {
     // Poll only when the WebSocket is not open — the stream provides live state.
     refetchInterval: socket.status === "open" ? false : 5_000,

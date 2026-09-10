@@ -140,8 +140,9 @@ func (s *Server) listMachineSessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	specs := s.sessions.ListSpecs()
+	resolve := memoizedCanonicalPath()
 	for i := range items {
-		if spec := s.preferredServerSession(items[i], specs); spec != nil {
+		if spec := s.preferredServerSessionWithResolver(items[i], specs, resolve); spec != nil {
 			items[i].ServerSessionID = spec.ID
 		}
 	}
@@ -161,18 +162,36 @@ func canonicalPath(path string) string {
 	return filepath.Clean(path)
 }
 
+type canonicalPathResolver func(string) string
+
+func memoizedCanonicalPath() canonicalPathResolver {
+	cache := make(map[string]string)
+	return func(path string) string {
+		if resolved, ok := cache[path]; ok {
+			return resolved
+		}
+		resolved := canonicalPath(path)
+		cache[path] = resolved
+		return resolved
+	}
+}
+
 func matchingServerSession(machine MachineSession, specs []SessionSpec) *SessionSpec {
-	machinePath := canonicalPath(machine.Path)
+	return matchingServerSessionWithResolver(machine, specs, canonicalPath)
+}
+
+func matchingServerSessionWithResolver(machine MachineSession, specs []SessionSpec, resolve canonicalPathResolver) *SessionSpec {
+	machinePath := resolve(machine.Path)
 	machineDir := filepath.Dir(machinePath)
 	for i := range specs {
 		spec := &specs[i]
 		if spec.Transport == "relay" {
 			continue
 		}
-		if spec.SessionPath != "" && canonicalPath(spec.SessionPath) == machinePath {
+		if spec.SessionPath != "" && resolve(spec.SessionPath) == machinePath {
 			return spec
 		}
-		if spec.ManagedSessionDir != "" && canonicalPath(spec.ManagedSessionDir) == machineDir {
+		if spec.ManagedSessionDir != "" && resolve(spec.ManagedSessionDir) == machineDir {
 			return spec
 		}
 	}
@@ -180,33 +199,45 @@ func matchingServerSession(machine MachineSession, specs []SessionSpec) *Session
 }
 
 func duplicateRelaySpec(spec SessionSpec, specs []SessionSpec) bool {
+	return duplicateRelaySpecWithResolver(spec, specs, canonicalPath)
+}
+
+func duplicateRelaySpecWithResolver(spec SessionSpec, specs []SessionSpec, resolve canonicalPathResolver) bool {
 	if spec.Transport != "relay" || spec.SessionPath == "" {
 		return false
 	}
-	return matchingServerSession(MachineSession{Path: spec.SessionPath}, specs) != nil
+	return matchingServerSessionWithResolver(MachineSession{Path: spec.SessionPath}, specs, resolve) != nil
 }
 
 func sessionSpecsShareHistory(a, b SessionSpec) bool {
+	return sessionSpecsShareHistoryWithResolver(a, b, canonicalPath)
+}
+
+func sessionSpecsShareHistoryWithResolver(a, b SessionSpec, resolve canonicalPathResolver) bool {
 	if a.SessionPath == "" && b.SessionPath == "" {
 		return false
 	}
-	if a.SessionPath != "" && b.SessionPath != "" && canonicalPath(a.SessionPath) == canonicalPath(b.SessionPath) {
+	if a.SessionPath != "" && b.SessionPath != "" && resolve(a.SessionPath) == resolve(b.SessionPath) {
 		return true
 	}
-	if a.SessionPath != "" && b.ManagedSessionDir != "" && canonicalPath(filepath.Dir(a.SessionPath)) == canonicalPath(b.ManagedSessionDir) {
+	if a.SessionPath != "" && b.ManagedSessionDir != "" && resolve(filepath.Dir(a.SessionPath)) == resolve(b.ManagedSessionDir) {
 		return true
 	}
-	if b.SessionPath != "" && a.ManagedSessionDir != "" && canonicalPath(filepath.Dir(b.SessionPath)) == canonicalPath(a.ManagedSessionDir) {
+	if b.SessionPath != "" && a.ManagedSessionDir != "" && resolve(filepath.Dir(b.SessionPath)) == resolve(a.ManagedSessionDir) {
 		return true
 	}
 	return false
 }
 
 func (s *Server) liveRelaySpecForHistory(spec SessionSpec, specs []SessionSpec) *SessionSpec {
+	return s.liveRelaySpecForHistoryWithResolver(spec, specs, canonicalPath)
+}
+
+func (s *Server) liveRelaySpecForHistoryWithResolver(spec SessionSpec, specs []SessionSpec, resolve canonicalPathResolver) *SessionSpec {
 	const relayFreshness = 90 * time.Second
 	for i := range specs {
 		candidate := &specs[i]
-		if candidate.Transport != "relay" || !sessionSpecsShareHistory(*candidate, spec) {
+		if candidate.Transport != "relay" || !sessionSpecsShareHistoryWithResolver(*candidate, spec, resolve) {
 			continue
 		}
 		relay, ok := s.external.get(candidate.ID)
@@ -220,20 +251,28 @@ func (s *Server) liveRelaySpecForHistory(spec SessionSpec, specs []SessionSpec) 
 // preferredServerSession prevents Machine Session Discovery from starting a
 // second RPC process for a JSONL file already owned by a live bridged TUI.
 func (s *Server) preferredServerSession(machine MachineSession, specs []SessionSpec) *SessionSpec {
+	return s.preferredServerSessionWithResolver(machine, specs, canonicalPath)
+}
+
+func (s *Server) preferredServerSessionWithResolver(machine MachineSession, specs []SessionSpec, resolve canonicalPathResolver) *SessionSpec {
 	probe := SessionSpec{SessionPath: machine.Path}
-	if relay := s.liveRelaySpecForHistory(probe, specs); relay != nil {
+	if relay := s.liveRelaySpecForHistoryWithResolver(probe, specs, resolve); relay != nil {
 		return relay
 	}
-	return matchingServerSession(machine, specs)
+	return matchingServerSessionWithResolver(machine, specs, resolve)
 }
 
 // hideDuplicateSessionSpec presents the live TUI relay as the canonical owner
 // when an unsafe legacy RPC+relay duplicate already exists for one JSONL file.
 func (s *Server) hideDuplicateSessionSpec(spec SessionSpec, specs []SessionSpec) bool {
-	if relay := s.liveRelaySpecForHistory(spec, specs); relay != nil {
+	return s.hideDuplicateSessionSpecWithResolver(spec, specs, canonicalPath)
+}
+
+func (s *Server) hideDuplicateSessionSpecWithResolver(spec SessionSpec, specs []SessionSpec, resolve canonicalPathResolver) bool {
+	if relay := s.liveRelaySpecForHistoryWithResolver(spec, specs, resolve); relay != nil {
 		return spec.ID != relay.ID
 	}
-	return duplicateRelaySpec(spec, specs)
+	return duplicateRelaySpecWithResolver(spec, specs, resolve)
 }
 
 func (s *Server) openMachineSession(w http.ResponseWriter, r *http.Request, machineID string) {

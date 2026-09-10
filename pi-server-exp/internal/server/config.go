@@ -106,7 +106,7 @@ func ConfigFromEnv() Config {
 		RestartBackoff:           envDuration("PI_SERVER_RESTART_BACKOFF", time.Second),
 		EventHistoryMax:          envInt("PI_SERVER_EVENT_HISTORY_MAX", 100),
 		EventHistoryBytes:        envInt("PI_SERVER_EVENT_HISTORY_BYTES", 2<<20),
-		EventJournalSyncInterval: envDuration("PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL", 0),
+		EventJournalSyncInterval: envDuration("PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL", 100*time.Millisecond),
 		MaxWatches:               envInt("PI_SERVER_MAX_WATCHES", 2048),
 		LogLevel:                 slog.LevelInfo,
 		ConfigSources:            defaultConfigSources(),

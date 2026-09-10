@@ -37,13 +37,14 @@ type PiProcess struct {
 	spec   SessionSpec
 	logger *slog.Logger
 
-	mu      sync.RWMutex
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	running bool
-	closed  bool
-	done    chan struct{}
-	readers sync.WaitGroup
+	mu         sync.RWMutex
+	dispatchMu sync.Mutex
+	cmd        *exec.Cmd
+	stdin      io.WriteCloser
+	running    bool
+	closed     bool
+	done       chan struct{}
+	readers    sync.WaitGroup
 
 	seq              uint64
 	waiters          map[string]responseWaiter
@@ -74,6 +75,10 @@ type PiProcess struct {
 	// turnActive enforces one agent turn per PiProcess at a time. Steer and
 	// follow-up commands remain allowed while a turn is active.
 	turnActive bool
+	// activePromptID is the RPC id of the prompt that turned turnActive on.
+	// A rejected prompt response (success=false) carries this id and must
+	// release the turn — Pi emits no agent_end/agent_settled for rejections.
+	activePromptID string
 	// onAgentSettled releases scheduler admission exactly once after a run.
 	onAgentSettled func()
 	admissionHeld  bool
@@ -196,6 +201,7 @@ func (p *PiProcess) Request(ctx context.Context, command RPCCommand) (RPCEvent, 
 			return nil, errors.New("a turn is already active in this session")
 		}
 		p.turnActive = true
+		p.activePromptID = id
 	}
 	p.waiters[id] = waiter
 	_, err = p.stdin.Write(append(b, '\n'))
@@ -250,6 +256,12 @@ func (p *PiProcess) Send(command RPCCommand) error {
 		p.turnActive = true
 	}
 	requestID, _ := command["id"].(string)
+	if command["type"] == "prompt" {
+		// Assign the prompt ID under the same lock: dispatch() matches rejected
+		// responses against activePromptID, and a very fast failed response can
+		// arrive as soon as stdin is written / the lock is released.
+		p.activePromptID = requestID
+	}
 	isUIResponse := command["type"] == "extension_ui_response"
 	if isUIResponse {
 		pendingID, _ := p.pendingUIRequest["id"].(string)
@@ -268,6 +280,7 @@ func (p *PiProcess) Send(command RPCCommand) error {
 	}
 	if err != nil && command["type"] == "prompt" {
 		p.turnActive = false
+		p.activePromptID = ""
 	}
 	p.mu.Unlock()
 	if err == nil && isUIResponse {
@@ -299,10 +312,9 @@ func (p *PiProcess) SubscribeSince(since uint64) (<-chan RPCEvent, []EventRecord
 	p.mu.Unlock()
 	return ch, replay, func() {
 		p.mu.Lock()
-		if _, ok := p.subs[ch]; ok {
-			delete(p.subs, ch)
-			close(ch)
-		}
+		delete(p.subs, ch)
+		// Do not close ch here. Dispatch copies subscribers under the same lock
+		// and sends after unlocking, so closing could race that in-flight send.
 		p.mu.Unlock()
 	}
 }
@@ -330,9 +342,12 @@ func (p *PiProcess) Close(ctx context.Context) error {
 		p.mu.Unlock()
 		_ = journal.close()
 	}()
+	// Do not close the journal midway through an event retention cycle.
+	p.dispatchMu.Lock()
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
+		p.dispatchMu.Unlock()
 		return nil
 	}
 	p.closed = true
@@ -348,6 +363,7 @@ func (p *PiProcess) Close(ctx context.Context) error {
 	}
 	p.stdin = nil
 	p.mu.Unlock()
+	p.dispatchMu.Unlock()
 	if cmd == nil || cmd.Process == nil || done == nil {
 		return nil
 	}
@@ -492,6 +508,9 @@ func (p *PiProcess) wait(cmd *exec.Cmd) {
 }
 
 func (p *PiProcess) dispatch(ev RPCEvent) {
+	// Serialize retention while allowing status reads and command writes to
+	// proceed during JSON encoding and journal I/O.
+	p.dispatchMu.Lock()
 	// Close() marks the process closed before stopping auxiliary producers such
 	// as filesystem watchers. Ignore late events rather than touching a closed
 	// journal or publishing to closed subscriber channels.
@@ -499,6 +518,7 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 	closed := p.closed
 	p.mu.RUnlock()
 	if closed {
+		p.dispatchMu.Unlock()
 		return
 	}
 	// Pi uses extension_ui_request for both blocking dialog methods and
@@ -515,9 +535,26 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 			if found {
 				delete(p.waiters, id)
 			}
+			promptRejected := false
+			if found {
+				if success, _ := ev["success"].(bool); !success && w.command == "prompt" {
+					promptRejected = true
+				}
+			} else if id == p.activePromptID {
+				p.activePromptID = ""
+				if success, _ := ev["success"].(bool); !success {
+					promptRejected = true
+				}
+			}
 			p.mu.Unlock()
 			if found {
 				w.ch <- ev
+			}
+			if promptRejected {
+				// Pi answers a rejected prompt with a failed response and never
+				// emits agent_end/agent_settled, so the turn must be released here
+				// or turnActive stays stuck and the session refuses new prompts.
+				p.releaseAdmission()
 			}
 		}
 	}
@@ -533,6 +570,7 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
+		p.dispatchMu.Unlock()
 		return
 	}
 	if ev["type"] == "extension_ui_request" && extensionUIRequiresResponse(ev) {
@@ -556,43 +594,60 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 	stateChanged := p.runtimeState != oldState || p.runtimeReason != oldReason
 	p.eventSeq++
 	id := p.eventSeq
-	p.lastEventAt = time.Now().UTC()
-	// Retaining full Pi events is optional replay convenience, so account for
-	// serialized payload bytes and keep the per-session history on a hard budget.
-	if encoded, err := json.Marshal(ev); err != nil {
+	timestamp := time.Now().UTC()
+	p.lastEventAt = timestamp
+	record := EventRecord{ID: id, Timestamp: timestamp, Event: cloneEvent(ev)}
+	out := eventWithID(ev, id)
+	out["_daemonTaskId"] = p.taskID
+	out["_daemonRunId"] = p.runID
+	journal := p.journal
+	maxBytes := p.eventMaxBytes
+	p.mu.Unlock()
+
+	// Encoding and disk writes are deliberately outside p.mu. dispatchMu keeps
+	// records ordered while SubscribeSince can still take p.mu; a subscriber
+	// created here is included in the fan-out captured below.
+	retain := false
+	if encoded, err := json.Marshal(record.Event); err != nil {
 		p.logger.Warn("not retaining event that cannot be encoded", "error", err)
-	} else if len(encoded) <= p.eventMaxBytes {
-		record := EventRecord{ID: id, Timestamp: time.Now().UTC(), Event: cloneEvent(ev), size: len(encoded)}
-		p.events = append(p.events, record)
-		p.eventBytes += record.size
-		if p.journal != nil {
-			if err := p.journal.append(record); err != nil {
+	} else if len(encoded) <= maxBytes {
+		record.size = len(encoded)
+		retain = true
+		if journal != nil {
+			if err := journal.append(record); err != nil {
 				p.logger.Warn("failed to persist daemon event", "error", err)
 			}
 		}
+	} else {
+		p.logger.Warn("not retaining oversized event", "bytes", len(encoded), "limit", maxBytes)
+	}
+
+	var compactRecords []EventRecord
+	p.mu.Lock()
+	if retain && !p.closed {
+		p.events = append(p.events, record)
+		p.eventBytes += record.size
 		for len(p.events) > p.eventMax || p.eventBytes > p.eventMaxBytes {
 			p.eventBytes -= p.events[0].size
 			p.events = p.events[1:]
 		}
-		if p.journal != nil && p.journal.shouldCompact(p.eventMax, p.eventMaxBytes) {
-			if err := p.journal.compact(p.events); err != nil {
-				p.logger.Warn("failed to compact event journal", "error", err)
-			}
+		if journal != nil && journal.shouldCompact(p.eventMax, p.eventMaxBytes) {
+			compactRecords = append([]EventRecord(nil), p.events...)
 		}
-	} else {
-		p.logger.Warn("not retaining oversized event", "bytes", len(encoded), "limit", p.eventMaxBytes)
 	}
-	out := eventWithID(ev, id)
-	out["_daemonTaskId"] = p.taskID
-	out["_daemonRunId"] = p.runID
-	// Copy subscriber set under the write lock to prevent a subscriber from
-	// being added between the write unlock and read lock, which could cause
-	// it to miss the event in its replay window.
+	// Copy subscriber set after retention. A subscriber added while the process
+	// lock was released receives this event live instead of missing the window.
 	subs := make([]chan RPCEvent, 0, len(p.subs))
 	for ch := range p.subs {
 		subs = append(subs, ch)
 	}
 	p.mu.Unlock()
+	if compactRecords != nil {
+		if err := journal.compact(compactRecords); err != nil {
+			p.logger.Warn("failed to compact event journal", "error", err)
+		}
+	}
+	p.dispatchMu.Unlock()
 	for _, ch := range subs {
 		select {
 		case ch <- out:
@@ -643,27 +698,44 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 // triggering event, so response handling and state-transition detection would
 // be redundant work here.
 func (p *PiProcess) dispatchRuntimeState(ev RPCEvent) {
+	p.dispatchMu.Lock()
 	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		p.dispatchMu.Unlock()
+		return
+	}
 	p.eventSeq++
 	id := p.eventSeq
-	p.lastEventAt = time.Now().UTC()
-	if encoded, err := json.Marshal(ev); err != nil {
+	timestamp := time.Now().UTC()
+	p.lastEventAt = timestamp
+	record := EventRecord{ID: id, Timestamp: timestamp, Event: cloneEvent(ev)}
+	maxBytes := p.eventMaxBytes
+	p.mu.Unlock()
+
+	if encoded, err := json.Marshal(record.Event); err != nil {
 		p.logger.Warn("not retaining runtime state event", "error", err)
-	} else if len(encoded) <= p.eventMaxBytes {
-		record := EventRecord{ID: id, Timestamp: time.Now().UTC(), Event: cloneEvent(ev), size: len(encoded)}
-		p.events = append(p.events, record)
-		p.eventBytes += record.size
-		for len(p.events) > p.eventMax || p.eventBytes > p.eventMaxBytes {
-			p.eventBytes -= p.events[0].size
-			p.events = p.events[1:]
+	} else if len(encoded) <= maxBytes {
+		record.size = len(encoded)
+		p.mu.Lock()
+		if !p.closed {
+			p.events = append(p.events, record)
+			p.eventBytes += record.size
+			for len(p.events) > p.eventMax || p.eventBytes > p.eventMaxBytes {
+				p.eventBytes -= p.events[0].size
+				p.events = p.events[1:]
+			}
 		}
+		p.mu.Unlock()
 	}
 	out := eventWithID(ev, id)
+	p.mu.RLock()
 	subs := make([]chan RPCEvent, 0, len(p.subs))
 	for ch := range p.subs {
 		subs = append(subs, ch)
 	}
-	p.mu.Unlock()
+	p.mu.RUnlock()
+	p.dispatchMu.Unlock()
 	for _, ch := range subs {
 		select {
 		case ch <- out:
@@ -765,6 +837,7 @@ func (p *PiProcess) holdAdmission(release func()) bool {
 func (p *PiProcess) releaseAdmission() {
 	p.mu.Lock()
 	p.turnActive = false
+	p.activePromptID = ""
 	if !p.admissionHeld {
 		p.mu.Unlock()
 		return

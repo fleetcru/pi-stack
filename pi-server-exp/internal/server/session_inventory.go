@@ -66,9 +66,10 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 
 	if scope == "local" {
 		specs := s.sessions.ListSpecs()
+		resolve := memoizedCanonicalPath()
 		filtered := make([]SessionSpec, 0, len(specs))
 		for _, spec := range specs {
-			if !s.hideDuplicateSessionSpec(spec, specs) {
+			if !s.hideDuplicateSessionSpecWithResolver(spec, specs, resolve) {
 				filtered = append(filtered, spec)
 			}
 		}
@@ -90,6 +91,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 
 	// Collect specs and identify running local sessions for parallel state fetch.
 	specs := s.sessions.ListSpecs()
+	resolve := memoizedCanonicalPath()
 	type stateResult struct {
 		id      string
 		data    map[string]any
@@ -114,10 +116,13 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		ch := make(chan stateResult, len(runningSpecs))
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
+		stateSlots := make(chan struct{}, 8)
 		for _, spec := range runningSpecs {
 			wg.Add(1)
+			stateSlots <- struct{}{}
 			go func(spec SessionSpec) {
 				defer wg.Done()
+				defer func() { <-stateSlots }()
 				p, ok := s.sessions.Get(spec.ID)
 				if !ok {
 					ch <- stateResult{id: spec.ID, runtime: map[string]any{}, running: false}
@@ -152,7 +157,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	// Build summaries, merging parallel state results.
 	for _, spec := range specs {
-		if s.hideDuplicateSessionSpec(spec, specs) {
+		if s.hideDuplicateSessionSpecWithResolver(spec, specs, resolve) {
 			continue
 		}
 		sum := localSummaryFromSpec(spec)
@@ -269,6 +274,7 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 		var wg sync.WaitGroup
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
+		workerSlots := make(chan struct{}, 8)
 		for workerID, indexes := range byWorker {
 			worker, ok := s.workers.Get(workerID)
 			if !ok {
@@ -279,8 +285,10 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			wg.Add(1)
+			workerSlots <- struct{}{}
 			go func(worker Worker, indexes []int) {
 				defer wg.Done()
+				defer func() { <-workerSlots }()
 				details, err := s.fetchRemoteWorkerSessionSummaries(ctx, worker)
 				for _, i := range indexes {
 					rec := remotes[i]

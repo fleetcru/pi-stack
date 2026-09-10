@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import { createJSONStorage, persist } from "zustand/middleware"
+import type { ServerStatusEvent, StatusSocketStatus } from "../api/status-socket"
 
 export interface ServerConnectionSettings {
   baseUrl: string
@@ -20,6 +21,41 @@ export interface LiveSessionState {
   resynchronizing: boolean
 }
 
+/** Live per-session runtime status derived from the status stream or inventory. */
+export interface RuntimeSessionStatus {
+  state: string
+  reason?: string
+  detail?: string
+  runId?: string
+  position?: number
+  queuedAt?: string
+  workerId?: string
+  /** Millisecond epoch of the last update. */
+  updatedAt: number
+}
+
+export interface WorkerRuntimeHealth {
+  state: "healthy" | "unhealthy" | "offline"
+  updatedAt: number
+}
+
+export interface StatusStreamState {
+  status: StatusSocketStatus
+  /** False once the stream cannot maintain a connection; consumers poll instead. */
+  available: boolean
+}
+
+/** Structural shape of a runtime inventory summary; avoids importing API types here. */
+export interface RuntimeInventorySummary {
+  id: string
+  workerId?: string
+  status?: string
+  state?: {
+    running?: boolean
+    runtimeStatus?: { state?: string; reason?: string; detail?: string; runId?: string }
+  }
+}
+
 interface AppState {
   connection?: ServerConnectionSettings
   servers: ServerConnectionSettings[]
@@ -28,6 +64,12 @@ interface AppState {
   pinnedSessionIds: Record<string, true>
   /** Volatile socket-derived state; intentionally excluded from persistence. */
   liveSessionState: Record<string, LiveSessionState>
+  /** Server-wide runtime status per session (volatile, from the status stream). */
+  runtimeSessions: Record<string, RuntimeSessionStatus>
+  /** Worker health from the status stream (volatile). */
+  workerHealth: Record<string, WorkerRuntimeHealth>
+  /** Health of the server-wide status stream itself. */
+  statusStream: StatusStreamState
   setConnection: (connection?: ServerConnectionSettings) => void
   addServer: (connection: ServerConnectionSettings) => void
   updateServer: (baseUrl: string, connection: ServerConnectionSettings) => void
@@ -38,6 +80,10 @@ interface AppState {
   togglePinSession: (sessionId: string) => void
   setLiveSessionState: (sessionId: string, state: LiveSessionState) => void
   clearLiveSessionState: (sessionId: string) => void
+  applyStatusEvent: (event: ServerStatusEvent) => void
+  applyRuntimeInventory: (sessions: RuntimeInventorySummary[], requestedAt?: number) => void
+  setStatusStream: (patch: Partial<StatusStreamState>) => void
+  resetRuntimeStatus: () => void
 }
 
 /**
@@ -54,6 +100,9 @@ export function createAppStore(storageName: string) {
         expandedTreeNodes: {},
         pinnedSessionIds: {},
         liveSessionState: {},
+        runtimeSessions: {},
+        workerHealth: {},
+        statusStream: { status: "idle", available: true },
         setConnection: (connection) =>
           set((state) => ({
             connection,
@@ -122,6 +171,75 @@ export function createAppStore(storageName: string) {
           const liveSessionState = { ...state.liveSessionState }
           delete liveSessionState[sessionId]
           return { liveSessionState }
+        }),
+        applyStatusEvent: (event) => set((state) => {
+          const now = Date.now()
+          // Admission events are run-scoped. They must not replace a session's
+          // working state when another prompt for that session is queued.
+          if (event.sessionId && event.reason === "admission") return state
+          if (event.sessionId) {
+            return {
+              runtimeSessions: {
+                ...state.runtimeSessions,
+                [event.sessionId]: {
+                  state: event.state,
+                  reason: event.reason,
+                  detail: event.detail,
+                  runId: event.runId,
+                  position: event.position,
+                  queuedAt: event.queuedAt,
+                  workerId: event.workerId,
+                  updatedAt: now,
+                },
+              },
+            }
+          }
+          if (event.workerId) {
+            return {
+              workerHealth: {
+                ...state.workerHealth,
+                [event.workerId]: {
+                  state: event.state === "offline"
+                    ? "offline"
+                    : event.state === "unhealthy"
+                      ? "unhealthy"
+                      : "healthy",
+                  updatedAt: now,
+                },
+              },
+            }
+          }
+          return state
+        }),
+        applyRuntimeInventory: (sessions, requestedAt = Date.now()) => set((state) => {
+          const receivedAt = Date.now()
+          const next: Record<string, RuntimeSessionStatus> = {}
+          for (const summary of sessions) {
+            const current = state.runtimeSessions[summary.id]
+            // Preserve a stream delta that arrived after this inventory request
+            // began. Older entries are replaced by the authoritative snapshot.
+            if (current && current.updatedAt > requestedAt) {
+              next[summary.id] = current
+              continue
+            }
+            const rt = summary.state?.runtimeStatus
+            if (!rt?.state) continue
+            next[summary.id] = {
+              state: rt.state,
+              reason: rt.reason,
+              detail: rt.detail,
+              runId: rt.runId,
+              workerId: summary.workerId,
+              updatedAt: receivedAt,
+            }
+          }
+          return { runtimeSessions: next }
+        }),
+        setStatusStream: (patch) =>
+          set((state) => ({ statusStream: { ...state.statusStream, ...patch } })),
+        resetRuntimeStatus: () => set({
+          runtimeSessions: {},
+          workerHealth: {},
         }),
       }),
       {

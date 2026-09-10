@@ -30,7 +30,10 @@ type distributedReservation struct {
 // The reservation is recorded before the worker is contacted so a very short
 // run cannot finish before its lifecycle subscriber is attached.
 func (s *Server) acquireDistributedRun(ctx context.Context, sessionID, workerID string) bool {
-	if !s.admission.Acquire(ctx, sessionID, workerID) {
+	// Record the admission run ID so the status stream links the queued,
+	// starting, and working phases to the same run.
+	admissionRunID, ok := s.admission.AcquireRun(ctx, sessionID, workerID)
+	if !ok {
 		return false
 	}
 	s.distributedMu.Lock()
@@ -47,7 +50,7 @@ func (s *Server) acquireDistributedRun(ctx context.Context, sessionID, workerID 
 	s.distributedRuns[sessionID] = reservation
 	s.distributedMu.Unlock()
 	s.persistDistributedRuns()
-	s.publishSessionStatus(sessionID, workerID, "working", "remote", "Distributed run admitted", "")
+	s.publishSessionStatus(sessionID, workerID, "working", "remote", "Distributed run admitted", admissionRunID)
 	return true
 }
 

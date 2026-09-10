@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import com.example.picompanion.AppRoute
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.picompanion.data.model.LiveSessionStatus
 import com.example.picompanion.data.model.ServerSession
 import com.example.picompanion.theme.PiCompanionTheme
 import com.example.picompanion.ui.components.IconTile
@@ -71,6 +72,7 @@ import com.example.picompanion.ui.components.StatCard
 import com.example.picompanion.ui.components.StatusPill
 import com.example.picompanion.ui.components.TopAppBarCompact
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.platform.LocalContext
@@ -105,6 +107,14 @@ fun MainScreen(
     }
   }
 
+  val actionError = (uiState as? HomeUiState.Content)?.actionError
+  LaunchedEffect(actionError) {
+    if (actionError != null) {
+      Toast.makeText(context, actionError, Toast.LENGTH_LONG).show()
+      viewModel.consumeActionError()
+    }
+  }
+
   when (val state = uiState) {
     HomeUiState.Loading -> LoadingScreen(modifier = modifier)
     HomeUiState.NoServer -> HomeNoServerContent(
@@ -126,6 +136,7 @@ fun MainScreen(
         }
       },
       onUpdateCapacity = { viewModel.updateCapacity(it) },
+      onCancelRun = viewModel::cancelRun,
       modifier = modifier,
     )
     is HomeUiState.Error -> HomeErrorContent(
@@ -149,6 +160,7 @@ internal fun HomeContent(
   onGlobalSessionClick: (String) -> Unit = {},
   onMachineSessionClick: (String) -> Unit = {},
   onUpdateCapacity: (Int) -> Unit = {},
+  onCancelRun: (LiveSessionStatus) -> Unit = {},
   modifier: Modifier = Modifier,
 ) {
   val listState = rememberLazyListState()
@@ -223,6 +235,56 @@ internal fun HomeContent(
             onDismiss = { showCapacityDialog = false },
             onConfirm = { onUpdateCapacity(it); showCapacityDialog = false },
           )
+        }
+      }
+
+      if (state.activeRuns.isNotEmpty()) {
+        item {
+          Text(
+            "Active runs (${state.activeRuns.size})",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(top = 8.dp),
+          )
+        }
+        items(state.activeRuns, key = { it.runId ?: "session:${it.sessionId}" }) { run ->
+          val session = state.sessions.firstOrNull { it.id == run.sessionId }
+          val title = session?.title ?: session?.project ?: run.sessionId
+          val canCancel = run.state == "queued" || run.workerId == "local"
+          Surface(
+            modifier = Modifier.fillMaxWidth().clickable { onSessionClick(run.sessionId) },
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+          ) {
+            Row(
+              Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+              Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                  buildString {
+                    append(run.workerId)
+                    append(" · ")
+                    if (run.state == "queued" && run.position != null) append("Queued · position ${run.position}")
+                    else append(run.detail ?: run.state.replace('_', ' '))
+                  },
+                  style = MaterialTheme.typography.bodySmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  maxLines = 1,
+                  overflow = TextOverflow.Ellipsis,
+                )
+              }
+              TextButton(
+                enabled = canCancel,
+                onClick = { onCancelRun(run) },
+              ) {
+                Text(if (run.state == "queued") "Cancel" else "Stop")
+              }
+            }
+          }
         }
       }
 

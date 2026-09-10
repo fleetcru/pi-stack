@@ -179,3 +179,11 @@ func isSessionWSRequest(r *http.Request) bool {
 	path := r.URL.Path
 	return strings.HasSuffix(path, "/ws") && strings.HasPrefix(path, "/v1/sessions/")
 }
+
+// isStatusWSRequest identifies the server-wide status socket. It authenticates
+// with a single-use ticket in the query string (browsers cannot send an
+// Authorization header on WebSocket connects); statusWebSocket validates and
+// consumes the ticket, so the auth middleware lets it through here.
+func isStatusWSRequest(r *http.Request) bool {
+	return r.Method == http.MethodGet && r.URL.Path == "/v1/status/ws"
+}

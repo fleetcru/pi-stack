@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,6 +65,13 @@ fun ShellScreen(
   val client = AppModule.client
   val settingsDataStore = AppModule.settingsDataStore
   val settings by settingsDataStore.settingsFlow.collectAsStateWithLifecycle(initialValue = AppSettings())
+  val statusStream = AppModule.serverStatusStream
+  val activeServer = settings.activeServer
+  DisposableEffect(activeServer) {
+    if (activeServer != null && activeServer.isConfigured) statusStream.connect(activeServer)
+    else statusStream.disconnect()
+    onDispose { statusStream.disconnect() }
+  }
   val coroutineScope = rememberCoroutineScope()
   val context = LocalContext.current
 

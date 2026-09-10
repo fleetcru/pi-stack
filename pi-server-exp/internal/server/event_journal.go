@@ -9,10 +9,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
 type eventJournal struct {
+	mu           sync.Mutex
 	file         *os.File
 	path         string
 	records      int
@@ -120,7 +122,12 @@ func readEventJournal(path string) ([]EventRecord, uint64, error) {
 }
 
 func (j *eventJournal) append(record EventRecord) error {
-	if j == nil || j.file == nil {
+	if j == nil {
+		return nil
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.file == nil {
 		return nil
 	}
 	data, err := json.Marshal(persistedEventRecord{
@@ -154,11 +161,18 @@ func (j *eventJournal) shouldCompact(maxRecords, maxBytes int) bool {
 	if j == nil {
 		return false
 	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
 	return (maxRecords > 0 && j.records > maxRecords*2) || (maxBytes > 0 && j.bytes > int64(maxBytes)*2)
 }
 
 func (j *eventJournal) close() error {
-	if j == nil || j.file == nil {
+	if j == nil {
+		return nil
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.file == nil {
 		return nil
 	}
 	if err := j.file.Sync(); err != nil {
@@ -171,6 +185,11 @@ func (j *eventJournal) close() error {
 
 func (j *eventJournal) compact(records []EventRecord) error {
 	if j == nil {
+		return nil
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.file == nil {
 		return nil
 	}
 	temp, err := os.CreateTemp(filepath.Dir(j.path), ".events-*.tmp")

@@ -140,13 +140,15 @@ func (r *WorkerRegistry) Heartbeat(id string, healthy bool) {
 	w, ok := r.workers[id]
 	if ok {
 		w.LastHeartbeat = time.Now().UTC()
+		prev := w.Status
 		if healthy {
 			w.Status = "healthy"
 		} else {
 			w.Status = "unhealthy"
 		}
 		r.workers[id] = w
-		changed = true
+		// Only surface health transitions; steady-state heartbeats are noise.
+		changed = prev != w.Status
 	}
 	r.mu.Unlock()
 	if changed && r.onHealth != nil {

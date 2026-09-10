@@ -130,7 +130,9 @@ func authMiddlewareWithDevices(token string, devices *deviceRegistry, next http.
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if (isSessionWSRequest(r) && r.URL.Query().Get("ticket") != "") || (isExternalRelayWSRequest(r) && relayWSAuthenticated(r, token)) {
+		if (isSessionWSRequest(r) && r.URL.Query().Get("ticket") != "") ||
+			(isStatusWSRequest(r) && r.URL.Query().Get("ticket") != "") ||
+			(isExternalRelayWSRequest(r) && relayWSAuthenticated(r, token)) {
 			next.ServeHTTP(w, r)
 			return
 		}

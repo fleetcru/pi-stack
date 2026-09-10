@@ -25,8 +25,14 @@ import {
   type SessionEvent,
   type SessionSocketStatus,
 } from "./session-socket"
+import { StatusSocket, type ServerStatusEvent } from "./status-socket"
 // Each app injects its own store hook at startup via setAppStoreHook().
-import type { ServerConnectionSettings } from "../state/app-store"
+import type {
+  RuntimeInventorySummary,
+  RuntimeSessionStatus,
+  ServerConnectionSettings,
+  StatusStreamState,
+} from "../state/app-store"
 
 type AppState = {
   connection?: ServerConnectionSettings
@@ -44,6 +50,13 @@ type AppState = {
     resynchronizing: boolean
   }) => void
   clearLiveSessionState: (sessionId: string) => void
+  runtimeSessions: Record<string, RuntimeSessionStatus>
+  workerHealth: Record<string, import("../state/app-store").WorkerRuntimeHealth>
+  statusStream: StatusStreamState
+  applyStatusEvent: (event: ServerStatusEvent) => void
+  applyRuntimeInventory: (sessions: RuntimeInventorySummary[], requestedAt?: number) => void
+  setStatusStream: (patch: Partial<StatusStreamState>) => void
+  resetRuntimeStatus: () => void
 }
 type UseAppStore = <T>(selector: (state: AppState) => T) => T
 
@@ -148,6 +161,83 @@ export function useSessions() {
   const client = usePiServerClient()
   const configured = useServerConfigured()
   return useQuery({ queryKey: piQueryKeys.sessions(client.cacheScope), queryFn: () => client.listSessions(), refetchInterval: 20_000, enabled: configured })
+}
+
+/**
+ * Owns exactly one server-wide status socket per selected server and mirrors
+ * its deltas into the app store. When the stream cannot hold a connection,
+ * falls back to slower runtime-only inventory polling. The selected
+ * session's detailed socket is owned separately by useActiveSessionSocket.
+ */
+export function useServerStatusSocket() {
+  const client = usePiServerClient()
+  const configured = useServerConfigured()
+  const applyStatusEvent = useAppStore((state) => state.applyStatusEvent)
+  const applyRuntimeInventory = useAppStore((state) => state.applyRuntimeInventory)
+  const setStatusStream = useAppStore((state) => state.setStatusStream)
+  const resetRuntimeStatus = useAppStore((state) => state.resetRuntimeStatus)
+  const statusStream = useAppStore((state) => state.statusStream)
+  const [error, setError] = useState<Error>()
+
+  useEffect(() => {
+    if (!configured) return
+    const socket = new StatusSocket({
+      client,
+      onStatusChange: (status) => {
+        setError(undefined)
+        setStatusStream({ status, available: status === "open" || status === "connecting" })
+      },
+      onEvent: (event: ServerStatusEvent) => applyStatusEvent(event),
+      onGap: () => {
+        // Stale runtime statuses cannot be trusted after a hub restart or
+        // ring overflow; clear them and let the next snapshot refill.
+        resetRuntimeStatus()
+      },
+      onError: (err) => setError(err),
+    })
+    socket.connect()
+    return () => {
+      socket.close()
+      resetRuntimeStatus()
+      setStatusStream({ status: "idle", available: false })
+    }
+  }, [applyStatusEvent, client, configured, resetRuntimeStatus, setStatusStream])
+
+  // Slower runtime-only polling while the stream is unavailable. The 20s
+  // inventory query keeps running either way; this tightens the cadence and
+  // feeds the results into the store.
+  useEffect(() => {
+    if (!configured || statusStream.available) return
+    let cancelled = false
+    const poll = () => {
+      const requestedAt = Date.now()
+      client.listSessions()
+        .then((result) => {
+          if (!cancelled) applyRuntimeInventory(result.sessions, requestedAt)
+        })
+        .catch(() => { /* transient; next tick retries */ })
+    }
+    poll()
+    const timer = window.setInterval(poll, 10_000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [applyRuntimeInventory, client, configured, statusStream.available])
+
+  return { statusStream, error }
+}
+
+export function useCancelRun() {
+  const client = usePiServerClient()
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (runId: string) => client.cancelRun(runId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: piQueryKeys.scheduler(client.cacheScope) })
+      void queryClient.invalidateQueries({ queryKey: piQueryKeys.sessions(client.cacheScope) })
+    },
+  })
 }
 
 export function useGlobalSessions(enabled = true) {

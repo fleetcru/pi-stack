@@ -29,6 +29,23 @@ type admissionWaiter struct {
 	runID     string
 	queuedAt  time.Time
 	granted   chan struct{}
+	cancelled chan struct{}
+	// outcome records the waiter's terminal state, set under mu at the
+	// moment the waiter leaves the queue. "" means still queued, "granted"
+	// means dispatchWaitersLocked reserved capacity for it, and "cancelled"
+	// means CancelQueued removed it without touching any counters. AcquireRun's
+	// context branch relies on this to avoid releasing capacity the waiter
+	// never held (which would corrupt active/session/worker counts when a
+	// context deadline races a CancelQueued removal).
+	outcome string
+}
+
+// admissionChange is one observable admission queue transition, delivered to
+// the observer registered via SetOnChange. Kind is "queued", "granted", or
+// "cancelled"; queued changes carry the waiter's current 1-based position.
+type admissionChange struct {
+	Kind string
+	Run  AdmissionRun
 }
 
 // TaskAdmission tracks active runs and grants queued work deterministically.
@@ -44,6 +61,26 @@ type TaskAdmission struct {
 	waiters    []*admissionWaiter
 	activeRuns map[string]admissionRunRecord
 	runSeq     uint64
+	onChange   func(admissionChange)
+}
+
+// SetOnChange registers the queue-change observer. It is invoked after the
+// admission mutex is released (never while it is held) and must be installed
+// before the admission controller is used concurrently.
+func (a *TaskAdmission) SetOnChange(fn func(admissionChange)) {
+	a.mu.Lock()
+	a.onChange = fn
+	a.mu.Unlock()
+}
+
+// deliver invokes the queue observer outside the admission mutex.
+func (a *TaskAdmission) deliver(notes []admissionChange) {
+	if a.onChange == nil {
+		return
+	}
+	for _, change := range notes {
+		a.onChange(change)
+	}
 }
 
 func NewTaskAdmission(globalMax, perSession, perWorker int) *TaskAdmission {
@@ -66,12 +103,12 @@ func (a *TaskAdmission) canAcquireLocked(sessionID, workerID string) bool {
 		(a.perWorker <= 0 || a.workers[workerID] < a.perWorker)
 }
 
-func (a *TaskAdmission) acquireLocked(sessionID, workerID, runID string) {
+func (a *TaskAdmission) acquireLocked(sessionID, workerID, runID string, queuedAt time.Time) {
 	a.active++
 	a.sessions[sessionID]++
 	a.workers[workerID]++
 	if runID != "" {
-		a.activeRuns[runID] = admissionRunRecord{sessionID: sessionID, workerID: workerID, queuedAt: time.Now().UTC()}
+		a.activeRuns[runID] = admissionRunRecord{sessionID: sessionID, workerID: workerID, queuedAt: queuedAt}
 	}
 }
 
@@ -82,7 +119,7 @@ func (a *TaskAdmission) TryAcquire(sessionID, workerID string) bool {
 	if len(a.waiters) > 0 || !a.canAcquireLocked(sessionID, workerID) {
 		return false
 	}
-	a.acquireLocked(sessionID, workerID, a.newRunIDLocked())
+	a.acquireLocked(sessionID, workerID, a.newRunIDLocked(), time.Now().UTC())
 	return true
 }
 
@@ -92,7 +129,7 @@ func (a *TaskAdmission) AcquireRun(ctx context.Context, sessionID, workerID stri
 	a.mu.Lock()
 	runID := a.newRunIDLocked()
 	if len(a.waiters) == 0 && a.canAcquireLocked(sessionID, workerID) {
-		a.acquireLocked(sessionID, workerID, runID)
+		a.acquireLocked(sessionID, workerID, runID, time.Now().UTC())
 		a.mu.Unlock()
 		return runID, true
 	}
@@ -100,28 +137,43 @@ func (a *TaskAdmission) AcquireRun(ctx context.Context, sessionID, workerID stri
 		a.mu.Unlock()
 		return "", false
 	}
-	waiter := &admissionWaiter{sessionID: sessionID, workerID: workerID, runID: runID, queuedAt: time.Now().UTC(), granted: make(chan struct{})}
+	waiter := &admissionWaiter{sessionID: sessionID, workerID: workerID, runID: runID, queuedAt: time.Now().UTC(), granted: make(chan struct{}), cancelled: make(chan struct{})}
 	a.waiters = append(a.waiters, waiter)
-	a.dispatchWaitersLocked()
+	var notes []admissionChange
+	a.dispatchWaitersLocked(&notes)
 	a.mu.Unlock()
+	a.deliver(notes)
 
 	select {
 	case <-waiter.granted:
 		return runID, true
+	case <-waiter.cancelled:
+		// Removed by CancelQueued; capacity untouched.
+		return "", false
 	case <-ctx.Done():
 		a.mu.Lock()
 		for i, candidate := range a.waiters {
 			if candidate == waiter {
 				a.waiters = append(a.waiters[:i], a.waiters[i+1:]...)
-				a.dispatchWaitersLocked()
+				var removed []admissionChange
+				removed = append(removed, admissionChange{Kind: "cancelled", Run: AdmissionRun{RunID: runID, SessionID: sessionID, WorkerID: workerID, Phase: "cancelled", QueuedAt: waiter.queuedAt}})
+				a.dispatchWaitersLocked(&removed)
 				a.mu.Unlock()
+				a.deliver(removed)
 				return "", false
 			}
 		}
-		// A grant raced with cancellation; consume it and return the capacity.
-		a.releaseLocked(sessionID, workerID)
-		a.dispatchWaitersLocked()
+		// The waiter already left the queue; honor its terminal outcome. A
+		// grant must be consumed (release the reserved capacity), but a
+		// CancelQueued removal never touched counters, so releasing here would
+		// steal a slot from another active run on the same session/worker.
+		if waiter.outcome == "granted" {
+			a.releaseLocked(sessionID, workerID)
+		}
+		var raced []admissionChange
+		a.dispatchWaitersLocked(&raced)
 		a.mu.Unlock()
+		a.deliver(raced)
 		return "", false
 	}
 }
@@ -134,7 +186,7 @@ func (a *TaskAdmission) Acquire(ctx context.Context, sessionID, workerID string)
 	return ok
 }
 
-func (a *TaskAdmission) dispatchWaitersLocked() {
+func (a *TaskAdmission) dispatchWaitersLocked(notes *[]admissionChange) {
 	for {
 		granted := -1
 		for i, waiter := range a.waiters {
@@ -144,12 +196,24 @@ func (a *TaskAdmission) dispatchWaitersLocked() {
 			}
 		}
 		if granted < 0 {
-			return
+			break
 		}
 		waiter := a.waiters[granted]
 		a.waiters = append(a.waiters[:granted], a.waiters[granted+1:]...)
-		a.acquireLocked(waiter.sessionID, waiter.workerID, waiter.runID)
+		a.acquireLocked(waiter.sessionID, waiter.workerID, waiter.runID, waiter.queuedAt)
+		waiter.outcome = "granted"
 		close(waiter.granted)
+		noteChange(notes, "granted", AdmissionRun{RunID: waiter.runID, SessionID: waiter.sessionID, WorkerID: waiter.workerID, Phase: "active", QueuedAt: waiter.queuedAt})
+	}
+	// Remaining waiters shift forward whenever the queue changes.
+	for i, waiter := range a.waiters {
+		noteChange(notes, "queued", AdmissionRun{RunID: waiter.runID, SessionID: waiter.sessionID, WorkerID: waiter.workerID, Phase: "queued", Position: i + 1, QueuedAt: waiter.queuedAt})
+	}
+}
+
+func noteChange(notes *[]admissionChange, kind string, run AdmissionRun) {
+	if notes != nil {
+		*notes = append(*notes, admissionChange{Kind: kind, Run: run})
 	}
 }
 
@@ -175,10 +239,14 @@ func (a *TaskAdmission) releaseLocked(sessionID, workerID string) bool {
 
 func (a *TaskAdmission) Release(sessionID, workerID string) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.releaseLocked(sessionID, workerID) {
-		a.dispatchWaitersLocked()
+	if !a.releaseLocked(sessionID, workerID) {
+		a.mu.Unlock()
+		return
 	}
+	var notes []admissionChange
+	a.dispatchWaitersLocked(&notes)
+	a.mu.Unlock()
+	a.deliver(notes)
 }
 
 // Reconfigure updates admission limits without disturbing active reservations.
@@ -186,9 +254,11 @@ func (a *TaskAdmission) Release(sessionID, workerID string) {
 // finish. Existing queued work is retained even if the new queue limit is lower.
 func (a *TaskAdmission) Reconfigure(globalMax, perSession, perWorker, maxQueued int) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	a.globalMax, a.perSession, a.perWorker, a.maxQueued = globalMax, perSession, perWorker, maxQueued
-	a.dispatchWaitersLocked()
+	var notes []admissionChange
+	a.dispatchWaitersLocked(&notes)
+	a.mu.Unlock()
+	a.deliver(notes)
 }
 
 type TaskAdmissionSnapshot struct {
@@ -234,18 +304,26 @@ func (a *TaskAdmission) DetailedRuns() []AdmissionRun {
 	return runs
 }
 
-// CancelQueued removes a queued waiter. Active runs cannot be cancelled here;
-// the caller aborts the target session instead.
+// CancelQueued removes a queued waiter and wakes its blocked AcquireRun so
+// the caller's HTTP request returns immediately instead of waiting for the
+// request context to time out. Active runs cannot be cancelled here; the
+// caller aborts the target session instead.
 func (a *TaskAdmission) CancelQueued(runID string) bool {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	for i, waiter := range a.waiters {
 		if waiter.runID == runID {
 			a.waiters = append(a.waiters[:i], a.waiters[i+1:]...)
-			a.dispatchWaitersLocked()
+			waiter.outcome = "cancelled"
+			var notes []admissionChange
+			noteChange(&notes, "cancelled", AdmissionRun{RunID: runID, SessionID: waiter.sessionID, WorkerID: waiter.workerID, Phase: "cancelled", QueuedAt: waiter.queuedAt})
+			a.dispatchWaitersLocked(&notes)
+			a.mu.Unlock()
+			close(waiter.cancelled) // wake the blocked AcquireRun immediately
+			a.deliver(notes)
 			return true
 		}
 	}
+	a.mu.Unlock()
 	return false
 }
 

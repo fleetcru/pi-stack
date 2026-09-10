@@ -116,26 +116,38 @@ func (s *Server) statusWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 	conn.SetReadLimit(1 << 20)
 
+	// Subscribe before snapshotting (atomically, under the hub lock) so no
+	// delta can be published between the snapshot and the live stream.
+	liveEvents, initialSnapshot, initialCursor, generation, unsubscribe := s.status.subscribeWithSnapshot()
+	defer unsubscribe()
 	since, _ := strconv.ParseUint(r.URL.Query().Get("since"), 10, 64)
+	epochParam := r.URL.Query().Get("epoch")
 	cursor := since
-	if since > 0 {
+	if since > 0 && (epochParam == "" || epochParam == generation) {
 		if replay, ok := s.status.replaySince(since); ok {
-			seq := s.status.currentCursor()
-			writeStatusMessage(conn, map[string]any{"type": "status_replay", "events": replay, "cursor": seq})
+			// Advance only through the replay we actually captured. A newer event
+			// published after replaySince is already waiting on liveEvents.
+			seq := since
+			if len(replay) > 0 {
+				seq = replay[len(replay)-1].sequence
+			}
+			writeStatusMessage(conn, map[string]any{"type": "status_replay", "events": replay, "cursor": seq, "generation": generation})
 			cursor = seq
 		} else {
 			snap, seq := s.status.snapshot()
-			writeStatusMessage(conn, map[string]any{"type": "status_snapshot", "events": snap, "cursor": seq, "gap": true})
+			writeStatusMessage(conn, map[string]any{"type": "status_snapshot", "events": snap, "cursor": seq, "gap": true, "generation": generation})
 			cursor = seq
 		}
 	} else {
-		snap, seq := s.status.snapshot()
-		writeStatusMessage(conn, map[string]any{"type": "status_snapshot", "events": snap, "cursor": seq})
-		cursor = seq
+		msg := map[string]any{"type": "status_snapshot", "events": initialSnapshot, "cursor": initialCursor, "generation": generation}
+		if since > 0 {
+			// The client's epoch differs from ours: the server restarted and the
+			// cursor is meaningless, so force a full snapshot resync.
+			msg["gap"] = true
+		}
+		writeStatusMessage(conn, msg)
+		cursor = initialCursor
 	}
-
-	events, unsubscribe := s.status.subscribe()
-	defer unsubscribe()
 
 	const pongWait = 60 * time.Second
 	const pingPeriod = 25 * time.Second
@@ -169,9 +181,20 @@ func (s *Server) statusWebSocket(w http.ResponseWriter, r *http.Request) {
 	}()
 	for {
 		select {
-		case ev := <-events:
-			cursor++
-			msg := map[string]any{"type": "status", "event": ev, "cursor": cursor}
+		case ev := <-liveEvents:
+			// Snapshot/replay can overlap events already buffered for this subscriber.
+			// Sequence numbers make those duplicates harmless and expose any drop.
+			if ev.sequence <= cursor {
+				continue
+			}
+			if ev.sequence > cursor+1 {
+				snap, seq := s.status.snapshot()
+				writeStatusMessage(conn, map[string]any{"type": "status_snapshot", "events": snap, "cursor": seq, "gap": true, "generation": generation})
+				cursor = seq
+				continue
+			}
+			cursor = ev.sequence
+			msg := map[string]any{"type": "status", "event": ev, "cursor": cursor, "generation": generation}
 			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := conn.WriteJSON(msg); err != nil {
 				return

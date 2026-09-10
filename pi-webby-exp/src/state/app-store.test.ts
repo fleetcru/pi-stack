@@ -13,6 +13,9 @@ function resetStore() {
     selectedSessionId: undefined,
     expandedTreeNodes: {},
     pinnedSessionIds: {},
+    runtimeSessions: {},
+    workerHealth: {},
+    statusStream: { status: "idle", available: true },
   })
   localStorage.clear()
 }
@@ -216,5 +219,110 @@ describe("useAppStore", () => {
     useAppStore.getState().togglePinSession("a")
 
     expect(useAppStore.getState().pinnedSessionIds).toEqual({ b: true })
+  })
+
+  // --- Server-wide runtime status ---
+
+  it("applyStatusEvent() stores a session status keyed by session id", () => {
+    useAppStore.getState().applyStatusEvent({
+      type: "session_status",
+      sessionId: "s1",
+      workerId: "local",
+      state: "working",
+      detail: "Running tools",
+      runId: "r1",
+      updatedAt: "t",
+    })
+    const status = useAppStore.getState().runtimeSessions.s1
+    expect(status?.state).toBe("working")
+    expect(status?.detail).toBe("Running tools")
+    expect(status?.runId).toBe("r1")
+  })
+
+  it("applyStatusEvent() keeps admission state from replacing session runtime", () => {
+    useAppStore.getState().applyStatusEvent({
+      type: "session_status",
+      sessionId: "session-a",
+      workerId: "local",
+      state: "working",
+    })
+    useAppStore.getState().applyStatusEvent({
+      type: "session_status",
+      sessionId: "session-a",
+      workerId: "local",
+      state: "queued",
+      reason: "admission",
+      runId: "run-b",
+    })
+    expect(useAppStore.getState().runtimeSessions["session-a"]?.state).toBe("working")
+  })
+
+  it("applyStatusEvent() preserves unhealthy and offline worker states", () => {
+    useAppStore.getState().applyStatusEvent({
+      type: "session_status",
+      workerId: "gpu-box",
+      state: "unhealthy",
+      reason: "heartbeat",
+      updatedAt: "t",
+    })
+    expect(useAppStore.getState().workerHealth["gpu-box"]?.state).toBe("unhealthy")
+    useAppStore.getState().applyStatusEvent({
+      type: "session_status",
+      workerId: "gpu-box",
+      state: "offline",
+      reason: "removed",
+      updatedAt: "t",
+    })
+    expect(useAppStore.getState().workerHealth["gpu-box"]?.state).toBe("offline")
+  })
+
+  it("applyStatusEvent() ignores events with neither session nor worker", () => {
+    useAppStore.getState().applyStatusEvent({
+      type: "session_status",
+      state: "working",
+      updatedAt: "t",
+    })
+    expect(useAppStore.getState().runtimeSessions).toEqual({})
+  })
+
+  it("applyRuntimeInventory() prunes sessions missing from the snapshot", () => {
+    useAppStore.getState().applyStatusEvent({
+      type: "session_status", sessionId: "deleted", state: "working", updatedAt: "t",
+    })
+    useAppStore.getState().applyRuntimeInventory([
+      { id: "inv1", workerId: "local", state: { running: true, runtimeStatus: { state: "idle" } } },
+      { id: "inv2", state: { running: false } },
+    ])
+    expect(useAppStore.getState().runtimeSessions["inv1"]?.state).toBe("idle")
+    expect(useAppStore.getState().runtimeSessions["inv2"]).toBeUndefined()
+    expect(useAppStore.getState().runtimeSessions["deleted"]).toBeUndefined()
+  })
+
+  it("applyRuntimeInventory() preserves stream deltas newer than the request", () => {
+    const requestedAt = Date.now()
+    useAppStore.getState().applyStatusEvent({
+      type: "session_status", sessionId: "s1", state: "working", updatedAt: "t",
+    })
+    useAppStore.getState().applyRuntimeInventory([
+      { id: "s1", workerId: "local", state: { runtimeStatus: { state: "idle" } } },
+    ], requestedAt - 1)
+    expect(useAppStore.getState().runtimeSessions["s1"]?.state).toBe("working")
+  })
+
+  it("setStatusStream() patches stream availability", () => {
+    useAppStore.getState().setStatusStream({ status: "reconnecting", available: false })
+    expect(useAppStore.getState().statusStream).toEqual({ status: "reconnecting", available: false })
+  })
+
+  it("resetRuntimeStatus() clears runtime sessions and worker health", () => {
+    useAppStore.getState().applyStatusEvent({
+      type: "session_status", sessionId: "s1", state: "working", updatedAt: "t",
+    })
+    useAppStore.getState().applyStatusEvent({
+      type: "session_status", workerId: "w1", state: "healthy", updatedAt: "t",
+    })
+    useAppStore.getState().resetRuntimeStatus()
+    expect(useAppStore.getState().runtimeSessions).toEqual({})
+    expect(useAppStore.getState().workerHealth).toEqual({})
   })
 })

@@ -8,6 +8,7 @@ import com.example.picompanion.data.api.HttpResult
 import com.example.picompanion.di.AppModule
 import com.example.picompanion.data.model.CreateSessionRequest
 import com.example.picompanion.data.model.ServerSession
+import com.example.picompanion.data.model.withLiveStatus
 import com.example.picompanion.data.model.visibleGlobalSessions
 import com.example.picompanion.data.model.visibleMachineSessions
 import com.example.picompanion.data.repository.SessionsRepository
@@ -51,6 +52,17 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
   init {
     viewModelScope.launch {
       SessionInventoryState.metadataUpdates.collect(::updateSessionLocally)
+    }
+    viewModelScope.launch {
+      AppModule.serverStatusStream.sessions.collect { live ->
+        val content = _uiState.value as? SessionsUiState.Content ?: return@collect
+        _uiState.value = content.copy(
+          activeSessions = content.activeSessions.map { it.withLiveStatus(live[it.id]) },
+          globalSessions = content.globalSessions.map { global ->
+            global.copy(session = global.session.withLiveStatus(live[global.session.id] ?: live[global.id]))
+          },
+        )
+      }
     }
     viewModelScope.launch {
       var observedServerId: String? = null
@@ -168,10 +180,13 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
           return@launch
         }
 
+        val live = AppModule.serverStatusStream.sessions.value
         _uiState.value = SessionsUiState.Content(
-          activeSessions = activeSessions,
+          activeSessions = activeSessions.map { it.withLiveStatus(live[it.id]) },
           machineSessions = machineSessions,
-          globalSessions = globalSessions,
+          globalSessions = globalSessions.map { global ->
+            global.copy(session = global.session.withLiveStatus(live[global.session.id] ?: live[global.id]))
+          },
           refreshing = false,
         )
         contentServerId = server.id

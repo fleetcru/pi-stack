@@ -88,7 +88,7 @@ func TestPiProcessRequestWaiterLifecycle(t *testing.T) {
 
 func runningTestProcess(t *testing.T) (*PiProcess, io.ReadCloser) {
 	t.Helper()
-	cfg := Config{EventHistoryMax: 20, EventHistoryBytes: 1024}
+	cfg := Config{EventHistoryMax: 20, EventHistoryBytes: 1024, RequestTimeout: 5 * time.Second}
 	p := NewPiProcess(SessionSpec{ID: "test-session", CWD: t.TempDir()}, cfg, testLogger())
 	reader, writer := io.Pipe()
 	p.mu.Lock()
@@ -110,4 +110,70 @@ func readRPCCommand(t *testing.T, reader io.Reader) RPCCommand {
 		t.Fatalf("decode RPC command: %v", err)
 	}
 	return command
+}
+
+// Regression: activePromptID must be assigned under the same lock that sets
+// turnActive. A very fast failed prompt response dispatched between the
+// stdin write and a late assignment would otherwise match neither the waiter
+// table nor activePromptID, leaving turnActive stuck forever.
+func TestSendPromptRejectedImmediatelyReleasesTurn(t *testing.T) {
+	for attempt := 0; attempt < 200; attempt++ {
+		p, reader := runningTestProcess(t)
+
+		// Reader goroutine: echo a failed response for every prompt command
+		// as fast as possible, racing Send's post-unlock bookkeeping.
+		readDone := make(chan struct{})
+		go func() {
+			defer close(readDone)
+			defer reader.Close()
+			for {
+				command, err := readRPCCommandOrEOF(reader)
+				if err != nil || command == nil {
+					return
+				}
+				if id, ok := command["id"].(string); ok && command["type"] == "prompt" {
+					p.dispatch(RPCEvent{"type": "response", "id": id, "success": false, "error": "rejected"})
+				}
+			}
+		}()
+
+		if err := p.Send(RPCCommand{"type": "prompt", "id": "fast-" + time.Now().Format("150405.000000000"), "message": "hi"}); err != nil {
+			t.Fatalf("attempt %d: Send failed: %v", attempt, err)
+		}
+		// End the synthetic command stream after the one command. Without this,
+		// the echo goroutine waits forever for a second line.
+		p.mu.Lock()
+		_ = p.stdin.Close()
+		p.stdin = nil
+		p.mu.Unlock()
+
+		// Give a wrong late assignment no room: by the time Send returns, the
+		// rejected response may already have been dispatched.
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			p.mu.RLock()
+			stuck := p.turnActive
+			p.mu.RUnlock()
+			if !stuck {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("attempt %d: turnActive stuck after rejected prompt", attempt)
+			}
+			time.Sleep(time.Millisecond)
+		}
+		<-readDone
+	}
+}
+
+func readRPCCommandOrEOF(r io.Reader) (RPCCommand, error) {
+	line, err := bufio.NewReader(r).ReadBytes('\n')
+	if len(line) == 0 {
+		return nil, err
+	}
+	var command RPCCommand
+	if err := json.Unmarshal(line, &command); err != nil {
+		return nil, err
+	}
+	return command, nil
 }

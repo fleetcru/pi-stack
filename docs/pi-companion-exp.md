@@ -8,12 +8,13 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 `SessionDetailViewModel` also renders provider and Pi errors from completed assistant messages in the timeline and clears the sending state.
 
 ### API
-- `data/api/PiServerClient.kt` — the OkHttp-based REST client: capabilities, global and per-session model lists, session CRUD, prompt/RPC POSTs, git endpoints, file browsing, extension-UI responses, worker and daemon endpoints. Parses into the model classes; every response uses `response.use {}` to avoid connection leaks.
+- `data/api/PiServerClient.kt` — the OkHttp-based REST client: capabilities, global and per-session model lists, runtime-only session inventory, session CRUD, prompt/RPC POSTs, git endpoints, file browsing, extension-UI responses, status tickets, run cancellation, worker and daemon endpoints. Parses into the model classes; every response uses `response.use {}` to avoid connection leaks.
 - `data/api/HttpResult.kt` — sealed result wrapper (Success/HttpError/NetworkError) the repositories and ViewModels pattern-match on.
 - `data/api/JsonConfig.kt` — shared kotlinx-serialization configuration (lenient parsing, unknown-key tolerance) so server JSON variations don't crash the app.
 
 ### Models
-- `data/model/SessionModels.kt` — session specs/summaries, history messages (handles both OpenAI `toolCall`/`toolResult` and legacy Anthropic `tool_use`/`tool` shapes).
+- `data/model/SessionModels.kt` — session specs/summaries, including worker and transport routing fields, plus history messages (handles both OpenAI `toolCall`/`toolResult` and legacy Anthropic `tool_use`/`tool` shapes).
+- `data/model/LiveStatusModels.kt` — maps server-wide runtime status onto session summaries without replacing inventory metadata.
 - `data/model/DaemonModels.kt` — daemon status, diagnostics, capabilities.
 - `data/model/WorkerModels.kt` — worker registration/listing payloads.
 - `data/model/ExtensionUiModels.kt` — `extension_ui_request` payloads (select/confirm/input/ask_user) and the response builder the dialogs submit.
@@ -27,7 +28,8 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 - `data/settings/SecureTokenStore.kt` — token storage via Android Keystore/EncryptedSharedPreferences so the bearer token never sits in plaintext prefs.
 
 ### Live events
-- `data/websocket/SessionEventSocket.kt` — OkHttp WebSocket/SSE transport for one session; emits `SocketEvent`s into a bounded `Channel(2000)`.
+- `data/websocket/SessionEventSocket.kt` — detailed OkHttp WebSocket/SSE transport for the selected session; emits `SocketEvent`s into a bounded `Channel(2000)`.
+- `data/websocket/ServerStatusStream.kt` — one app-scoped, read-only status socket for the selected server. It obtains a scoped status ticket, reconnects with cursor and hub generation, handles snapshots/replay/gaps, keeps session runtime separate from queued admission runs, and publishes session, active-run, worker-health, and connection `StateFlow`s.
 - `data/websocket/SocketEvent.kt` — transport event type (event name, JSON payload, server event ID).
 - `data/websocket/EventSequenceTracker.kt` — dedup + gap detection over the server's monotonic event IDs. 2K-entry LinkedHashMap with eldest eviction and a generation counter; preserves the dup window across reconnects so replayed events aren't rendered twice, and flags `events_lost` gaps that trigger a history resync.
 
@@ -46,7 +48,7 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 - `SessionDrawer.kt`, `DirectoryBrowserSheet.kt`, `SectionCard.kt`, `StatusPill.kt`, `LoadingScreen.kt` — sheets, section wrappers, status chips, loading states.
 
 ### Main screen (`ui/main/`)
-- `HomeViewModel.kt` — dashboard state: daemon health, worker counts, recent sessions; polls REST and merges inventory.
+- `HomeViewModel.kt` — dashboard state: daemon health, worker counts, recent sessions, and active/queued runs. It merges runtime-only REST inventory with the app-scoped status stream and can cancel queued runs or abort active local runs.
 - `MainScreen.kt`, `ShellScreen.kt` — dashboard composition and the app shell with bottom navigation.
 
 ### Sessions list (`ui/sessions/`)

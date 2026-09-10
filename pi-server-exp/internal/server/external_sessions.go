@@ -36,32 +36,32 @@ type ExternalCommand struct {
 }
 
 type ExternalSession struct {
-	ID               string
-	CWD              string
-	Title            string
-	SessionPath      string
-	Model            map[string]any
-	AvailableModels  []any
+	ID                string
+	CWD               string
+	Title             string
+	SessionPath       string
+	Model             map[string]any
+	AvailableModels   []any
 	AvailableCommands []any
-	ThinkingLevel    string
-	LastUsage        map[string]any
-	TotalCost        float64
-	MessageCount     int
-	Status           string
-	PendingUIRequest RPCEvent
-	UpdatedAt        time.Time
-	next             uint64
-	eventBytes       int
-	events           []EventRecord
-	subs             map[chan RPCEvent]struct{}
-	commands         []ExternalCommand
-	relay            chan ExternalCommand
-	relayStop        chan struct{}
-	relayGeneration  uint64
-	RelayConnected   bool
-	RelayLatencyMS   int64
-	TaskID           string
-	RunID            string
+	ThinkingLevel     string
+	LastUsage         map[string]any
+	TotalCost         float64
+	MessageCount      int
+	Status            string
+	PendingUIRequest  RPCEvent
+	UpdatedAt         time.Time
+	next              uint64
+	eventBytes        int
+	events            []EventRecord
+	subs              map[chan RPCEvent]struct{}
+	commands          []ExternalCommand
+	relay             chan ExternalCommand
+	relayStop         chan struct{}
+	relayGeneration   uint64
+	RelayConnected    bool
+	RelayLatencyMS    int64
+	TaskID            string
+	RunID             string
 	// leaseID identifies the bridge instance that owns this session; leaseToken
 	// must be presented on HTTP command polling and ack. A different bridge
 	// re-registering rotates the lease and detaches any stale relay.
@@ -344,9 +344,6 @@ func (r *ExternalRegistry) publish(id string, ev RPCEvent) bool {
 	}
 	if onLifecycle != nil && (eventType == "agent_start" || eventType == "agent_end" || eventType == "agent_settled") {
 		onLifecycle(id, eventType)
-	}
-	if onStatus != nil && statusChanged {
-		onStatus(id, status)
 	}
 	if onStatus != nil && statusChanged {
 		onStatus(id, status)

@@ -129,7 +129,7 @@ describe("PiServerClient", () => {
     expect(result).toEqual(caps)
   })
 
-  it("listSessions() hits /v1/sessions?scope=all&include=state", async () => {
+  it("listSessions() hits /v1/sessions?scope=all&include=runtime", async () => {
     const body = { sessions: [], partialFailures: [] }
     const fetchFn = mockFetch([{ status: 200, body }])
     const client = makeClient(fetchFn)
@@ -140,7 +140,7 @@ describe("PiServerClient", () => {
     const u = new URL(String(url))
     expect(u.pathname).toBe("/v1/sessions")
     expect(u.searchParams.get("scope")).toBe("all")
-    expect(u.searchParams.get("include")).toBe("state")
+    expect(u.searchParams.get("include")).toBe("runtime")
   })
 
   it("createSession() sends POST with JSON body", async () => {

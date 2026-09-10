@@ -41,6 +41,8 @@ data class FileContentResponse(
 @Serializable
 data class ServerSession(
   val id: String,
+  val workerId: String? = null,
+  val transport: String? = null,
   val cwd: String? = null,
   val args: List<String> = emptyList(),
   val status: String? = null,

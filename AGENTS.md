@@ -344,6 +344,7 @@ Companion/Webby
 - **WebSocket** (`/v1/sessions/{id}/ws?ticket=...`): Bidirectional, ticket auth, used by Webby and as fallback
 - **SSE** (`/v1/sessions/{id}/events/stream?since=N`): Read-only, auto-reconnect via Last-Event-ID, used by Companion
 - **Both coexist** — clients choose their transport. Server supports both.
+- **Server-wide status WebSocket** (`/v1/status/ws?ticket=...`): Read-only lightweight lifecycle stream. Webby, Desktop, and Companion keep one per selected server while retaining one detailed session connection for the selected conversation. Admission events are keyed by run ID so queued work cannot overwrite an active session's runtime state.
 
 ## Key Design Decisions
 
@@ -462,7 +463,7 @@ Key invariants:
 | `PI_SERVER_DISTRIBUTED_RUN_TIMEOUT` | `2h` | Fallback lease timeout for missing distributed lifecycle events (0 = disabled) |
 | `PI_SERVER_PI_BINARY` | `pi` | Path to Pi CLI |
 | `PI_SERVER_PI_EXTENSIONS` | _(none)_ | Extensions to load |
-| `PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL` | `0` | Event-journal fsync interval; `0` keeps strict per-event durability |
+| `PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL` | `100ms` | Event-journal fsync batching interval; set `0` for strict per-event durability |
 
 ## Testing
 

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -36,6 +38,7 @@ type SessionSpec struct {
 
 type SessionRegistry struct {
 	mu          sync.RWMutex
+	saveMu      sync.Mutex
 	path        string
 	sessions    map[string]*PiProcess
 	specs       map[string]SessionSpec
@@ -73,6 +76,10 @@ func (r *SessionRegistry) Save() error {
 	if r.path == "" {
 		return nil
 	}
+	// Serialize full-file snapshots. A later mutation can race an earlier
+	// caller into Save, so capture state only after acquiring the write gate.
+	r.saveMu.Lock()
+	defer r.saveMu.Unlock()
 	r.mu.RLock()
 	specs := make([]SessionSpec, 0, len(r.specs))
 	for _, spec := range r.specs {
@@ -187,26 +194,37 @@ func (r *SessionRegistry) UpdateMetadata(id string, update SessionMetadataUpdate
 		r.mu.Unlock()
 		return SessionSpec{}, fmt.Errorf("session not found: %s", id)
 	}
-	if update.Project != nil {
+	changed := false
+	if update.Project != nil && spec.Project != *update.Project {
 		spec.Project = *update.Project
+		changed = true
 	}
-	if update.Title != nil {
+	if update.Title != nil && spec.Title != *update.Title {
 		spec.Title = *update.Title
+		changed = true
 	}
-	if update.TaskType != nil {
+	if update.TaskType != nil && spec.TaskType != *update.TaskType {
 		spec.TaskType = *update.TaskType
+		changed = true
 	}
-	if update.Owner != nil {
+	if update.Owner != nil && spec.Owner != *update.Owner {
 		spec.Owner = *update.Owner
+		changed = true
 	}
-	if update.Labels != nil {
+	if update.Labels != nil && !slices.Equal(spec.Labels, *update.Labels) {
 		spec.Labels = append([]string(nil), (*update.Labels)...)
+		changed = true
 	}
-	if update.Metadata != nil {
+	if update.Metadata != nil && !maps.Equal(spec.Metadata, *update.Metadata) {
 		spec.Metadata = make(map[string]string, len(*update.Metadata))
 		for k, v := range *update.Metadata {
 			spec.Metadata[k] = v
 		}
+		changed = true
+	}
+	if !changed {
+		r.mu.Unlock()
+		return spec, nil
 	}
 	spec.UpdatedAt = time.Now().UTC()
 	r.specs[id] = spec

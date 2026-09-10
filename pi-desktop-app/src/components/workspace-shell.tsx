@@ -19,10 +19,11 @@ import {
   Sun,
 } from "lucide-react"
 
-import { useGlobalSessions, useMachineSessions, usePiServerClient, useServerHealth, useSessions, useWorkers } from "@/api/hooks"
+import { useGlobalSessions, useMachineSessions, usePiServerClient, useServerHealth, useServerStatusSocket, useSessions, useWorkers } from "@/api/hooks"
 import { PiServerApiError, type ApiSession, type ApiWorker, type GlobalSession, type MachineSession } from "@/api/client"
-import { CapacityControl } from "@/components/capacity-control"
+import { ActiveRunsList } from "@/components/active-runs-list"
 import { DesktopTitleBar } from "@/components/desktop-title-bar"
+import { CapacityControl } from "@/components/capacity-control"
 import { CreateSessionDialog } from "@/components/create-session-dialog"
 import { QuickSessionComposer } from "@/components/quick-session-composer"
 import { GlobalSessionList, MachineSessionList } from "@/components/machine-session-list"
@@ -65,6 +66,9 @@ export function WorkspaceShell() {
   const { data: globalResult } = useGlobalSessions(deferredDataReady)
   const { data: machineResult } = useMachineSessions(deferredDataReady)
   const client = usePiServerClient()
+  // Exactly one server-wide status socket per selected server. The selected
+  // session's detailed socket is owned separately by SessionWorkspace.
+  useServerStatusSocket()
 
   const sessions = useMemo(() => sessionResult?.sessions ?? [], [sessionResult?.sessions])
   // Local sessions already appear in the main tree; repeating them under
@@ -186,6 +190,9 @@ export function WorkspaceShell() {
                       badge={health?.capacity ? `${health.capacity.activeSessions}/${health.capacity.maxSessions}` : undefined}
                     >
                       <CapacityControl capacity={health?.capacity} client={client} />
+                      {runs.length > 0 && (
+                        <ActiveRunsList sessions={sessions} onOpenSession={openSession} />
+                      )}
                       {sessionsLoading ? (
                         <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
                           <LoaderCircle className="size-3 animate-spin" />

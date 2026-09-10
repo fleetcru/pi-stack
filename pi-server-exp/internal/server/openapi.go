@@ -54,8 +54,10 @@ func schemas() map[string]any {
 		"StatusEvent": obj(map[string]any{
 			"type":      map[string]any{"type": "string", "enum": []string{"session_status"}},
 			"sessionId": str(), "workerId": str(),
-			"state":  map[string]any{"type": "string", "description": "created|starting|idle|working|waiting_for_input|failed|stopped|reconnecting|healthy|offline"},
-			"reason": str(), "detail": str(), "runId": str(), "updatedAt": str(),
+			"state":  map[string]any{"type": "string", "description": "created|starting|queued|idle|working|waiting_for_input|failed|stopped|reconnecting|cancelled|healthy|offline"},
+			"reason": str(), "detail": str(), "runId": str(),
+			"position": map[string]string{"type": "integer", "description": "1-based admission queue position (state=queued only)"},
+			"queuedAt": str(), "updatedAt": str(),
 		}, "type", "state", "updatedAt"),
 		"StatusTicketResponse": obj(map[string]any{"ticket": str(), "expiresAt": str(), "ws": str()}, "ticket", "expiresAt", "ws"),
 		"AdmissionRun": obj(map[string]any{

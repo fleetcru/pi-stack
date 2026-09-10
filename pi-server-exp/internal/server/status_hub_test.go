@@ -28,6 +28,22 @@ func TestStatusHubPublishSuppressesUnchangedState(t *testing.T) {
 	}
 }
 
+func TestStatusHubKeepsQueuedRunSeparateFromSessionRuntime(t *testing.T) {
+	hub := newStatusHub()
+	hub.publish("s1", "local", "working", "assistant", "Generating", "run-1")
+	hub.publishAdmission("s1", "local", "queued", "admission", "Waiting", "run-2", 1, time.Now())
+
+	snapshot, _ := hub.snapshot()
+	if len(snapshot) != 2 {
+		t.Fatalf("want session runtime plus queued run, got %#v", snapshot)
+	}
+	hub.publishAdmission("s1", "local", "cancelled", "admission", "Cancelled", "run-2", 0, time.Now())
+	snapshot, _ = hub.snapshot()
+	if len(snapshot) != 1 || snapshot[0].State != "working" {
+		t.Fatalf("cancelled run should leave working session intact: %#v", snapshot)
+	}
+}
+
 func TestStatusHubReplayAndGap(t *testing.T) {
 	hub := newStatusHub()
 	for i := 0; i < statusHubReplayLimit+10; i++ {

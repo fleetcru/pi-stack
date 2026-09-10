@@ -1,5 +1,6 @@
 package com.example.picompanion.data.api
 
+import android.net.Uri
 import com.example.picompanion.data.model.CreateSessionRequest
 import com.example.picompanion.data.model.CreateSessionResponse
 import com.example.picompanion.data.model.DirectoryListResponse
@@ -77,9 +78,9 @@ class PiServerClient(
 
   // ── Sessions ───────────────────────────────────────────
 
-  /** Includes current runtime status and coordinator-mapped remote sessions. */
+  /** Runtime-only inventory. This never sends get_state to running Pi processes. */
   fun listSessions(server: ServerEntry): HttpResult<SessionListResponse> {
-    return doGet(server, "/v1/sessions?scope=all&include=state", emptyMap(), SessionListResponse.serializer())
+    return doGet(server, "/v1/sessions?scope=all&include=runtime", emptyMap(), SessionListResponse.serializer())
   }
 
   /** Fetch only the most recent sessions for the home screen. */
@@ -89,7 +90,7 @@ class PiServerClient(
     val boundedLimit = limit.coerceIn(1, 200)
     return doGet(
       server,
-      "/v1/sessions?scope=all&include=state&limit=$boundedLimit",
+      "/v1/sessions?scope=all&include=runtime&limit=$boundedLimit",
       emptyMap(),
       SessionListResponse.serializer(),
     )
@@ -167,6 +168,14 @@ class PiServerClient(
     val body = json.encodeToString(IssueTicketRequest(sessionId))
     return doPost(server, "/v1/ws-tickets", body, WebSocketTicketResponse.serializer())
   }
+
+  /** Issues a ticket scoped to the read-only server-wide status socket. */
+  fun issueStatusTicket(server: ServerEntry): HttpResult<WebSocketTicketResponse> =
+    doPost(server, "/v1/status-tickets", "{}", WebSocketTicketResponse.serializer())
+
+  /** Cancels a queued run. Active local runs should use the session abort action. */
+  fun cancelRun(server: ServerEntry, runId: String): HttpResult<JsonObject> =
+    doPost(server, "/v1/runs/${Uri.encode(runId)}/cancel", "{}", JsonObject.serializer())
 
   /** Sends any existing pi-server session action without duplicating HTTP code. */
   fun steer(server: ServerEntry, sessionId: String, message: String): HttpResult<Unit> =
