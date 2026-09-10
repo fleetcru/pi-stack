@@ -27,6 +27,7 @@ React 19 + Vite 8 + Tailwind v4 + shadcn/ui browser client for pi-server. Most d
 - `server-connections-dialog.tsx` — manage multiple pi-server connections (name, URL, token, remember-token) backed by the persisted store. Connection hints use the shared `3142` server port.
   The dialog presents active-server highlighting, an empty state, inline editing, and a two-step remove confirmation.
 - `worker-management-dialog.tsx` — manage remote workers through the server worker CRUD API, including add, edit, health/status refresh, and confirmed removal; the local worker is immutable.
+- `server-admin-page.tsx` — full server administration route (\`/admin\`), mirrored with Desktop. It switches among configured servers and manages overview/warnings, all persisted settings (live vs restart-required), remote workers, and trusted-device credentials through the bearer-authenticated \`/v1/admin/*\`, \`/v1/workers/*\`, and \`/v1/devices/*\` APIs.
 - `machine-session-list.tsx` — browse Pi sessions discovered on the machine but not managed by the server; can attach/adopt them.
 - `changed-files-list.tsx` — compact list of git working-tree changes used in the inspector and commit dialog.
 - `capacity-control.tsx` — admin UI for adjusting server capacity limits at runtime (talks to the admin settings endpoint).

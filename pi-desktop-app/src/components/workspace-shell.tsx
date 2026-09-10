@@ -14,6 +14,7 @@ import {
   PanelRight,
   Search,
   Server,
+  ShieldCheck,
   Cpu,
   Sun,
 } from "lucide-react"
@@ -21,6 +22,7 @@ import {
 import { useGlobalSessions, useMachineSessions, usePiServerClient, useServerHealth, useSessions, useWorkers } from "@/api/hooks"
 import { PiServerApiError, type ApiSession, type ApiWorker, type GlobalSession, type MachineSession } from "@/api/client"
 import { CapacityControl } from "@/components/capacity-control"
+import { DesktopTitleBar } from "@/components/desktop-title-bar"
 import { CreateSessionDialog } from "@/components/create-session-dialog"
 import { QuickSessionComposer } from "@/components/quick-session-composer"
 import { GlobalSessionList, MachineSessionList } from "@/components/machine-session-list"
@@ -92,16 +94,21 @@ export function WorkspaceShell() {
 
   if (!connection) {
     return (
-      <main className="flex h-svh items-center justify-center bg-background p-5 text-foreground">
-        <FirstServerOnboarding onOpenServers={() => setServerConnectionsOpen(true)} onUseLocal={() => useAppStore.getState().addServer({ baseUrl: `http://127.0.0.1:3142`, name: "Local Pi" })} />
-        <ServerConnectionsDialog open={serverConnectionsOpen} onOpenChange={setServerConnectionsOpen} />
-        <WorkerManagementDialog open={workerManagementOpen} onOpenChange={setWorkerManagementOpen} />
+      <main className="flex h-svh flex-col bg-background text-foreground">
+        <DesktopTitleBar />
+        <div className="flex min-h-0 flex-1 items-center justify-center p-5">
+          <FirstServerOnboarding onOpenServers={() => setServerConnectionsOpen(true)} onUseLocal={() => useAppStore.getState().addServer({ baseUrl: `http://127.0.0.1:3142`, name: "Local Pi" })} />
+          <ServerConnectionsDialog open={serverConnectionsOpen} onOpenChange={setServerConnectionsOpen} />
+          <WorkerManagementDialog open={workerManagementOpen} onOpenChange={setWorkerManagementOpen} />
+        </div>
       </main>
     )
   }
 
   return (
-    <main className="relative h-svh overflow-hidden bg-background p-3 text-foreground">
+    <main className="relative flex h-svh flex-col overflow-hidden bg-background text-foreground">
+      <DesktopTitleBar />
+      <div className="min-h-0 flex-1 overflow-hidden p-3">
       {healthError && (
         <div role="alert" className="absolute top-3 right-3 z-10 flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive shadow-sm">
           <span>
@@ -136,6 +143,7 @@ export function WorkspaceShell() {
             {leftSidebarCollapsed ? (
               <CollapsedSidebar
                 onHome={() => openSession(undefined)}
+                onAdmin={() => navigate("/admin")}
                 onExpand={() => {
                   leftPanelRef.current?.expand()
                   setLeftSidebarCollapsed(false)
@@ -148,6 +156,7 @@ export function WorkspaceShell() {
                   onCreate={() => setCreateSessionOpen(true)}
                   onManageServers={() => setServerConnectionsOpen(true)}
                   onManageWorkers={() => setWorkerManagementOpen(true)}
+                  onAdmin={() => navigate("/admin")}
                   onCollapse={() => {
                     leftPanelRef.current?.collapse()
                     setLeftSidebarCollapsed(true)
@@ -263,6 +272,7 @@ export function WorkspaceShell() {
           onCreate={() => setCreateSessionOpen(true)}
           onManageServers={() => setServerConnectionsOpen(true)}
           onManageWorkers={() => setWorkerManagementOpen(true)}
+          onAdmin={() => navigate("/admin")}
         />
       </div>
       <CreateSessionDialog
@@ -277,6 +287,7 @@ export function WorkspaceShell() {
         open={workerManagementOpen}
         onOpenChange={setWorkerManagementOpen}
       />
+      </div>
     </main>
   )
 }
@@ -306,6 +317,7 @@ function MobileWorkspace({
   onCreate,
   onManageServers,
   onManageWorkers,
+  onAdmin,
 }: {
   selectedSession?: ApiSession
   sessions: ApiSession[]
@@ -319,6 +331,7 @@ function MobileWorkspace({
   onCreate: () => void
   onManageServers: () => void
   onManageWorkers: () => void
+  onAdmin: () => void
 }) {
   const { theme, setTheme } = useTheme()
   const isDark = theme === "dark"
@@ -347,6 +360,7 @@ function MobileWorkspace({
                 <Button size="icon-xs" variant="ghost" aria-label="Go to home" onClick={() => { setSessionsOpen(false); onHome() }}><House /></Button>
                 <Button size="icon-xs" variant="ghost" aria-label="Manage Pi servers" onClick={onManageServers}><Server /></Button>
                 <Button size="icon-xs" variant="ghost" aria-label="Manage workers" onClick={onManageWorkers}><Cpu /></Button>
+                <Button size="icon-xs" variant="ghost" aria-label="Server administration" onClick={() => { setSessionsOpen(false); onAdmin() }}><ShieldCheck /></Button>
                 <Button size="icon-xs" variant="ghost" aria-label={isDark ? "Use light theme" : "Use dark theme"} onClick={() => setTheme(isDark ? "light" : "dark")}>
                   {isDark ? <Sun /> : <Moon />}
                 </Button>
@@ -389,12 +403,14 @@ function ServerTreeHeader({
   onCreate,
   onManageServers,
   onManageWorkers,
+  onAdmin,
 }: {
   onCollapse: () => void
   onHome: () => void
   onCreate: () => void
   onManageServers: () => void
   onManageWorkers: () => void
+  onAdmin: () => void
 }) {
   const { theme, setTheme } = useTheme()
   const isDark = theme === "dark"
@@ -420,6 +436,7 @@ function ServerTreeHeader({
           <Server />
         </Button>
         <Button size="icon-xs" variant="ghost" aria-label="Manage workers" title="Manage workers" onClick={onManageWorkers}><Cpu /></Button>
+        <Button size="icon-xs" variant="ghost" aria-label="Server administration" title="Server administration" onClick={onAdmin}><ShieldCheck /></Button>
         <Button
           size="icon-xs"
           variant="ghost"
@@ -443,7 +460,7 @@ function ServerTreeHeader({
   )
 }
 
-function CollapsedSidebar({ onExpand, onHome }: { onExpand: () => void; onHome: () => void }) {
+function CollapsedSidebar({ onExpand, onHome, onAdmin }: { onExpand: () => void; onHome: () => void; onAdmin: () => void }) {
   const { theme, setTheme } = useTheme()
   const isDark = theme === "dark"
 
@@ -461,6 +478,7 @@ function CollapsedSidebar({ onExpand, onHome }: { onExpand: () => void; onHome: 
         <PanelLeftOpen />
       </Button>
       <div className="flex-1" />
+      <Button size="icon-xs" variant="ghost" aria-label="Server administration" title="Server administration" onClick={onAdmin}><ShieldCheck /></Button>
       <ThemeToggle
         isDark={isDark}
         onToggle={() => setTheme(isDark ? "light" : "dark")}

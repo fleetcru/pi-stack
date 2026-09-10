@@ -108,9 +108,12 @@ func schemas() map[string]any {
 			"restartMax": map[string]any{"type": "integer"}, "restartBackoff": str(),
 			"eventHistoryMax": map[string]any{"type": "integer"}, "eventHistoryBytes": map[string]any{"type": "integer"},
 			"maxWatches": map[string]any{"type": "integer"}, "debug": schemaBool(),
-		}, "addr", "piBinary", "dataDir"),
+		}, "addr", "piBinary", "extensions", "cwd", "dataDir", "allowedOrigins", "allowedRoots", "allowedWorkerHosts",
+			"shutdownTimeout", "requestTimeout", "readTimeout", "writeTimeout", "idleTimeout", "maxSessions", "maxActiveRuns",
+			"maxRunsPerSession", "maxRunsPerWorker", "maxQueuedRuns", "distributedRunTimeout", "restartMax", "restartBackoff",
+			"eventHistoryMax", "eventHistoryBytes", "maxWatches", "debug"),
+		"AdminSettingsUpdateResponse": obj(map[string]any{"ok": schemaBool(), "restartRequired": schemaBool()}, "ok", "restartRequired"),
 		"AdminState": obj(map[string]any{
-			"csrf":                  str(),
 			"authenticationEnabled": schemaBool(),
 			"overview":              map[string]any{"type": "object", "additionalProperties": true},
 			"settings":              ref("AdminSettings"),
@@ -134,7 +137,7 @@ func paths() map[string]any {
 	p["/v1/devices/{id}"] = map[string]any{"delete": op("Revoke trusted device credential", "RPCResponse", "")}
 	p["/v1/devices/{id}/purge"] = map[string]any{"delete": op("Delete trusted device credential", "RPCResponse", "")}
 	p["/v1/admin/state"] = map[string]any{"get": op("Admin state snapshot", "AdminState", "")}
-	p["/v1/admin/settings"] = map[string]any{"put": op("Update admin settings", "AdminSettings", "AdminSettings")}
+	p["/v1/admin/settings"] = map[string]any{"put": op("Update admin settings", "AdminSettingsUpdateResponse", "AdminSettings")}
 	p["/v1/scheduler"] = map[string]any{"get": op("Scheduler admission status", "RPCResponse", "")}
 	p["/openapi.json"] = map[string]any{"get": op("OpenAPI document", "RPCResponse", "")}
 	p["/v1/capabilities"] = map[string]any{"get": op("API capabilities", "Capabilities", "")}

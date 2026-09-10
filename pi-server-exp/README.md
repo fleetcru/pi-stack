@@ -99,18 +99,17 @@ Environment variables:
 
 The default setup trusts every device on the home LAN and Tailscale network and does not require a token. Set `PI_SERVER_AUTH_TOKEN` if that network includes devices that should not control Pi. Public browser origins remain blocked by the built-in CORS policy.
 
-## Admin dashboard
+## Server administration
 
-Open `http://<server-address>/admin` for the embedded administration dashboard. Sign in with the same value configured in `PI_SERVER_AUTH_TOKEN`; the token is exchanged for an eight-hour, HttpOnly, SameSite admin cookie and is never displayed by the dashboard. When authentication is disabled on a loopback-only server, the dashboard opens directly.
+The server no longer ships an embedded HTML dashboard. Administration is available through the client applications (Webby at `/admin`, Desktop at `/admin`) and the bearer-authenticated JSON API:
 
-The first dashboard version provides:
+- `GET /v1/admin/state` — uptime, API version, health warnings, session/worker counts, scheduler pressure, plus the persisted settings and their effective/live/restart-required state;
+- `PUT /v1/admin/settings` — atomically persist and hot-apply the non-secret server settings;
+- `GET/POST /v1/devices`, `DELETE /v1/devices/{id}`, `DELETE /v1/devices/{id}/purge` — trusted-device administration.
 
-- server uptime, API version, health warnings, session/worker counts, and scheduler pressure;
-- live editing of session, active-run, per-session, per-worker, and queue limits;
-- editing of all other non-secret server settings with validation and clear restart-required labels;
-- effective, pending, and configuration-source indicators.
+These endpoints require the exact bootstrap bearer token when `PI_SERVER_AUTH_TOKEN` is set and are open when authentication is disabled. Paired-device tokens cannot read state or change settings.
 
-Settings are written atomically with owner-only permissions to `admin-config.json` under the bootstrap `PI_SERVER_DATA_DIR`. Persisted admin settings override environment variables at the next startup; explicitly supplied CLI flags remain authoritative. Startup-only changes require a manual service restart—the dashboard never attempts to restart systemd, Task Scheduler, or foreground processes itself. The authentication token is intentionally not stored in `admin-config.json` and remains controlled by `PI_SERVER_AUTH_TOKEN`.
+Settings are written atomically with owner-only permissions to `admin-config.json` under the bootstrap `PI_SERVER_DATA_DIR`. Persisted admin settings override environment variables at the next startup; explicitly supplied CLI flags remain authoritative. Startup-only changes require a manual service restart — the API never restarts systemd, Task Scheduler, or foreground processes itself. The authentication token is intentionally not stored in `admin-config.json` and remains controlled by `PI_SERVER_AUTH_TOKEN`.
 
 ## Scheduling and history
 

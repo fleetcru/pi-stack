@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -189,7 +190,12 @@ func (s *Server) purgeDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) requireBootstrap(w http.ResponseWriter, r *http.Request) bool {
-	if s.cfg.AuthToken == "" || r.Header.Get("Authorization") != "Bearer "+s.cfg.AuthToken {
+	if s.cfg.AuthToken == "" {
+		return true
+	}
+	expected := "Bearer " + s.cfg.AuthToken
+	provided := r.Header.Get("Authorization")
+	if subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
 		writeErrorCode(w, r, http.StatusForbidden, CodeForbidden, "bootstrap authorization required")
 		return false
 	}

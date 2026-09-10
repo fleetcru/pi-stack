@@ -210,8 +210,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /admin", s.adminPage)
-	mux.HandleFunc("/admin/", s.adminRoot)
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /v1/capabilities", s.capabilities)
 	mux.HandleFunc("GET /v1/models", s.listAvailableModels)

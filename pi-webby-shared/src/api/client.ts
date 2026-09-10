@@ -10,6 +10,54 @@ export type PromptRequest = components["schemas"]["PromptRequest"]
 export type SessionMetadataUpdate =
   components["schemas"]["SessionMetadataUpdate"]
 export type WSTicket = components["schemas"]["WSTicketResponse"]
+export type AdminSettings = components["schemas"]["AdminSettings"]
+
+export interface AdminSchedulerOverview {
+  active: number
+  queued: number
+  globalLimit: number
+  perSessionLimit: number
+  perWorkerLimit: number
+  queueLimit: number
+  sessions: Record<string, number>
+  workers: Record<string, number>
+}
+
+export interface AdminState {
+  authenticationEnabled: boolean
+  overview: {
+    apiVersion: string
+    uptimeSeconds: number
+    sessions: {
+      active: number
+      registered: number
+      byTransport: Record<string, number>
+      max: number
+    }
+    workers: { total: number; unhealthy: number }
+    scheduler: AdminSchedulerOverview
+    warnings: string[]
+    configPath: string
+  }
+  settings: AdminSettings
+  effectiveSettings: AdminSettings
+  sources: Record<string, string>
+  pairingEndpoints: Array<{ label: string; url: string }>
+  runtimeFields: string[]
+  restartRequired: boolean
+}
+
+export interface TrustedDevice {
+  id: string
+  name: string
+  createdAt: string
+  lastSeen: string
+  revokedAt?: string
+}
+
+export interface CreatedTrustedDevice extends TrustedDevice {
+  token: string
+}
 
 export interface AvailableServerModel {
   provider: string
@@ -255,6 +303,30 @@ export class PiServerClient {
     return this.request("/v1/scheduler")
   }
 
+  adminState(): Promise<AdminState> {
+    return this.request("/v1/admin/state")
+  }
+
+  updateAdminSettings(settings: AdminSettings): Promise<{ ok: boolean; restartRequired: boolean }> {
+    return this.request("/v1/admin/settings", { method: "PUT", body: settings })
+  }
+
+  listDevices(): Promise<{ devices: TrustedDevice[] }> {
+    return this.request("/v1/devices")
+  }
+
+  createDevice(name: string): Promise<CreatedTrustedDevice> {
+    return this.request("/v1/devices", { method: "POST", body: { name } })
+  }
+
+  revokeDevice(id: string): Promise<{ revoked: string }> {
+    return this.request(`/v1/devices/${encodeURIComponent(id)}`, { method: "DELETE" })
+  }
+
+  purgeDevice(id: string): Promise<{ deleted: string }> {
+    return this.request(`/v1/devices/${encodeURIComponent(id)}/purge`, { method: "DELETE" })
+  }
+
   capabilities(): Promise<ApiCapabilities> {
     return this.request("/v1/capabilities")
   }
@@ -312,6 +384,10 @@ export class PiServerClient {
 
   getWorkerHealth(id: string): Promise<HealthResponse> {
     return this.request(`/v1/workers/${encodeURIComponent(id)}/health`)
+  }
+
+  probeWorkerHealth(id: string): Promise<HealthResponse> {
+    return this.request(`/v1/workers/${encodeURIComponent(id)}/health`, { method: "POST" })
   }
 
   deleteSession(id: string): Promise<{ deleted: string }> {

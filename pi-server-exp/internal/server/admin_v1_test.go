@@ -63,8 +63,16 @@ func TestAdminV1StateAuth(t *testing.T) {
 	if state["authenticationEnabled"] != true {
 		t.Fatalf("authenticationEnabled = %v", state["authenticationEnabled"])
 	}
-	if state["csrf"] != "" {
-		t.Fatalf("bearer state should not expose csrf, got %v", state["csrf"])
+	if _, exists := state["csrf"]; exists {
+		t.Fatal("bearer state must not expose obsolete cookie-admin CSRF state")
+	}
+	overview, ok := state["overview"].(map[string]any)
+	if !ok {
+		t.Fatalf("overview has unexpected shape: %T", state["overview"])
+	}
+	workers, ok := overview["workers"].(map[string]any)
+	if !ok || workers["unhealthy"] != float64(0) {
+		t.Fatalf("local worker should be healthy, got %v", overview["workers"])
 	}
 }
 
@@ -79,6 +87,37 @@ func TestAdminV1StateAuthDisabled(t *testing.T) {
 	state := decodeJSON(t, w)
 	if state["authenticationEnabled"] != false {
 		t.Fatalf("authenticationEnabled = %v", state["authenticationEnabled"])
+	}
+}
+
+func TestDeviceV1ManagementWorksWhenAuthDisabled(t *testing.T) {
+	s := newTestServer(t, "")
+	handler := serve(s)
+
+	create := httptest.NewRequest(http.MethodPost, "/v1/devices", strings.NewReader(`{"name":"phone"}`))
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, create)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create: want 201 got %d body=%s", created.Code, created.Body.String())
+	}
+	device := decodeJSON(t, created)
+	id, ok := device["id"].(string)
+	if !ok || id == "" {
+		t.Fatalf("created device has no id: %v", device)
+	}
+
+	revoke := httptest.NewRequest(http.MethodDelete, "/v1/devices/"+id, nil)
+	revoked := httptest.NewRecorder()
+	handler.ServeHTTP(revoked, revoke)
+	if revoked.Code != http.StatusOK {
+		t.Fatalf("revoke: want 200 got %d body=%s", revoked.Code, revoked.Body.String())
+	}
+
+	purge := httptest.NewRequest(http.MethodDelete, "/v1/devices/"+id+"/purge", nil)
+	purged := httptest.NewRecorder()
+	handler.ServeHTTP(purged, purge)
+	if purged.Code != http.StatusOK {
+		t.Fatalf("purge: want 200 got %d body=%s", purged.Code, purged.Body.String())
 	}
 }
 

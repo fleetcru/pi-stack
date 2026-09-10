@@ -101,7 +101,7 @@ export function QuickSessionComposer({
     <div className="w-full max-w-4xl">
       <form
         onSubmit={submit}
-        className="overflow-hidden rounded-[20px] border border-border/80 bg-card shadow-[0_18px_60px_-36px_rgba(0,0,0,0.75)] ring-1 ring-foreground/[0.025] transition-[border-color,box-shadow] focus-within:border-foreground/30 focus-within:shadow-[0_22px_70px_-38px_rgba(0,0,0,0.9)]"
+        className="overflow-hidden rounded-[20px] border border-border/80 !bg-muted/70 shadow-[0_18px_60px_-36px_rgba(0,0,0,0.75)] ring-1 ring-foreground/[0.025] transition-[border-color,box-shadow] focus-within:border-foreground/30 focus-within:shadow-[0_22px_70px_-38px_rgba(0,0,0,0.9)]"
       >
         <Textarea
           autoFocus
@@ -115,9 +115,9 @@ export function QuickSessionComposer({
           }}
           placeholder="Do anything..."
           aria-label="First message for the new session"
-          className="min-h-20 resize-none rounded-none border-0 bg-transparent px-5 pt-5 pb-3 text-sm leading-6 shadow-none focus-visible:ring-0"
+          className="min-h-20 resize-none rounded-none border-0 !bg-muted/70 px-5 pt-5 pb-3 text-sm leading-6 shadow-none focus-visible:ring-0"
         />
-        <div className="flex items-center gap-1 overflow-x-auto border-t border-border/55 bg-muted/15 px-3 py-2">
+        <div className="flex items-center gap-1 overflow-x-auto !bg-muted/70 px-3 py-2">
           <Popover open={modelPickerOpen} onOpenChange={setModelPickerOpen}>
             <PopoverTrigger
               render={
@@ -209,7 +209,7 @@ export function QuickSessionComposer({
           <span className="hidden shrink-0 px-2 text-[11px] text-muted-foreground sm:inline">Ctrl/⌘ + Enter</span>
           <Button
             type="submit"
-            size="icon-sm"
+            size="icon"
             className="rounded-full"
             aria-label="Create session and send message"
             disabled={!prompt.trim() || !effectiveCwd || busy}
@@ -220,7 +220,7 @@ export function QuickSessionComposer({
       </form>
       {error && <p role="alert" className="mt-2 px-3 text-sm text-destructive">{error}</p>}
       {rootsQuery.isError && <p role="alert" className="mt-2 px-3 text-sm text-destructive">Could not load allowed project folders.</p>}
-      <div className="mt-2 flex min-w-0 items-center gap-1 overflow-x-auto text-xs text-muted-foreground">
+      <div className="mt-2 flex min-w-0 items-center gap-1 overflow-x-auto px-2 py-1 text-xs text-muted-foreground">
         <Select value={effectiveCwd || null} onValueChange={(value) => setCwd(String(value))}>
           <SelectTrigger
             size="sm"

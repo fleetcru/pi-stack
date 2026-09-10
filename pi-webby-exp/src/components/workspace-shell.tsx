@@ -14,6 +14,7 @@ import {
   PanelRight,
   Search,
   Server,
+  ShieldCheck,
   Cpu,
   Sun,
 } from "lucide-react"
@@ -128,6 +129,7 @@ export function WorkspaceShell() {
             {leftSidebarCollapsed ? (
               <CollapsedSidebar
                 onHome={() => openSession(undefined)}
+                onAdmin={() => navigate("/admin")}
                 onExpand={() => {
                   leftPanelRef.current?.expand()
                   setLeftSidebarCollapsed(false)
@@ -140,6 +142,7 @@ export function WorkspaceShell() {
                   onCreate={() => setCreateSessionOpen(true)}
                   onManageServers={() => setServerConnectionsOpen(true)}
                   onManageWorkers={() => setWorkerManagementOpen(true)}
+                  onAdmin={() => navigate("/admin")}
                   onCollapse={() => {
                     leftPanelRef.current?.collapse()
                     setLeftSidebarCollapsed(true)
@@ -255,6 +258,7 @@ export function WorkspaceShell() {
           onCreate={() => setCreateSessionOpen(true)}
           onManageServers={() => setServerConnectionsOpen(true)}
           onManageWorkers={() => setWorkerManagementOpen(true)}
+          onAdmin={() => navigate("/admin")}
         />
       </div>
       <CreateSessionDialog
@@ -297,6 +301,7 @@ function MobileWorkspace({
   onCreate,
   onManageServers,
   onManageWorkers,
+  onAdmin,
 }: {
   selectedSession?: ApiSession
   sessions: ApiSession[]
@@ -310,6 +315,7 @@ function MobileWorkspace({
   onCreate: () => void
   onManageServers: () => void
   onManageWorkers: () => void
+  onAdmin: () => void
 }) {
   const { theme, setTheme } = useTheme()
   const isDark = theme === "dark"
@@ -338,6 +344,7 @@ function MobileWorkspace({
                 <Button size="icon-xs" variant="ghost" aria-label="Go to home" onClick={() => { setSessionsOpen(false); onHome() }}><House /></Button>
                 <Button size="icon-xs" variant="ghost" aria-label="Manage Pi servers" onClick={onManageServers}><Server /></Button>
                 <Button size="icon-xs" variant="ghost" aria-label="Manage workers" onClick={onManageWorkers}><Cpu /></Button>
+                <Button size="icon-xs" variant="ghost" aria-label="Server administration" onClick={() => { setSessionsOpen(false); onAdmin() }}><ShieldCheck /></Button>
                 <Button size="icon-xs" variant="ghost" aria-label={isDark ? "Use light theme" : "Use dark theme"} onClick={() => setTheme(isDark ? "light" : "dark")}>
                   {isDark ? <Sun /> : <Moon />}
                 </Button>
@@ -380,12 +387,14 @@ function ServerTreeHeader({
   onCreate,
   onManageServers,
   onManageWorkers,
+  onAdmin,
 }: {
   onCollapse: () => void
   onHome: () => void
   onCreate: () => void
   onManageServers: () => void
   onManageWorkers: () => void
+  onAdmin: () => void
 }) {
   const { theme, setTheme } = useTheme()
   const isDark = theme === "dark"
@@ -411,6 +420,7 @@ function ServerTreeHeader({
           <Server />
         </Button>
         <Button size="icon-xs" variant="ghost" aria-label="Manage workers" title="Manage workers" onClick={onManageWorkers}><Cpu /></Button>
+        <Button size="icon-xs" variant="ghost" aria-label="Server administration" title="Server administration" onClick={onAdmin}><ShieldCheck /></Button>
         <Button
           size="icon-xs"
           variant="ghost"
@@ -434,7 +444,7 @@ function ServerTreeHeader({
   )
 }
 
-function CollapsedSidebar({ onExpand, onHome }: { onExpand: () => void; onHome: () => void }) {
+function CollapsedSidebar({ onExpand, onHome, onAdmin }: { onExpand: () => void; onHome: () => void; onAdmin: () => void }) {
   const { theme, setTheme } = useTheme()
   const isDark = theme === "dark"
 
@@ -452,6 +462,7 @@ function CollapsedSidebar({ onExpand, onHome }: { onExpand: () => void; onHome: 
         <PanelLeftOpen />
       </Button>
       <div className="flex-1" />
+      <Button size="icon-xs" variant="ghost" aria-label="Server administration" title="Server administration" onClick={onAdmin}><ShieldCheck /></Button>
       <ThemeToggle
         isDark={isDark}
         onToggle={() => setTheme(isDark ? "light" : "dark")}

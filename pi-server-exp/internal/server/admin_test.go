@@ -135,22 +135,21 @@ func TestIsTailscaleIP(t *testing.T) {
 	}
 }
 
-func TestAdminPageAllowsSameOriginScript(t *testing.T) {
+func TestEmbeddedAdminUIHasBeenRemoved(t *testing.T) {
 	cfg := ConfigFromEnv()
 	s := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	defer close(s.stopHeartbeat)
 
-	rec := httptest.NewRecorder()
-	s.routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/admin/", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d", rec.Code)
-	}
-	if got := rec.Header().Get("Content-Security-Policy"); !strings.Contains(got, "script-src 'self' 'unsafe-inline'") {
-		t.Fatalf("CSP does not permit the embedded QR script: %q", got)
+	for _, path := range []string{"/admin", "/admin/", "/admin/login", "/admin/api/state", "/admin/api/settings", "/admin/api/devices"} {
+		rec := httptest.NewRecorder()
+		s.routes().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("GET %s should 404 after admin UI removal, got %d", path, rec.Code)
+		}
 	}
 }
 
-func TestAdminLoginAndRuntimeSettings(t *testing.T) {
+func TestEmbeddedAdminLoginAndRuntimeSettingsRemoved(t *testing.T) {
 	dataDir, cwd := t.TempDir(), t.TempDir()
 	t.Setenv("PI_SERVER_DATA_DIR", dataDir)
 	t.Setenv("PI_SERVER_CWD", cwd)
@@ -160,46 +159,44 @@ func TestAdminLoginAndRuntimeSettings(t *testing.T) {
 	defer close(s.stopHeartbeat)
 	h := s.httpSrv.Handler
 
-	unauthorized := httptest.NewRecorder()
-	h.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/admin/api/state", nil))
-	if unauthorized.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthorized status=%d", unauthorized.Code)
-	}
-
 	login := httptest.NewRecorder()
 	h.ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/admin/login", bytes.NewBufferString(`{"token":"admin-secret"}`)))
-	if login.Code != http.StatusOK {
+	if login.Code != http.StatusUnauthorized && login.Code != http.StatusNotFound {
 		t.Fatalf("login status=%d body=%s", login.Code, login.Body.String())
 	}
-	cookies := login.Result().Cookies()
-	if len(cookies) != 1 || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
-		t.Fatalf("unexpected cookie: %+v", cookies)
-	}
+}
 
-	stateRequest := httptest.NewRequest(http.MethodGet, "/admin/api/state", nil)
-	stateRequest.AddCookie(cookies[0])
-	stateResponse := httptest.NewRecorder()
-	h.ServeHTTP(stateResponse, stateRequest)
-	if stateResponse.Code != http.StatusOK {
-		t.Fatalf("state status=%d body=%s", stateResponse.Code, stateResponse.Body.String())
+func TestAdminRuntimeSettings(t *testing.T) {
+	dataDir, cwd := t.TempDir(), t.TempDir()
+	t.Setenv("PI_SERVER_DATA_DIR", dataDir)
+	t.Setenv("PI_SERVER_CWD", cwd)
+	t.Setenv("PI_SERVER_AUTH_TOKEN", "admin-secret")
+	cfg := ConfigFromEnv()
+	s := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	defer close(s.stopHeartbeat)
+	h := s.httpSrv.Handler
+
+	stateRequest := httptest.NewRequest(http.MethodGet, "/v1/admin/state", nil)
+	stateRequest.Header.Set("Authorization", "Bearer admin-secret")
+	state := httptest.NewRecorder()
+	h.ServeHTTP(state, stateRequest)
+	if state.Code != http.StatusOK {
+		t.Fatalf("state status=%d body=%s", state.Code, state.Body.String())
 	}
-	var state struct {
-		CSRF     string        `json:"csrf"`
-		Settings AdminSettings `json:"settings"`
-	}
-	if err := json.Unmarshal(stateResponse.Body.Bytes(), &state); err != nil {
+	var settings AdminSettings
+	if err := json.Unmarshal(state.Body.Bytes(), &struct {
+		Settings *AdminSettings `json:"settings"`
+	}{Settings: &settings}); err != nil {
 		t.Fatal(err)
 	}
-	if state.CSRF == "" {
-		t.Fatal("missing csrf token")
-	}
 
-	state.Settings.MaxSessions = 13
-	state.Settings.MaxActiveRuns = 7
-	body, _ := json.Marshal(state.Settings)
-	updateRequest := httptest.NewRequest(http.MethodPut, "/admin/api/settings", bytes.NewReader(body))
-	updateRequest.AddCookie(cookies[0])
-	updateRequest.Header.Set("X-Admin-CSRF", state.CSRF)
+	payload := adminSettingsJSON(t, s, func(settings *AdminSettings) {
+		settings.MaxSessions = 13
+		settings.MaxActiveRuns = 7
+	})
+	updateRequest := httptest.NewRequest(http.MethodPut, "/v1/admin/settings", strings.NewReader(payload))
+	updateRequest.Header.Set("Authorization", "Bearer admin-secret")
+	updateRequest.Header.Set("Content-Type", "application/json")
 	updateResponse := httptest.NewRecorder()
 	h.ServeHTTP(updateResponse, updateRequest)
 	if updateResponse.Code != http.StatusOK {
@@ -235,13 +232,12 @@ func TestAdminWorksWithoutToken(t *testing.T) {
 	defer close(s.stopHeartbeat)
 
 	state := httptest.NewRecorder()
-	s.httpSrv.Handler.ServeHTTP(state, httptest.NewRequest(http.MethodGet, "/admin/api/state", nil))
+	s.httpSrv.Handler.ServeHTTP(state, httptest.NewRequest(http.MethodGet, "/v1/admin/state", nil))
 	if state.Code != http.StatusOK {
 		t.Fatalf("state status=%d body=%s", state.Code, state.Body.String())
 	}
 	var response struct {
 		AuthenticationEnabled bool          `json:"authenticationEnabled"`
-		CSRF                  string        `json:"csrf"`
 		Settings              AdminSettings `json:"settings"`
 	}
 	if err := json.Unmarshal(state.Body.Bytes(), &response); err != nil {
@@ -250,9 +246,6 @@ func TestAdminWorksWithoutToken(t *testing.T) {
 	if response.AuthenticationEnabled {
 		t.Fatal("authentication should be disabled without PI_SERVER_AUTH_TOKEN")
 	}
-	if response.CSRF != "" {
-		t.Fatalf("csrf=%q, want empty", response.CSRF)
-	}
 
 	response.Settings.MaxSessions = 9
 	body, err := json.Marshal(response.Settings)
@@ -260,26 +253,8 @@ func TestAdminWorksWithoutToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	settings := httptest.NewRecorder()
-	s.httpSrv.Handler.ServeHTTP(settings, httptest.NewRequest(http.MethodPut, "/admin/api/settings", bytes.NewReader(body)))
+	s.httpSrv.Handler.ServeHTTP(settings, httptest.NewRequest(http.MethodPut, "/v1/admin/settings", bytes.NewReader(body)))
 	if settings.Code != http.StatusOK {
 		t.Fatalf("settings status=%d body=%s", settings.Code, settings.Body.String())
-	}
-}
-
-func TestAdminRejectsMutationWithoutCSRF(t *testing.T) {
-	dataDir := t.TempDir()
-	t.Setenv("PI_SERVER_DATA_DIR", dataDir)
-	cfg := ConfigFromEnv()
-	cfg.AdminConfigPath = filepath.Join(dataDir, adminConfigFilename)
-	cfg.AuthToken = "secret"
-	s := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	defer close(s.stopHeartbeat)
-	s.admin.sessions["session"] = adminSession{Expires: s.startedAt.Add(adminSessionLifetime), CSRF: "csrf"}
-	req := httptest.NewRequest(http.MethodPut, "/admin/api/settings", bytes.NewBufferString(`{}`))
-	req.AddCookie(&http.Cookie{Name: adminCookieName, Value: "session"})
-	rec := httptest.NewRecorder()
-	s.routes().ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status=%d", rec.Code)
 	}
 }

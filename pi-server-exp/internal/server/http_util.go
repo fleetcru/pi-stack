@@ -26,12 +26,6 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func corsMiddleware(allowed []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /admin is a same-origin embedded application with its own Origin and
-		// CSRF checks. It must remain usable when API CORS is intentionally off.
-		if r.URL.Path == "/admin" || strings.HasPrefix(r.URL.Path, "/admin/") {
-			next.ServeHTTP(w, r)
-			return
-		}
 		origin := r.Header.Get("Origin")
 		// With no explicit allowlist, accept browser apps running on loopback,
 		// private home-network addresses, Tailscale addresses, or the same
@@ -136,10 +130,6 @@ func authMiddlewareWithDevices(token string, devices *deviceRegistry, next http.
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/admin" || strings.HasPrefix(r.URL.Path, "/admin/") {
-			next.ServeHTTP(w, r)
-			return
-		}
 		if (isSessionWSRequest(r) && r.URL.Query().Get("ticket") != "") || (isExternalRelayWSRequest(r) && relayWSAuthenticated(r, token)) {
 			next.ServeHTTP(w, r)
 			return

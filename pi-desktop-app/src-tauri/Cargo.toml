@@ -25,3 +25,12 @@ tauri = { version = "2.11.3", features = ["tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-shell = "2"
+
+# Release builds favor runtime speed and remove linker/debug overhead from the
+# shipped executable. Cargo already uses incremental compilation in dev.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

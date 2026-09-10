@@ -440,7 +440,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
               {imageError && (
                 <p className="px-4 pt-2 text-xs text-destructive">{imageError}</p>
               )}
-              <InputGroup className="rounded-2xl !border-0 !shadow-none !outline-none !ring-0 !ring-offset-0 has-[data-slot=input-group-control:focus-visible]:!ring-0 has-[data-slot=input-group-control:focus-visible]:!border-0">
+              <InputGroup className="rounded-2xl !border-0 !bg-muted/70 !shadow-none !outline-none !ring-0 !ring-offset-0 has-[data-slot=input-group-control:focus-visible]:!ring-0 has-[data-slot=input-group-control:focus-visible]:!border-0">
               <InputGroupTextarea
                 className="max-h-32 min-h-14 px-4 pt-3 text-sm leading-6 select-text"
                 value={prompt}
@@ -528,7 +528,7 @@ export function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 <InputGroupButton
                   type={isWorking ? "button" : "submit"}
                   size="icon-sm"
-                  className={`ml-auto rounded-full text-white ${isWorking ? "bg-red-600 hover:bg-red-500" : "bg-blue-600 hover:bg-blue-500"}`}
+                  className={`ml-auto size-10 rounded-full text-white ${isWorking ? "bg-red-600 hover:bg-red-500" : "bg-blue-600 hover:bg-blue-500"}`}
                   disabled={isWorking ? false : !prompt.trim() && pendingImages.length === 0}
                   onClick={isWorking ? () => void abortSession() : undefined}
                   aria-label={isWorking ? "Stop Pi" : "Send prompt"}

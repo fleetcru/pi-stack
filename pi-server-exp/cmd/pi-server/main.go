@@ -291,7 +291,7 @@ func logAccessURLs(logger *clog.Logger, addr string) {
 	if err != nil || port == "" {
 		port = "3142"
 	}
-	logger.Info("local access", "url", "http://127.0.0.1:"+port, "admin", "http://127.0.0.1:"+port+"/admin/")
+	logger.Info("local access", "url", "http://127.0.0.1:"+port, "admin-api", "http://127.0.0.1:"+port+"/v1/admin/state")
 	lan, tailscale := server.PreferredAddresses()
 	if lan != nil {
 		logger.Info("home network access", "url", "http://"+net.JoinHostPort(lan.String(), port))
