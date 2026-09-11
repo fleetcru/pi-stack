@@ -610,14 +610,28 @@ func (p *PiProcess) dispatchRuntimeState(ev RPCEvent) {
 	if encoded, err := json.Marshal(ev); err != nil {
 		p.logger.Warn("not retaining runtime state event", "error", err)
 	} else if len(encoded) <= p.eventMaxBytes {
-		record := EventRecord{ID: id, Timestamp: time.Now().UTC(), Event: cloneEvent(ev), size: len(encoded)}
-		p.events = append(p.events, record)
-		p.eventBytes += record.size
-		for len(p.events) > p.eventMax || p.eventBytes > p.eventMaxBytes {
-			p.eventBytes -= p.events[0].size
-			p.events = p.events[1:]
-		}
-	}
+		now := time.Now().UTC()
+    record := EventRecord{ID: id, Timestamp: now, Event: cloneEvent(ev), size: len(encoded)}
+    p.events = append(p.events, record)
+    p.eventBytes += record.size
+    // Persist synthetic runtime states too. Reconnects and SSE resume rely on
+    // the journal being a complete source of truth, including status-only
+    // transitions that did not originate in Pi's stdout stream.
+    if p.journal != nil {
+      if err := p.journal.append(record); err != nil {
+        p.logger.Warn("failed to persist runtime state event", "error", err)
+      }
+    }
+    for len(p.events) > p.eventMax || p.eventBytes > p.eventMaxBytes {
+      p.eventBytes -= p.events[0].size
+      p.events = p.events[1:]
+    }
+    if p.journal != nil && p.journal.shouldCompact(p.eventMax, p.eventMaxBytes) {
+      if err := p.journal.compact(p.events); err != nil {
+        p.logger.Warn("failed to compact runtime state journal", "error", err)
+      }
+    }
+  }
 	out := eventWithID(ev, id)
 	subs := make([]chan RPCEvent, 0, len(p.subs))
 	for ch := range p.subs {

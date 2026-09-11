@@ -167,10 +167,14 @@ func cloneStrings(values []string) []string { return append([]string(nil), value
 // revise capacity, origins, roots, worker allowlists, and durations while the
 // process is live, matching the behavior of the Admin settings endpoint.
 func (s *Server) startAdminConfigWatch() {
+	s.adminConfigMu.Lock()
 	if s.adminConfigStop != nil {
+		s.adminConfigMu.Unlock()
 		return
 	}
-	s.adminConfigStop = make(chan struct{})
+	stop := make(chan struct{})
+	s.adminConfigStop = stop
+	s.adminConfigMu.Unlock()
 	path := s.cfg.AdminConfigPath
 	var lastMtime time.Time
 	if info, err := os.Stat(path); err == nil {
@@ -181,7 +185,7 @@ func (s *Server) startAdminConfigWatch() {
 		defer ticker.Stop()
 		for {
 			select {
-			case <-s.adminConfigStop:
+			case <-stop:
 				return
 			case <-ticker.C:
 				info, err := os.Stat(path)
@@ -214,8 +218,11 @@ func (s *Server) startAdminConfigWatch() {
 }
 
 func (s *Server) stopAdminConfigWatch() {
-	if s.adminConfigStop != nil {
-		close(s.adminConfigStop)
-		s.adminConfigStop = nil
+	s.adminConfigMu.Lock()
+	stop := s.adminConfigStop
+	s.adminConfigStop = nil
+	s.adminConfigMu.Unlock()
+	if stop != nil {
+		close(stop)
 	}
 }

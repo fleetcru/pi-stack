@@ -52,7 +52,8 @@ type Server struct {
 	idempotency               map[string]time.Time
 	resolvedRoots             []string // pre-resolved allowed roots (symlinks evaluated)
 	stopHeartbeat             chan struct{}
-	adminConfigStop           chan struct{}
+	adminConfigMu   sync.Mutex
+	adminConfigStop chan struct{}
 	shutdownOnce              sync.Once
 	sessionBridge             *SessionBridge
 	distributedMu             sync.Mutex

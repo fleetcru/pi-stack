@@ -99,3 +99,8 @@ Unit tests under `app/src/test/` cover the pure logic (tracker, parser, queue, d
 ## Networking
 
 - `res/xml/network_security_config.xml` — permits cleartext HTTP for the trusted home-LAN and Tailscale deployment model (private RFC1918 and `100.64.0.0/10` addresses with the bearer-token credential), while system trust anchors still apply to HTTPS. Public HTTP is not a supported deployment.
+
+### Background notifications
+
+- `data/notifications/SessionNotificationManager.kt` creates the Android notification channel and emits deduplicated completion, input-request, and failure notifications while the app is backgrounded.
+- `SessionDetailViewModel` keeps the live stream available during background transitions so terminal runtime states can arrive on time; foreground reconnect remains the recovery path if Android reclaims the process.
