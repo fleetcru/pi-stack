@@ -16,6 +16,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.picompanion.di.AppModule
 import com.example.picompanion.data.repository.SessionsRepository
 import com.example.picompanion.data.websocket.SocketEvent
+import com.example.picompanion.data.notifications.SessionNotificationManager
 import com.example.picompanion.data.model.ExtensionUiRequest
 import com.example.picompanion.data.model.parseExtensionUiRequest
 import com.example.picompanion.ui.sessions.SessionInventoryState
@@ -54,6 +55,7 @@ class SessionDetailViewModel(
   private val client = AppModule.client
   private val transport = SessionTransportCoordinator(client, sessionId)
   private val repository = SessionsRepository(client, settingsDataStore)
+  private val notificationContext: Context = application.applicationContext
 
   private val _items = MutableStateFlow<List<SessionTimelineItem>>(emptyList())
   val items: StateFlow<List<SessionTimelineItem>> = _items.asStateFlow()
@@ -778,6 +780,12 @@ class SessionDetailViewModel(
         // `_daemonExtensionUiRequiresResponse` for those; status, widget, and
         // notification events share this RPC type but are verbose output.
         val request = parseExtensionUiRequest(raw) ?: return
+        SessionNotificationManager.notifyInputRequest(
+          notificationContext,
+          sessionId,
+          request.message,
+          appInForeground,
+        )
         if (
           request.id in dismissedExtensionRequestIds ||
           request.id == lastSubmittedExtensionRequestId ||
@@ -841,7 +849,17 @@ class SessionDetailViewModel(
       // Runtime state transitions from the server (authoritative source of truth)
       "runtime_state" -> {
         val state = raw.getString("runtimeState")
-        if (!state.isNullOrBlank()) sessionRuntimeStatus = state
+        val detail = raw.getString("runtimeDetail")
+        if (!state.isNullOrBlank()) {
+          sessionRuntimeStatus = state
+          SessionNotificationManager.notifyRuntimeTransition(
+            notificationContext,
+            sessionId,
+            state,
+            detail,
+            appInForeground,
+          )
+        }
         // Capture the generation at event time. If a message_end or agent_end
         // fires between now and when this state is applied, the generation
         // will have advanced and we skip re-enabling the spinner.
@@ -1583,9 +1601,11 @@ class SessionDetailViewModel(
   fun onBackground() {
     publishInventorySnapshot()
     appInForeground = false
+    // Keep the stream alive while the process is backgrounded so terminal
+    // runtime transitions can produce timely notifications. Android may still
+    // reclaim the process; foreground reconnect remains the recovery path.
     reconnectJob?.cancel()
     reconnectJob = null
-    transport.disconnect()
   }
 
   fun onForeground() {
