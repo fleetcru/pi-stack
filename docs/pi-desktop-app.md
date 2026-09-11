@@ -38,3 +38,5 @@ Release builds follow Tauri's optimization guidance. Cargo uses LTO and one code
 ## Sync discipline
 
 Because webby and desktop share component sources, edits should be made in webby first and then propagated to desktop. The root sync scripts cover shared `components/ui` primitives only; app-level components such as `workspace-shell.tsx`, `sidebar-tree.tsx`, and `quick-session-composer.tsx` must be copied or merged separately while preserving desktop-only behavior. `server-admin-page.tsx` is shared: the only intentional difference is that the Desktop copy renders `desktop-title-bar.tsx` while the Webby copy renders without a native title bar.
+
+- `hooks/use-session-notifications.ts` emits contextual native notifications only when the desktop window is hidden, deduplicates repeated runtime states, and includes the server-provided detail/duration.
