@@ -47,3 +47,5 @@ React 19 + Vite 8 + Tailwind v4 + shadcn/ui browser client for pi-server. Most d
 ```bash
 pnpm typecheck && pnpm lint && pnpm test && pnpm build
 ```
+
+The `typecheck` script checks both `tsconfig.app.json` and `tsconfig.node.json`. Do not replace it with a bare `tsc --noEmit`: the solution `tsconfig.json` contains no source files.

@@ -107,7 +107,11 @@ func (r *SessionRegistry) RegisterSpec(spec SessionSpec) (SessionSpec, error) {
 	if spec.CreatedAt.IsZero() {
 		spec.CreatedAt = now
 	}
-	spec.UpdatedAt = now
+	// Preserve an explicit timestamp supplied by restored/imported sessions;
+	// newly-created sessions still receive the current time.
+	if spec.UpdatedAt.IsZero() {
+		spec.UpdatedAt = now
+	}
 	r.specs[spec.ID] = spec
 	r.mu.Unlock()
 	return spec, r.Save()
@@ -138,7 +142,11 @@ func (r *SessionRegistry) addInternal(p *PiProcess, spec SessionSpec, maxSession
 	if spec.CreatedAt.IsZero() {
 		spec.CreatedAt = now
 	}
-	spec.UpdatedAt = now
+	// Preserve an explicit timestamp supplied by restored/imported sessions;
+	// newly-created sessions still receive the current time.
+	if spec.UpdatedAt.IsZero() {
+		spec.UpdatedAt = now
+	}
 	r.sessions[p.id] = p
 	r.specs[p.id] = spec
 	r.mu.Unlock()

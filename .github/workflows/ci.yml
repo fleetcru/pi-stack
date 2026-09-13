@@ -52,7 +52,13 @@ jobs:
         with:
           node-version: '24'
           cache: pnpm
-          cache-dependency-path: pi-webby-exp/pnpm-lock.yaml
+          cache-dependency-path: |
+            pi-webby-exp/pnpm-lock.yaml
+            pi-webby-shared/pnpm-lock.yaml
+
+      - name: Install shared dependencies
+        working-directory: pi-webby-shared
+        run: pnpm install --frozen-lockfile
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -97,12 +103,18 @@ jobs:
         with:
           node-version: '24'
           cache: pnpm
-          cache-dependency-path: pi-desktop-app/pnpm-lock.yaml
+          cache-dependency-path: |
+            pi-desktop-app/pnpm-lock.yaml
+            pi-webby-shared/pnpm-lock.yaml
 
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Install shared dependencies
+        working-directory: pi-webby-shared
+        run: pnpm install --frozen-lockfile
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

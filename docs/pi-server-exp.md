@@ -107,3 +107,7 @@ WebSocket events are deep-cloned before they enter replay/subscriber buffers.
 This prevents nested Pi message content from being mutated while a client is
 encoding it, and the JSON WebSocket writer converts unexpected encoder panics
 into connection errors instead of crashing the server.
+
+### Runtime-state durability
+
+Synthetic `runtime_state` events are now appended to the per-session event journal and compacted with the normal event ring. Reconnecting WebSocket/SSE clients can therefore recover the same status transitions used by mobile and desktop notification logic.

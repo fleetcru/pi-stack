@@ -35,6 +35,10 @@ The native window starts hidden and React emits `pi-app-ready` after its first r
 
 Release builds follow Tauri's optimization guidance. Cargo uses LTO and one code-generation unit for stronger cross-crate optimization, `opt-level = 3` for runtime speed, abort-on-panic to omit unwinding, and stripped symbols. Tauri also removes commands that capability files never allow. These settings make release builds slower, so use `pnpm tauri dev` during normal development.
 
+The `typecheck` script checks both `tsconfig.app.json` and `tsconfig.node.json`. A bare `tsc --noEmit` checks no source files because the solution `tsconfig.json` uses project references.
+
 ## Sync discipline
 
 Because webby and desktop share component sources, edits should be made in webby first and then propagated to desktop. The root sync scripts cover shared `components/ui` primitives only; app-level components such as `workspace-shell.tsx`, `sidebar-tree.tsx`, and `quick-session-composer.tsx` must be copied or merged separately while preserving desktop-only behavior. `server-admin-page.tsx` is shared: the only intentional difference is that the Desktop copy renders `desktop-title-bar.tsx` while the Webby copy renders without a native title bar.
+
+- `hooks/use-session-notifications.ts` emits native notifications only when the desktop window is hidden. It deduplicates events per session, resets duration tracking between runs, and uses generic lock-screen-safe text instead of server-provided runtime details.
