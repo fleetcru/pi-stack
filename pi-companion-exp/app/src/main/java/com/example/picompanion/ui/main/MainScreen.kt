@@ -163,7 +163,7 @@ internal fun HomeContent(
       state = listState,
       modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
       verticalArrangement = Arrangement.spacedBy(12.dp),
-      contentPadding = PaddingValues(bottom = 80.dp),
+      contentPadding = PaddingValues(bottom = 16.dp),
     ) {
       // Header
       item { TopAppBarCompact(onMenuClick = onMenuClick, onSettingsClick = { onNavigate(AppRoute.Settings) }, onRefresh = onRefresh) }
@@ -262,7 +262,7 @@ internal fun HomeContent(
       exit = fadeOut() + scaleOut(),
       modifier = Modifier
         .align(Alignment.BottomEnd)
-        .padding(end = 24.dp, bottom = 96.dp),
+        .padding(end = 24.dp, bottom = 16.dp),
     ) {
       SmallFloatingActionButton(
         onClick = {

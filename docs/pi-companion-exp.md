@@ -47,7 +47,7 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 
 ### Main screen (`ui/main/`)
 - `HomeViewModel.kt` — dashboard state: daemon health, worker counts, recent sessions; polls REST and merges inventory.
-- `MainScreen.kt`, `ShellScreen.kt` — dashboard composition and the app shell with bottom navigation.
+- `MainScreen.kt`, `ShellScreen.kt` — dashboard composition and the app shell. `ShellScreen` places the floating bottom navigation in a `Scaffold` bottom-bar slot and applies its measured padding to every tab, so lists and controls remain above the bar.
 
 ### Sessions list (`ui/sessions/`)
 - `SessionsViewModel.kt` / `SessionsScreen.kt` — inventory listing with grouping.
@@ -58,8 +58,8 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 ### Session detail (`ui/sessiondetail/`) — the biggest area
 - `SessionDetailViewModel.kt` — the core: loads JSONL history via the parser, runs the event pipeline (`Channel → tracker → handleEvent → _items`), keeps `_items` updates atomic (CAS), serializes assistant bubble transitions under `assistantMutex`, guards against stale HTTP overwrites with `historyGeneration`, and handles extension-UI questions. Model controls merge the global server catalog, session catalog, and live relay events by provider/model ID; failed or late HTTP responses cannot erase providers or overwrite a newer model-selection event. A `ConnectivityManager.NetworkCallback` schedules backoff reconnects on `onLost` and a clean `transport.disconnect` + immediate reconnect on `onAvailable`, so a brief Wi-Fi/data blip self-heals without a manual refresh.
 - `SessionTransportCoordinator.kt` — owns ticket acquisition and socket lifecycle independently of UI state so reconnects don't leak or drop resources.
-- `SessionHistoryParser.kt` — pure (CPU-only, off-main-thread) conversion of persisted Pi JSONL into chat items; must understand every history shape listed in AGENTS.md.
-- `SessionHistoryState.kt` — history load state machine (loading/pages/resync) with tests.
+- `SessionHistoryParser.kt` — pure (CPU-only, off-main-thread) conversion of persisted Pi JSONL into chat items; must understand every history shape listed in AGENTS.md and preserves text/tool/text block order within assistant messages.
+- `SessionHistoryState.kt` — history load state machine (loading/pages/resync) with tests. It merges durable transcript rows before live-only rows in transcript order rather than sorting by local arrival IDs, because a live event can arrive while the initial HTTP history request is still running.
 - `SessionStateCache.kt` — small in-memory LRU so switching sessions back and forth is instant.
 - `PendingPromptQueue.kt` — queues prompts sent while the agent is mid-run; drains when the turn settles.
 - `PromptImageEncoder.kt` — image → base64 attachment prep.

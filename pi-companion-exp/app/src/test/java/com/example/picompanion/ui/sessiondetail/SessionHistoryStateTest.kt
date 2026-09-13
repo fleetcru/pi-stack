@@ -5,6 +5,79 @@ import org.junit.Test
 
 class SessionHistoryStateTest {
   @Test
+  fun historyFetchedAfterLiveRowStillAppearsFirst() {
+    val state = SessionHistoryState()
+    val historical = SessionTimelineItem.Chat("You", "earlier prompt", "2026-08-08T20:00:00Z", true)
+    val live = SessionTimelineItem.Chat("Pi Agent", "current response", "", false, order = 1)
+    var sequence = 1L
+
+    val merged = state.applyPage(
+      page = listOf(historical),
+      appendOld = false,
+      nextOffset = 1,
+      hasOlder = false,
+      liveItems = listOf(live),
+      stamp = { item ->
+        when (item) {
+          is SessionTimelineItem.Chat -> if (item.order > 0) item else item.copy(order = ++sequence)
+          else -> item
+        }
+      },
+    )
+
+    assertEquals(listOf("earlier prompt", "current response"), merged.map { (it as SessionTimelineItem.Chat).text })
+    // Numeric identity order reflects arrival, but must not override transcript order.
+    assertEquals(listOf(2L, 1L), merged.map { it.order })
+  }
+
+  @Test
+  fun newestRefreshKeepsAlreadyLoadedOlderPrefix() {
+    val state = SessionHistoryState()
+    val older = SessionTimelineItem.Chat("You", "oldest", "t1", true, order = 1)
+    val overlap = SessionTimelineItem.Chat("Pi Agent", "existing", "t2", false, order = 2)
+    state.restore(listOf(older, overlap), offset = 2, older = true)
+    val newest = SessionTimelineItem.Chat("You", "newest", "t3", true)
+    var sequence = 2L
+
+    val merged = state.applyPage(
+      page = listOf(overlap.copy(order = 0), newest),
+      appendOld = false,
+      nextOffset = 2,
+      hasOlder = true,
+      liveItems = listOf(older, overlap),
+      stamp = { item ->
+        when (item) {
+          is SessionTimelineItem.Chat -> if (item.order > 0) item else item.copy(order = ++sequence)
+          else -> item
+        }
+      },
+    )
+
+    assertEquals(listOf("oldest", "existing", "newest"), merged.map { (it as SessionTimelineItem.Chat).text })
+    assertEquals(listOf("oldest", "existing", "newest"), state.historicalItems.map { (it as SessionTimelineItem.Chat).text })
+  }
+
+  @Test
+  fun completedHistoryResponseReplacesLongStreamedPrefix() {
+    val state = SessionHistoryState()
+    val prefix = "This response has enough streamed text to match"
+    val live = SessionTimelineItem.Chat("Pi Agent", prefix, "", false, order = 4)
+    val durable = SessionTimelineItem.Chat("Pi Agent", "$prefix the durable ending.", "t2", false)
+
+    val merged = state.applyPage(
+      page = listOf(durable),
+      appendOld = false,
+      nextOffset = 1,
+      hasOlder = false,
+      liveItems = listOf(live),
+      stamp = { item -> if (item is SessionTimelineItem.Chat && item.order == 0L) item.copy(order = 5) else item },
+    )
+
+    assertEquals(1, merged.size)
+    assertEquals(durable.text, (merged.single() as SessionTimelineItem.Chat).text)
+  }
+
+  @Test
   fun refreshKeepsCachedOlderRowsBeforeNewerRows() {
     val state = SessionHistoryState()
     val older = SessionTimelineItem.Chat("Pi Agent", "older", "2026-08-08T20:00:00Z", false, order = 10)

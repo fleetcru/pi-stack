@@ -8,7 +8,7 @@ import kotlinx.serialization.json.contentOrNull
 
 /** CPU-only conversion of persisted Pi history. Safe to run off the UI thread. */
 internal object SessionHistoryParser {
-  fun parse(messages: JsonArray): List<SessionTimelineItem> {
+  fun parse(messages: JsonArray, pageStartIndex: Int = 0): List<SessionTimelineItem> {
     val results = mutableMapOf<String, String>()
     val parsed = mutableListOf<SessionTimelineItem>()
 
@@ -16,7 +16,8 @@ internal object SessionHistoryParser {
       val message = element as? JsonObject ?: return@forEachIndexed
       val historyType = message.string("_historyType")
       val role = message.string("role")
-      val fallbackId = "tool-history-$index"
+      val historyIndex = pageStartIndex + index
+      val fallbackId = "tool-history-$historyIndex"
 
       if (historyType == "tool_use") {
         parsed += SessionTimelineItem.Tool(
@@ -36,31 +37,64 @@ internal object SessionHistoryParser {
       }
       if (role != "user" && role != "assistant") return@forEachIndexed
 
+      val author = if (role == "user") "You" else "Pi Agent"
+      val isUser = role == "user"
+      val timestamp = message.string("timestamp").orEmpty()
       val content = message["content"]
       if (content is JsonArray) {
-        content.filterIsInstance<JsonObject>()
-          .filter { it.string("type") in setOf("toolCall", "tool_use") }
-          .forEachIndexed { toolIndex, block ->
-            val id = block.string("id") ?: "$fallbackId-$toolIndex"
+        val text = StringBuilder()
+        val images = mutableListOf<String>()
+        var segmentIndex = 0
+        fun flushChat() {
+          val value = text.toString().trim()
+          if (value.isNotEmpty() || images.isNotEmpty()) {
+            parsed += SessionTimelineItem.Chat(
+              author = author,
+              text = value,
+              time = timestamp,
+              isUser = isUser,
+              imageData = images.toList(),
+              sourceId = "history-$historyIndex-segment-${segmentIndex++}",
+            )
+          }
+          text.clear()
+          images.clear()
+        }
+
+        content.forEachIndexed { toolIndex, block ->
+          val objectBlock = block as? JsonObject
+          if (objectBlock?.string("type") in setOf("toolCall", "tool_use")) {
+            // Keep text before and after a tool as separate timeline bubbles.
+            // Flattening all text after every tool made restored history differ
+            // from the order shown by live events.
+            flushChat()
+            val id = objectBlock?.string("id") ?: "$fallbackId-$toolIndex"
             results.putIfAbsent(id, "")
             parsed += SessionTimelineItem.Tool(
               callId = id,
-              name = block.string("name") ?: "tool",
+              name = objectBlock?.string("name") ?: "tool",
               status = "completed",
-              args = block["arguments"]?.toString() ?: block["input"]?.toString(),
+              args = objectBlock?.get("arguments")?.toString() ?: objectBlock?.get("input")?.toString(),
             )
+          } else {
+            block.findText()?.let(text::append)
+            images += block.findImages()
           }
-      }
-      val text = message.findText()?.trim().orEmpty()
-      val images = message.findImages()
-      if (text.isNotEmpty() || images.isNotEmpty()) {
-        parsed += SessionTimelineItem.Chat(
-          author = if (role == "user") "You" else "Pi Agent",
-          text = text,
-          time = message.string("timestamp").orEmpty(),
-          isUser = role == "user",
-          imageData = images,
-        )
+        }
+        flushChat()
+      } else {
+        val text = message.findText()?.trim().orEmpty()
+        val images = message.findImages()
+        if (text.isNotEmpty() || images.isNotEmpty()) {
+          parsed += SessionTimelineItem.Chat(
+            author = author,
+            text = text,
+            time = timestamp,
+            isUser = isUser,
+            imageData = images,
+            sourceId = "history-$historyIndex-segment-0",
+          )
+        }
       }
     }
 
@@ -87,7 +121,7 @@ internal object SessionHistoryParser {
   }
 
   private fun timelineItemId(item: SessionTimelineItem): String = when (item) {
-    is SessionTimelineItem.Chat -> "chat|${item.isUser}|${item.time}|${item.text.length}|${item.text.hashCode()}|${item.text.take(50)}"
+    is SessionTimelineItem.Chat -> "chat|${item.sourceId ?: "${item.isUser}|${item.time}|${item.text.length}|${item.text.hashCode()}|${item.text.take(50)}"}"
     is SessionTimelineItem.Tool -> "tool|${item.callId}"
     is SessionTimelineItem.FileChange -> "file|${item.operation}|${item.path}"
     is SessionTimelineItem.System -> "system|${item.text}"

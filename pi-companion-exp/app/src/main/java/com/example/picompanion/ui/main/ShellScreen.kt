@@ -5,9 +5,12 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -15,7 +18,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -83,38 +85,51 @@ fun ShellScreen(
   }
 
   Box(modifier.fillMaxSize()) {
-    Box(Modifier.fillMaxSize()) {
-      if (selectedTab == NavTab.Home) {
-        MainScreen(
-          onSessionClick = { sessionId -> onNavigate(AppRoute.SessionDetail(sessionId)) },
-          onNavigate = onNavigate,
-          onMenuClick = { drawerOpen = true },
-        )
+    Scaffold(
+      modifier = Modifier.fillMaxSize(),
+      contentWindowInsets = WindowInsets(0, 0, 0, 0),
+      bottomBar = {
+        if (!keyboardOpen) {
+          Box(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
+          ) {
+            BottomNavBar(
+              selectedTab = selectedTab,
+              onTabSelected = { selectedTab = it },
+            )
+          }
+        }
+      },
+    ) { innerPadding ->
+      Box(
+        Modifier
+          .fillMaxSize()
+          .padding(innerPadding)
+          .consumeWindowInsets(innerPadding),
+      ) {
+        if (selectedTab == NavTab.Home) {
+          MainScreen(
+            onSessionClick = { sessionId -> onNavigate(AppRoute.SessionDetail(sessionId)) },
+            onNavigate = onNavigate,
+            onMenuClick = { drawerOpen = true },
+          )
+        }
+        if (selectedTab == NavTab.Sessions) {
+          SessionsScreen(
+            onSessionClick = { sessionId -> onNavigate(AppRoute.SessionDetail(sessionId)) },
+            sharedTransitionScope = sharedTransitionScope,
+            animatedVisibilityScope = animatedVisibilityScope,
+          )
+        }
+        if (selectedTab == NavTab.Workers) {
+          WorkersScreen()
+        }
+        if (selectedTab == NavTab.Settings) {
+          SettingsScreen(darkTheme = darkTheme, onDarkThemeChange = onDarkThemeChange)
+        }
       }
-      if (selectedTab == NavTab.Sessions) {
-        SessionsScreen(
-          onSessionClick = { sessionId -> onNavigate(AppRoute.SessionDetail(sessionId)) },
-          sharedTransitionScope = sharedTransitionScope,
-          animatedVisibilityScope = animatedVisibilityScope,
-        )
-      }
-      if (selectedTab == NavTab.Workers) {
-        WorkersScreen()
-      }
-      if (selectedTab == NavTab.Settings) {
-        SettingsScreen(darkTheme = darkTheme, onDarkThemeChange = onDarkThemeChange)
-      }
-    }
-
-    // Bottom nav
-    if (!keyboardOpen) {
-      BottomNavBar(
-        selectedTab = selectedTab,
-        onTabSelected = { selectedTab = it },
-        modifier = Modifier
-          .align(Alignment.BottomCenter)
-          .padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
-      )
     }
 
     // Session drawer

@@ -131,11 +131,14 @@ class SessionDetailViewModel(
   private val assistantMutex = kotlinx.coroutines.sync.Mutex()
 
   private fun appendItem(item: SessionTimelineItem) {
-    // Deduplicate before appending — prevents duplicates from history/live overlap
+    // Deduplicate before appending — prevents duplicates from history/live overlap.
+    // MutableStateFlow.update may retry its lambda after a concurrent write, so
+    // retain one stamped instance instead of incrementing timelineSeq per retry.
     val id = timelineItemId(item)
+    var stamped: SessionTimelineItem? = null
     _items.update { current ->
       if (current.any { timelineItemId(it) == id }) current
-      else current + withOrder(item)
+      else current + (stamped ?: withOrder(item).also { stamped = it })
     }
   }
 
@@ -282,6 +285,7 @@ class SessionDetailViewModel(
       pendingAssistantDeltas.clear()
       if (remaining.isNotEmpty()) {
         // Append to the existing assistant bubble instead of creating a new one.
+        var fallback: SessionTimelineItem.Chat? = null
         _items.update { current ->
           val index = if (assistantTextOpen) current.indexOfLast {
             it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
@@ -293,10 +297,14 @@ class SessionDetailViewModel(
                 it[index] = existing.copy(text = existing.text + remaining)
               }
             } else {
-              current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
+              current + (fallback ?: (withOrder(
+                SessionTimelineItem.Chat("Pi Agent", remaining, "", false),
+              ) as SessionTimelineItem.Chat).also { fallback = it })
             }
           } else {
-            current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
+            current + (fallback ?: (withOrder(
+              SessionTimelineItem.Chat("Pi Agent", remaining, "", false),
+            ) as SessionTimelineItem.Chat).also { fallback = it })
           }
         }
       }
@@ -472,10 +480,13 @@ class SessionDetailViewModel(
             if (messages != null) {
               // Parsing persisted JSON and tool payloads can be expensive for long
               // sessions; keep it off Main, then merge atomically on return.
-              val history = withContext(Dispatchers.Default) {
-                SessionHistoryParser.parse(messages)
-              }
               val historyMeta = data["history"]?.jsonObject
+              val totalMessages = historyMeta?.get("total")?.jsonPrimitive?.intOrNull
+                ?: (offset + messages.size)
+              val pageStartIndex = (totalMessages - offset - messages.size).coerceAtLeast(0)
+              val history = withContext(Dispatchers.Default) {
+                SessionHistoryParser.parse(messages, pageStartIndex)
+              }
               val hasOlder = historyMeta?.get("hasOlder")?.jsonPrimitive?.booleanOrNull == true
               val nextOffset = historyMeta?.get("nextOffset")?.jsonPrimitive?.intOrNull ?: 0
               _hasOlderHistory.value = hasOlder
@@ -697,6 +708,7 @@ class SessionDetailViewModel(
             s
           }
           if (remaining.isNotEmpty() && assistantTextOpen) {
+            var fallback: SessionTimelineItem.Chat? = null
             _items.update { current ->
               val index = current.indexOfLast {
                 it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
@@ -708,8 +720,10 @@ class SessionDetailViewModel(
                 }
               } else {
                 // Bubble was lost (e.g. dedup collision or list mutation).
-                // Create a new item to preserve the text.
-                current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
+                // Create a stamped item so later history merges stay ordered.
+                current + (fallback ?: (withOrder(
+                  SessionTimelineItem.Chat("Pi Agent", remaining, "", false),
+                ) as SessionTimelineItem.Chat).also { fallback = it })
               }
             }
           } else if (remaining.isNotEmpty() && !assistantTextOpen) {
@@ -1041,6 +1055,7 @@ class SessionDetailViewModel(
         s
       }
       if (remaining.isNotEmpty()) {
+        var fallback: SessionTimelineItem.Chat? = null
         _items.update { current ->
           val index = if (assistantTextOpen) current.indexOfLast {
             it is SessionTimelineItem.Chat && !it.isUser && it.author == "Pi Agent" && it.order == currentAssistantOrder
@@ -1051,7 +1066,9 @@ class SessionDetailViewModel(
               it[index] = existing.copy(text = existing.text + remaining)
             }
           } else {
-            current + SessionTimelineItem.Chat("Pi Agent", remaining, "", false)
+            current + (fallback ?: (withOrder(
+              SessionTimelineItem.Chat("Pi Agent", remaining, "", false),
+            ) as SessionTimelineItem.Chat).also { fallback = it })
           }
         }
       }
@@ -1067,7 +1084,7 @@ class SessionDetailViewModel(
     // silently dropped when two responses had the same text.
     is SessionTimelineItem.Chat -> {
       val textSig = "${item.text.length}|${item.text.hashCode()}|${item.text.take(50)}"
-      "chat|${item.isUser}|${item.time}|$textSig"
+      "chat|${item.sourceId ?: "${item.isUser}|${item.time}|$textSig"}"
     }
     is SessionTimelineItem.Tool -> "tool|${item.callId}"
     is SessionTimelineItem.FileChange -> "file|${item.operation}|${item.path}"
@@ -1693,6 +1710,7 @@ sealed interface SessionTimelineItem {
     val imageUris: List<Uri> = emptyList(),
     val imageData: List<String> = emptyList(),
     override val order: Long = 0,
+    val sourceId: String? = null,
   ) : SessionTimelineItem
 
   data class Tool(
