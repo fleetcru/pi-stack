@@ -486,7 +486,7 @@ function Workspace({ session }: { session: ApiSession }) {
           </div>
           {buildGitHubLink(status) && (
             <a
-              href={buildGitHubLink(status)}
+              href={buildGitHubLink(status) ?? undefined}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline dark:text-blue-400"

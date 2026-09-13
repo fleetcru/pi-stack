@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -30,6 +31,24 @@ func chdir(t *testing.T, dir string) {
 			t.Errorf("restore cwd: %v", err)
 		}
 	})
+}
+
+func TestAdminConfigWatchConcurrentStartStop(t *testing.T) {
+	s := New(Config{AdminConfigPath: filepath.Join(t.TempDir(), "admin-config.json")}, testLogger())
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			s.startAdminConfigWatch()
+		}()
+		go func() {
+			defer wg.Done()
+			s.stopAdminConfigWatch()
+		}()
+	}
+	wg.Wait()
+	s.stopAdminConfigWatch()
 }
 
 func TestAdminEmptyCWDFallsBackToLaunchDir(t *testing.T) {

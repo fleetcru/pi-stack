@@ -3,13 +3,46 @@ package com.example.picompanion.data.notifications
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.example.picompanion.MainActivity
 import com.example.picompanion.R
 import java.util.concurrent.ConcurrentHashMap
+
+internal data class SessionNotification(
+  val title: String,
+  val body: String,
+)
+
+/** Pure transition policy, kept separate so notification behavior is testable. */
+internal fun runtimeNotificationForTransition(
+  sessionId: String,
+  previous: String?,
+  current: String,
+): SessionNotification? {
+  // A replay or initial snapshot is baseline state, not a new transition.
+  if (previous == null || previous == current) return null
+  val shortId = sessionId.take(8)
+  return when (current) {
+    "idle", "created" -> if (previous == "working" || previous == "starting") {
+      SessionNotification("Pi finished", "Session $shortId completed its task.")
+    } else null
+    "waiting_for_input" -> SessionNotification(
+      "Pi needs input",
+      "Session $shortId is waiting for your response.",
+    )
+    "failed", "error", "stopped" -> SessionNotification(
+      "Pi session stopped",
+      "Session $shortId $current.",
+    )
+    else -> null
+  }
+}
 
 /**
  * Delivers lifecycle notifications only for transitions that matter when the
@@ -30,6 +63,7 @@ object SessionNotificationManager {
         NotificationManager.IMPORTANCE_DEFAULT,
       ).apply {
         description = "Task completion, input requests, and session failures"
+        lockscreenVisibility = NotificationCompat.VISIBILITY_PRIVATE
       },
     )
   }
@@ -38,49 +72,39 @@ object SessionNotificationManager {
     context: Context,
     sessionId: String,
     state: String?,
-    detail: String?,
     appInForeground: Boolean,
   ) {
     if (state.isNullOrBlank()) return
     val previous = lastStates.put(sessionId, state)
-    if (appInForeground || previous == state) return
-
-    val (title, body) = when (state) {
-      "idle", "created" -> "Pi finished" to "Session \${shortId(sessionId)} completed its task."
-      "waiting_for_input" -> "Pi needs input" to (detail?.takeIf(String::isNotBlank)
-        ?: "Session \${shortId(sessionId)} is waiting for your response.")
-      "failed", "error", "stopped" -> "Pi session stopped" to "Session \${shortId(sessionId)} $state."
-      else -> return
-    }
-    post(context, sessionId, title, body)
-  }
-
-  fun notifyInputRequest(context: Context, sessionId: String, message: String?, appInForeground: Boolean) {
     if (appInForeground) return
-    post(
-      context,
-      sessionId,
-      "Pi needs input",
-      message?.takeIf(String::isNotBlank) ?: "Pi is waiting for your response.",
-    )
+    val notification = runtimeNotificationForTransition(sessionId, previous, state) ?: return
+    post(context, sessionId, notification)
   }
 
-  private fun post(context: Context, sessionId: String, title: String, body: String) {
+  private fun post(context: Context, sessionId: String, notification: SessionNotification) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
       context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
     ) return
 
-    val notification = NotificationCompat.Builder(context, channelId)
+    val openApp = PendingIntent.getActivity(
+      context,
+      sessionId.hashCode(),
+      Intent(context, MainActivity::class.java).apply {
+        flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+      },
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+    val built = NotificationCompat.Builder(context, channelId)
       .setSmallIcon(R.drawable.pi_stack_logo)
-      .setContentTitle(title)
-      .setContentText(body)
-      .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+      .setContentTitle(notification.title)
+      .setContentText(notification.body)
+      .setStyle(NotificationCompat.BigTextStyle().bigText(notification.body))
       .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+      .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+      .setContentIntent(openApp)
       .setAutoCancel(true)
       .setOnlyAlertOnce(true)
       .build()
-    NotificationManagerCompat.from(context).notify(sessionId.hashCode(), notification)
+    NotificationManagerCompat.from(context).notify(sessionId.hashCode(), built)
   }
-
-  private fun shortId(sessionId: String): String = sessionId.take(8)
 }

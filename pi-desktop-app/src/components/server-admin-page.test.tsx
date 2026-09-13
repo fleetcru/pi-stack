@@ -120,9 +120,12 @@ describe("ServerAdminPage", () => {
     await user.type(input, "12")
     await user.click(screen.getByRole("button", { name: "Save settings" }))
 
-    await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]: [URL, RequestInit]) => url.pathname === "/v1/admin/settings" && init.method === "PUT")).toBe(true))
-    const call = fetchMock.mock.calls.find(([url]: [URL]) => url.pathname === "/v1/admin/settings")
-    expect(JSON.parse(call[1].body)).toMatchObject({ maxSessions: 12 })
+    await waitFor(() => expect(fetchMock.mock.calls.some((call) => {
+      const [url, init] = call as [URL, RequestInit]
+      return url.pathname === "/v1/admin/settings" && init.method === "PUT"
+    })).toBe(true))
+    const call = fetchMock.mock.calls.find((c) => (c as [URL])[0].pathname === "/v1/admin/settings")
+    expect(JSON.parse(String(call?.[1] && (call[1] as RequestInit).body))).toMatchObject({ maxSessions: 12 })
     expect(await screen.findByText("Saved and applied to the running server.")).toBeTruthy()
   })
 
@@ -143,6 +146,9 @@ describe("ServerAdminPage", () => {
     await user.click(screen.getByRole("button", { name: "Delete" }))
     await user.click(screen.getByRole("button", { name: "Delete" }))
 
-    await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]: [URL, RequestInit]) => url.pathname === "/v1/devices/phone-1/purge" && init.method === "DELETE")).toBe(true))
+    await waitFor(() => expect(fetchMock.mock.calls.some((call) => {
+      const [url, init] = call as [URL, RequestInit]
+      return url.pathname === "/v1/devices/phone-1/purge" && init.method === "DELETE"
+    })).toBe(true))
   })
 })

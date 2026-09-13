@@ -38,6 +38,32 @@ func TestRemoveManagedSessionDir(t *testing.T) {
 	}
 }
 
+func TestRegisterSpecUpdatedAt(t *testing.T) {
+	t.Run("preserves explicit timestamp", func(t *testing.T) {
+		r := NewSessionRegistry("", 0)
+		explicit := time.Date(2024, time.January, 2, 3, 4, 5, 0, time.UTC)
+		got, err := r.RegisterSpec(SessionSpec{ID: "restored", CWD: ".", UpdatedAt: explicit})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.UpdatedAt.Equal(explicit) {
+			t.Fatalf("UpdatedAt = %v, want %v", got.UpdatedAt, explicit)
+		}
+	})
+
+	t.Run("sets missing timestamp", func(t *testing.T) {
+		r := NewSessionRegistry("", 0)
+		before := time.Now()
+		got, err := r.RegisterSpec(SessionSpec{ID: "new", CWD: "."})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.UpdatedAt.Before(before) || got.UpdatedAt.After(time.Now()) {
+			t.Fatalf("UpdatedAt = %v, want current time", got.UpdatedAt)
+		}
+	})
+}
+
 func TestSessionRegistryRejectsDuplicateID(t *testing.T) {
 	r := NewSessionRegistry("", 0)
 	cfg := Config{}

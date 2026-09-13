@@ -102,5 +102,6 @@ Unit tests under `app/src/test/` cover the pure logic (tracker, parser, queue, d
 
 ### Background notifications
 
-- `data/notifications/SessionNotificationManager.kt` creates the Android notification channel and emits deduplicated completion, input-request, and failure notifications while the app is backgrounded.
-- `SessionDetailViewModel` keeps the live stream available during background transitions so terminal runtime states can arrive on time; foreground reconnect remains the recovery path if Android reclaims the process.
+- `data/notifications/SessionNotificationManager.kt` creates a private lock-screen notification channel and emits deduplicated completion, input-request, and failure notifications while the app is backgrounded. Notification text stays generic so runtime details and file paths are not exposed on the lock screen.
+- Android 13 and newer receive a runtime `POST_NOTIFICATIONS` permission request when the app starts. Denying it leaves notifications disabled without affecting session monitoring.
+- `SessionDetailViewModel` keeps the live stream available during background transitions so terminal runtime states can arrive on time; foreground reconnect remains the recovery path if Android suspends or reclaims the process.

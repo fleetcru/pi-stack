@@ -200,7 +200,7 @@ export class IncrementalTimeline {
       const tool = at === undefined ? undefined : this.items[at] as ToolItem
       const result = (event.partialResult ?? event.result) as { content?: Array<{ text?: string }> } | undefined
       const output = result?.content?.map((part) => part.text ?? "").join("")
-      if (tool) {
+      if (tool && at !== undefined) {
         const updated: ToolItem = {
           ...tool,
           output: output ?? tool.output,
@@ -237,7 +237,11 @@ export class TimelineStore {
   private snapshot: TimelineItem[] = []
   private listeners = new Set<() => void>()
 
-  constructor(readonly sessionId: string) {}
+  constructor(sessionId: string) {
+    this.sessionId = sessionId
+  }
+
+  readonly sessionId: string
 
   update(events: Array<Record<string, unknown>>): void {
     this.snapshot = this.reducer.update(events)
@@ -447,7 +451,7 @@ export function responseThinkingLevels(response: Record<string, unknown> | undef
   const values = model?.reasoning
     ? [...PI_THINKING_LEVELS]
     : candidates.flatMap((value) => Array.isArray(value) ? value : [])
-  const order = new Map(PI_THINKING_LEVELS.map((value, index) => [value, index]))
+  const order = new Map<string, number>(PI_THINKING_LEVELS.map((value, index) => [value, index]))
   return [...new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))]
     .sort((a, b) => (order.get(a.toLowerCase()) ?? order.size) - (order.get(b.toLowerCase()) ?? order.size) || a.localeCompare(b))
 }

@@ -10,6 +10,41 @@ import (
 	"time"
 )
 
+func TestDispatchRuntimeStatePersistsToJournal(t *testing.T) {
+	dataDir := t.TempDir()
+	cfg := Config{
+		DataDir:                  dataDir,
+		EventHistoryMax:          20,
+		EventHistoryBytes:        1024,
+		EventJournalSyncInterval: 0,
+	}
+	p := NewPiProcess(SessionSpec{ID: "runtime-journal", CWD: t.TempDir()}, cfg, testLogger())
+	if p.journal == nil {
+		t.Fatal("journal was not created")
+	}
+
+	p.dispatchRuntimeState(RPCEvent{
+		"type":          "runtime_state",
+		"runtimeState":  "waiting_for_input",
+		"runtimeReason": "extension_ui",
+	})
+	path := p.journal.path
+	if err := p.journal.close(); err != nil {
+		t.Fatalf("close journal: %v", err)
+	}
+
+	restored, lastID, err := readEventJournal(path)
+	if err != nil {
+		t.Fatalf("read journal: %v", err)
+	}
+	if lastID != 1 || len(restored) != 1 {
+		t.Fatalf("restored %d records with last ID %d, want one record with ID 1", len(restored), lastID)
+	}
+	if got := restored[0].Event["runtimeState"]; got != "waiting_for_input" {
+		t.Fatalf("runtimeState = %v, want waiting_for_input", got)
+	}
+}
+
 func TestPiProcessRequestWaiterLifecycle(t *testing.T) {
 	tests := []struct {
 		name        string

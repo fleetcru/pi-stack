@@ -780,12 +780,6 @@ class SessionDetailViewModel(
         // `_daemonExtensionUiRequiresResponse` for those; status, widget, and
         // notification events share this RPC type but are verbose output.
         val request = parseExtensionUiRequest(raw) ?: return
-        SessionNotificationManager.notifyInputRequest(
-          notificationContext,
-          sessionId,
-          request.message,
-          appInForeground,
-        )
         if (
           request.id in dismissedExtensionRequestIds ||
           request.id == lastSubmittedExtensionRequestId ||
@@ -849,14 +843,12 @@ class SessionDetailViewModel(
       // Runtime state transitions from the server (authoritative source of truth)
       "runtime_state" -> {
         val state = raw.getString("runtimeState")
-        val detail = raw.getString("runtimeDetail")
         if (!state.isNullOrBlank()) {
           sessionRuntimeStatus = state
           SessionNotificationManager.notifyRuntimeTransition(
             notificationContext,
             sessionId,
             state,
-            detail,
             appInForeground,
           )
         }
