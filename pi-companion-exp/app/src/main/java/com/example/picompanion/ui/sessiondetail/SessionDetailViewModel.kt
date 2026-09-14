@@ -825,12 +825,12 @@ class SessionDetailViewModel(
         return
       }
       "bridge_receipt" -> {
-        if (raw.getString("status") == "failed") {
-          _sendState.value = SendState.Failed("The TUI could not accept this message")
-          _agentWorking.value = false
-        } else {
-          _sendState.value = SendState.Delivered
-        }
+        val receiptState = bridgeReceiptSendState(
+          status = raw.getString("status"),
+          hasPendingPrompt = pendingPromptIds.isNotEmpty(),
+        ) ?: return
+        _sendState.value = receiptState
+        if (receiptState is SendState.Failed) _agentWorking.value = false
         return
       }
       "agent_start", "agent_end", "agent_settled", "turn_start", "turn_end" -> {
@@ -1690,6 +1690,15 @@ sealed interface SendState {
   data object Delivered : SendState
   data object Running : SendState
   data class Failed(val message: String) : SendState
+}
+
+internal fun bridgeReceiptSendState(status: String?, hasPendingPrompt: Boolean): SendState? {
+  if (!hasPendingPrompt) return null
+  return if (status == "failed") {
+    SendState.Failed("The TUI could not accept this message")
+  } else {
+    SendState.Delivered
+  }
 }
 
 data class GitFileChange(
