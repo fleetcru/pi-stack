@@ -47,6 +47,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
   val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
   private var refreshJob: Job? = null
   private var pollingJob: Job? = null
+  private var refreshPending = false
   private var contentServerId: String? = null
   // The home screen fans out to five endpoints per refresh. Thirty seconds
   // keeps it current while reducing mobile radio wakeups and server load.
@@ -61,7 +62,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   init {
-    refresh(showLoading = true)
+    refresh()
   }
 
   /** Start automatic polling when the Home tab is visible. */
@@ -89,9 +90,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
   /** Background refresh keeps Home current without replacing visible content with a spinner. */
   fun refresh(showLoading: Boolean = _uiState.value !is HomeUiState.Content) {
-    if (refreshJob?.isActive == true) return
+    if (refreshJob?.isActive == true) {
+      refreshPending = true
+      return
+    }
     refreshJob = viewModelScope.launch {
-      if (showLoading) _uiState.value = HomeUiState.Loading
+      try {
       val settings = settingsDataStore.settingsFlow.first()
       val server = settings.activeServer
 
@@ -116,6 +120,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
           maxSessions = current?.maxSessions ?: 0,
         )
         contentServerId = server.id
+      } else if (showLoading && _uiState.value !is HomeUiState.Content) {
+        _uiState.value = HomeUiState.Loading
       }
 
       // Start every request together, but let the main session inventory paint
@@ -197,6 +203,12 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
       // Warm only the two most likely next sessions, after visible Home data is
       // ready. This avoids delaying the list while making taps feel immediate.
       launch(Dispatchers.IO) { prefetchRecentSessions(server, sessionList.take(2)) }
+      } finally {
+        val rerun = refreshPending
+        refreshPending = false
+        refreshJob = null
+        if (rerun) refresh(showLoading = false)
+      }
     }
   }
 

@@ -119,8 +119,7 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
       return
     }
     val existing = _uiState.value as? SessionsUiState.Content
-    if (existing == null) _uiState.value = SessionsUiState.Loading
-    else _uiState.value = existing.copy(refreshing = true)
+    if (existing != null) _uiState.value = existing.copy(refreshing = true)
 
     refreshJob = viewModelScope.launch {
       try {
@@ -149,11 +148,13 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
         if (existingForServer == null && baseline != null) {
           _uiState.value = baseline
           contentServerId = server.id
+        } else if (existing == null && baseline == null) {
+          _uiState.value = SessionsUiState.Loading
         }
 
         // Start all inventory calls together. Active sessions paint as soon as
         // their request completes instead of waiting for machine discovery.
-        val activeDeferred = async(Dispatchers.IO) { client.listSessions(server) }
+        val activeDeferred = async(Dispatchers.IO) { client.listSessions(server, limit = 200) }
         val machineDeferred = async(Dispatchers.IO) { client.listMachineSessions(server) }
         val globalDeferred = async(Dispatchers.IO) { client.listGlobalSessions(server) }
 
@@ -170,7 +171,7 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
             activeSessions = activeSessions,
             machineSessions = baseline?.machineSessions ?: snapshot.machineSessions,
             globalSessions = baseline?.globalSessions ?: snapshot.globalSessions,
-            refreshing = true,
+            refreshing = false,
           )
           contentServerId = server.id
         }

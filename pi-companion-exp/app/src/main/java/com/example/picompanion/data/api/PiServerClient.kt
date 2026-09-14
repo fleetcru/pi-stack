@@ -77,23 +77,20 @@ class PiServerClient(
 
   // ── Sessions ───────────────────────────────────────────
 
-  /** Includes current runtime status and coordinator-mapped remote sessions. */
-  fun listSessions(server: ServerEntry): HttpResult<SessionListResponse> {
-    return doGet(server, "/v1/sessions?scope=all&include=state", emptyMap(), SessionListResponse.serializer())
+  /** Unified local and remote inventory. Skip include=state so list refresh
+   *  does not wait on per-session get_state RPCs. Spec status is enough for cards. */
+  fun listSessions(server: ServerEntry, limit: Int? = null): HttpResult<SessionListResponse> {
+    val path = if (limit == null) {
+      "/v1/sessions?scope=all"
+    } else {
+      "/v1/sessions?scope=all&limit=${limit.coerceIn(1, 200)}"
+    }
+    return doGet(server, path, emptyMap(), SessionListResponse.serializer())
   }
 
   /** Fetch only the most recent sessions for the home screen. */
-  fun listRecentSessions(server: ServerEntry, limit: Int = 50): HttpResult<SessionListResponse> {
-    // Limit at the daemon so Home does not repeatedly download and sort an
-    // unbounded inventory merely to display its recent entries.
-    val boundedLimit = limit.coerceIn(1, 200)
-    return doGet(
-      server,
-      "/v1/sessions?scope=all&include=state&limit=$boundedLimit",
-      emptyMap(),
-      SessionListResponse.serializer(),
-    )
-  }
+  fun listRecentSessions(server: ServerEntry, limit: Int = 20): HttpResult<SessionListResponse> =
+    listSessions(server, limit)
 
   fun listGlobalSessions(server: ServerEntry): HttpResult<GlobalSessionListResponse> =
     doGet(server, "/v1/global-sessions", emptyMap(), GlobalSessionListResponse.serializer())
