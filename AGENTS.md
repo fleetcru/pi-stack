@@ -419,7 +419,7 @@ Key invariants:
 - `_items.update` must be atomic (CAS via MutableStateFlow)
 - `assistantMutex` serializes assistant bubble state transitions
 - `historyGeneration` (volatile) prevents stale HTTP history overwrites items
-- Fresh session views replay from event cursor `0` while loading HTTP history, closing the snapshot-to-WebSocket gap
+- Fresh session views skip old event-ring replay, then reconcile durable history after the WebSocket opens to close the snapshot-to-connection gap without duplicating timestamped replay rows
 - Foreground reconnect must not restore cached timeline rows or `lastEventId` over newer live state; cache the current timeline on background first
 - `events_lost` uses a short bounded retry to reconcile up to 150 durable history records without reconnecting, because the current socket continues the retained-ring replay; stop after the first visible repair and do not republish identical retry pages
 - History recovery and older-page loads disable LazyColumn placement animation and auto-scroll so large merges preserve the viewport

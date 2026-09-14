@@ -113,8 +113,9 @@ internal class SessionHistoryState {
     val reconciledLiveText = BooleanArray(liveItems.size)
     liveItems.forEachIndexed { index, item ->
       val chat = item as? SessionTimelineItem.Chat ?: return@forEachIndexed
-      val ephemeralText = chat.time.isEmpty() || chat.time == "now"
-      if (!ephemeralText || chat.imageUris.isNotEmpty()) return@forEachIndexed
+      if (chat.imageUris.isNotEmpty()) return@forEachIndexed
+      // Replayed user messages carry a real timestamp, unlike optimistic and
+      // streaming rows. Newly durable rows still reconcile them one-to-one.
       val durableIndex = unmatchedDurableChats.indexOfFirst { durable ->
         durable.replacesEphemeral(chat, allowPrefix = durable === newestDurableAssistant)
       }

@@ -163,6 +163,7 @@ class SessionDetailViewModel(
   private var reconnectJob: Job? = null
   private var promptReconcileJob: Job? = null
   private var historyRecoveryJob: Job? = null
+  private var recoverHistoryAfterConnect = false
   private var relayHealthJob: Job? = null
   private var reconnectAttempt = 0
   @Volatile private var closed = false
@@ -361,11 +362,12 @@ class SessionDetailViewModel(
         }
       }
 
-      // Ticket acquisition runs alongside metadata/history startup. A fresh
-      // view replays from zero so events emitted between the HTTP snapshot and
-      // WebSocket open cannot disappear. The history merge removes overlap.
+      // Resume from a known event cursor. A fresh view skips old ring events
+      // because HTTP history already contains them; once the socket opens, a
+      // follow-up history read closes the snapshot-to-WebSocket timing gap.
+      recoverHistoryAfterConnect = replayEventsSinceLastSeen && lastEventId <= 0
       val since = if (replayEventsSinceLastSeen) {
-        lastEventId.takeIf { it > 0 } ?: 0L
+        lastEventId.takeIf { it > 0 } ?: Long.MAX_VALUE
       } else {
         Long.MAX_VALUE
       }
@@ -388,27 +390,16 @@ class SessionDetailViewModel(
             reconnectAttempt = 0
             _connectionState.value = ConnectionState.Connected
             flushQueuedPrompts()
+            if (recoverHistoryAfterConnect) {
+              recoverHistoryAfterConnect = false
+              startHistoryRecovery(showNotice = false)
+            }
           }
           is SocketEvent.EventsLost -> {
-            appendItem(SessionTimelineItem.System("Connection missed session events; restoring conversation history"))
             // The server continues with its retained-ring replay on this same
             // socket. Starting another connection from the old cursor can loop
             // on the same gap, so reconcile durable history without reconnecting.
-            if (historyRecoveryJob?.isActive != true) {
-              _historyRecovering.value = true
-              historyRecoveryJob = viewModelScope.launch {
-                try {
-                  // Retry briefly because a live event can reach the socket
-                  // just before its completed message becomes visible to history.
-                  repeat(3) { attempt ->
-                    if (attempt > 0) delay(if (attempt == 1) 250 else 1_000)
-                    if (loadHistory(limit = 150)) return@launch
-                  }
-                } finally {
-                  _historyRecovering.value = false
-                }
-              }
-            }
+            startHistoryRecovery(showNotice = true)
           }
           is SocketEvent.Disconnected -> {
             _connectionState.value = ConnectionState.Disconnected(event.reason)
@@ -424,6 +415,26 @@ class SessionDetailViewModel(
           }
           is SocketEvent.RawMessage -> appendItem(SessionTimelineItem.System(event.text))
         }
+      }
+    }
+  }
+
+  private fun startHistoryRecovery(showNotice: Boolean) {
+    if (historyRecoveryJob?.isActive == true) return
+    if (showNotice) {
+      appendItem(SessionTimelineItem.System("Connection missed session events; restoring conversation history"))
+    }
+    _historyRecovering.value = true
+    historyRecoveryJob = viewModelScope.launch {
+      try {
+        // Retry briefly because a live event can reach the socket just before
+        // its completed message becomes visible to durable history.
+        repeat(3) { attempt ->
+          if (attempt > 0) delay(if (attempt == 1) 250 else 1_000)
+          if (loadHistory(limit = 150)) return@launch
+        }
+      } finally {
+        _historyRecovering.value = false
       }
     }
   }

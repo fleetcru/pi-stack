@@ -232,6 +232,44 @@ class SessionHistoryStateTest {
   }
 
   @Test
+  fun durableHistoryReconcilesTimestampedReplayWithoutChangingOrder() {
+    val state = SessionHistoryState()
+    val replayedUser = SessionTimelineItem.Chat(
+      author = "You",
+      text = "replayed prompt",
+      time = "2026-08-11T08:29:23Z",
+      isUser = true,
+      order = 10,
+    )
+    val replayedAssistant = SessionTimelineItem.Chat(
+      author = "Pi Agent",
+      text = "replayed answer",
+      time = "2026-08-11T08:29:24Z",
+      isUser = false,
+      order = 11,
+    )
+    val durableUser = replayedUser.copy(order = 0, sourceId = "history-20-segment-0")
+    val durableAssistant = replayedAssistant.copy(order = 0, sourceId = "history-21-segment-0")
+
+    val merged = state.applyPage(
+      page = listOf(durableUser, durableAssistant),
+      appendOld = false,
+      nextOffset = 2,
+      hasOlder = false,
+      liveItems = listOf(replayedUser, replayedAssistant),
+      stamp = { it },
+      totalMessages = 22,
+      pageStartIndex = 20,
+    )
+
+    assertEquals(2, merged.size)
+    assertEquals(
+      listOf("replayed prompt", "replayed answer"),
+      merged.map { (it as SessionTimelineItem.Chat).text },
+    )
+  }
+
+  @Test
   fun durableHistoryRetainsOptimisticImagePreview() {
     val state = SessionHistoryState()
     val preview = SessionTimelineItem.Chat(
