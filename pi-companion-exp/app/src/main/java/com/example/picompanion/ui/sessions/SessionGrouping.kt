@@ -11,7 +11,7 @@ data class SessionGroup(
   val sessions: List<ServerSession>,
 )
 
-private val runningStates = setOf("running", "active", "working", "starting", "reconnecting")
+private val runningStates = setOf("working", "starting", "reconnecting", "waiting_for_input", "waiting for input")
 
 fun groupSessions(
   sessions: List<ServerSession>,

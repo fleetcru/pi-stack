@@ -33,7 +33,7 @@ Go 1.23 HTTP/WebSocket daemon. Spawns Pi CLI processes, speaks strict LF-delimit
 
 ## Sessions
 
-- `session.go` — `SessionSpec` (id, cwd, args, env, metadata, worktree branch) and `SessionRegistry`, the JSON-file-persisted map of sessions with `AttachIfAbsent` semantics to prevent orphaned duplicate processes.
+- `session.go` — `SessionSpec` (id, cwd, args, env, metadata, worktree branch) and `SessionRegistry`, the JSON-file-persisted map of sessions with `AttachIfAbsent` semantics to prevent orphaned duplicate processes. Inventory status prefers agent runtime (`idle`/`working`) over process liveness.
 - `session_handlers.go` — create/delete session endpoints. Handles the auto-worktree flow (`createWorktree.enabled` → `<repo>/.pi-worktrees/<title>` + `feature/<title>` branch), mutual exclusion with explicit `worktreePath`, and cleanup on delete including the Windows fallback (clear read-only attrs → `os.RemoveAll` → `worktree prune` → `branch -D`).
 - `session_inventory.go` — the unified session list. Merges local sessions, remote worker sessions, machine-discovered sessions, and live relay sessions into one `SessionSummary` shape. Relay sessions win over local processes for the same JSONL file (two Pi processes on one file corrupt history).
 - `session_inventory` helpers in `machine_sessions.go` — scans `~/.pi/agent/sessions/*.jsonl` to discover Pi sessions the server didn't spawn itself, with an mtime cache.

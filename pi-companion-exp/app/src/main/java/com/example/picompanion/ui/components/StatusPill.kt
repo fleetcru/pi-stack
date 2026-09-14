@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun StatusPill(text: String, modifier: Modifier = Modifier) {
   val normalized = text.lowercase().replace('_', ' ')
-  val isActive = normalized in setOf("running", "starting", "working", "reconnecting")
+  val isActive = normalized in setOf("starting", "working", "reconnecting")
   val isWaiting = normalized == "waiting for input"
   val isError = normalized in setOf("error", "failed", "stopped")
 

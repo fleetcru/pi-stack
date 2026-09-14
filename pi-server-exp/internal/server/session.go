@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -246,7 +247,7 @@ func (r *SessionRegistry) ListSpecs() []SessionSpec {
 	r.mu.RUnlock()
 	for i := range specs {
 		if process, ok := processes[specs[i].ID]; ok {
-			if status, ok := process.Status()["status"].(string); ok {
+			if status := inventoryStatusFromProcess(process.Status()); status != "" {
 				specs[i].Status = status
 			}
 		}
@@ -324,4 +325,18 @@ func (r *SessionRegistry) checkCanStart() bool {
 		}
 	}
 	return count < maxSessions
+}
+
+// inventoryStatusFromProcess prefers agent runtime over process liveness.
+// A live Pi process is "running", but the session is idle until a turn starts.
+func inventoryStatusFromProcess(st map[string]any) string {
+	if rt, ok := st["runtimeStatus"].(map[string]any); ok {
+		if state, _ := rt["state"].(string); strings.TrimSpace(state) != "" {
+			return state
+		}
+	}
+	if status, _ := st["status"].(string); status != "" {
+		return status
+	}
+	return ""
 }

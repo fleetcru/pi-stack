@@ -124,6 +124,29 @@ func TestHistoryOwnershipReclaimsStaleLock(t *testing.T) {
 	}
 }
 
+func TestInventoryStatusFromProcessPrefersRuntimeState(t *testing.T) {
+	got := inventoryStatusFromProcess(map[string]any{
+		"status":        "running",
+		"runtimeStatus": map[string]any{"state": "idle"},
+	})
+	if got != "idle" {
+		t.Fatalf("status = %q, want idle", got)
+	}
+
+	got = inventoryStatusFromProcess(map[string]any{
+		"status":        "running",
+		"runtimeStatus": map[string]any{"state": "working"},
+	})
+	if got != "working" {
+		t.Fatalf("status = %q, want working", got)
+	}
+
+	got = inventoryStatusFromProcess(map[string]any{"status": "exited"})
+	if got != "exited" {
+		t.Fatalf("status = %q, want exited", got)
+	}
+}
+
 func TestSessionRegistryListSpecsDeterministicOrder(t *testing.T) {
 	r := NewSessionRegistry("", 0)
 	cfg := Config{}

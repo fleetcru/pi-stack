@@ -349,7 +349,7 @@ Companion/Webby
 
 ### Concurrency
 
-- **Lock ordering:** `SessionRegistry.mu` → `PiProcess.mu`. Never reverse. `ListSpecs()` and `ActiveCount()` copy data under RLock, release, then call `Status()` outside.
+- **Lock ordering:** `SessionRegistry.mu` → `PiProcess.mu`. Never reverse. `ListSpecs()` and `ActiveCount()` copy data under RLock, release, then call `Status()` outside. Inventory `status` is agent runtime, not process liveness: a live Pi process that is idle must not be listed as working/running.
 - **Write serialization:** WebSocket connections use `writeMu` to serialize all writes (events, nacks, ping frames).
 - **Subscriber dispatch:** Copies subscriber set under write lock before iterating outside lock.
 
