@@ -58,6 +58,80 @@ class SessionHistoryStateTest {
   }
 
   @Test
+  fun absoluteSourceIndexesStayStableWhenTranscriptGrows() {
+    val state = SessionHistoryState()
+    val previous = (70 until 100).map { index ->
+      SessionTimelineItem.Chat(
+        author = "Pi Agent",
+        text = "message $index",
+        time = "t$index",
+        isUser = false,
+        sourceId = "history-$index-segment-0",
+      )
+    }
+    state.restore(previous, offset = 30, older = true, totalMessages = 100)
+    val refreshed = (65 until 105).map { index ->
+      previous.firstOrNull { it.sourceId == "history-$index-segment-0" }
+        ?: SessionTimelineItem.Chat(
+          author = "Pi Agent",
+          text = "message $index",
+          time = "t$index",
+          isUser = false,
+          sourceId = "history-$index-segment-0",
+        )
+    }
+
+    val merged = state.applyPage(
+      page = refreshed,
+      appendOld = false,
+      nextOffset = 40,
+      hasOlder = true,
+      liveItems = previous,
+      stamp = { it },
+      totalMessages = 105,
+      pageStartIndex = 65,
+    )
+
+    assertEquals(40, merged.size)
+    assertEquals((65 until 105).map { "message $it" }, merged.map { (it as SessionTimelineItem.Chat).text })
+  }
+
+  @Test
+  fun newestRefreshWithAnUnrecoverableGapRestartsContiguousHistory() {
+    val state = SessionHistoryState()
+    val old = SessionTimelineItem.Chat(
+      author = "You",
+      text = "old",
+      time = "t1",
+      isUser = true,
+      order = 1,
+      sourceId = "history-10-segment-0",
+    )
+    state.restore(listOf(old), offset = 1, older = true, totalMessages = 12)
+    val newest = old.copy(
+      text = "newest",
+      time = "t2",
+      order = 0,
+      sourceId = "history-200-segment-0",
+    )
+
+    val merged = state.applyPage(
+      page = listOf(newest),
+      appendOld = false,
+      nextOffset = 1,
+      hasOlder = true,
+      liveItems = listOf(old),
+      stamp = { it },
+      totalMessages = 202,
+      pageStartIndex = 200,
+    )
+
+    assertEquals(listOf("newest"), merged.map { (it as SessionTimelineItem.Chat).text })
+    assertEquals(1, state.nextOffset)
+    assertEquals(202, state.totalMessages)
+  }
+
+  @Test
   fun completedHistoryResponseReplacesLongStreamedPrefix() {
     val state = SessionHistoryState()
     val prefix = "This response has enough streamed text to match"
@@ -236,6 +310,33 @@ class SessionHistoryStateTest {
 
     assertEquals(2, merged.size)
     assertEquals("The current response is stream", (merged.last() as SessionTimelineItem.Chat).text)
+  }
+
+  @Test
+  fun oneDurableEchoReplacesOnlyOneIdenticalOptimisticMessage() {
+    val state = SessionHistoryState()
+    val first = SessionTimelineItem.Chat(
+      author = "You",
+      text = "same prompt",
+      time = "now",
+      isUser = true,
+      order = 10,
+      sourceId = "request-1",
+    )
+    val second = first.copy(order = 11, sourceId = "request-2")
+    val durable = first.copy(time = "2026-08-11T08:29:23Z", order = 0, sourceId = "history-1-segment-0")
+
+    val merged = state.applyPage(
+      page = listOf(durable),
+      appendOld = false,
+      nextOffset = 1,
+      hasOlder = false,
+      liveItems = listOf(first, second),
+      stamp = { it },
+    )
+
+    assertEquals(2, merged.size)
+    assertEquals(1, merged.filterIsInstance<SessionTimelineItem.Chat>().count { it.time == "now" })
   }
 
   @Test

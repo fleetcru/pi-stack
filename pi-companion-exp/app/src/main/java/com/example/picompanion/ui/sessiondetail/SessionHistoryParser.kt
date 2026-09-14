@@ -25,6 +25,7 @@ internal object SessionHistoryParser {
           name = message.string("name") ?: "tool",
           status = "completed",
           args = message["input"]?.toString(),
+          sourceId = "history-$historyIndex-tool-0",
         )
         return@forEachIndexed
       }
@@ -75,6 +76,7 @@ internal object SessionHistoryParser {
               name = objectBlock?.string("name") ?: "tool",
               status = "completed",
               args = objectBlock?.get("arguments")?.toString() ?: objectBlock?.get("input")?.toString(),
+              sourceId = "history-$historyIndex-tool-$toolIndex",
             )
           } else {
             block.findText()?.let(text::append)
@@ -126,4 +128,17 @@ internal object SessionHistoryParser {
     is SessionTimelineItem.FileChange -> "file|${item.operation}|${item.path}"
     is SessionTimelineItem.System -> "system|${item.text}"
   }
+}
+
+internal fun historyPageStartIndex(totalMessages: Int, offset: Int, pageSize: Int): Int =
+  (totalMessages - offset - pageSize).coerceAtLeast(0)
+
+internal fun historySourceIndex(item: SessionTimelineItem): Int? {
+  val sourceId = when (item) {
+    is SessionTimelineItem.Chat -> item.sourceId
+    is SessionTimelineItem.Tool -> item.sourceId
+    else -> null
+  } ?: return null
+  if (!sourceId.startsWith("history-")) return null
+  return sourceId.removePrefix("history-").substringBefore('-').toIntOrNull()
 }

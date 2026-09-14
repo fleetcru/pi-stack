@@ -194,12 +194,12 @@ class SessionEventSocket(
    * OkHttp returns false when the socket is closing/closed, allowing the
    * caller to use the REST transport without submitting the command twice.
    */
-  fun disconnect() {
+  fun disconnect(preserveReplayState: Boolean = false) {
     generation.incrementAndGet()
     webSocket?.close(1000, "Client disconnect")
     webSocket = null
     connected = false
-    eventSequence.clear()
+    if (!preserveReplayState) eventSequence.clear()
   }
 
   /** Permanently disposes this socket and its parser worker. */

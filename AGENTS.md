@@ -401,7 +401,7 @@ Per-session isolated git worktrees and a guided commit/push flow, inspired by T3
 
 - **Server:** Monotonic uint64 event IDs per session. `events_lost` sentinel when cursor predates the ring.
 - **Webby:** `seenEventIds` Map with 10K eldest-eviction. Generation guard after reconnect.
-- **Companion:** `LinkedHashMap` with 2K eldest-eviction + generation counter for stale callback prevention.
+- **Companion:** `LinkedHashMap` with 10K eldest-eviction + generation counter for stale callback prevention. Network/manual reconnects preserve this duplicate window; only explicit server switches or disposal clear it.
 
 ### Companion Event Pipeline
 
@@ -419,6 +419,11 @@ Key invariants:
 - `_items.update` must be atomic (CAS via MutableStateFlow)
 - `assistantMutex` serializes assistant bubble state transitions
 - `historyGeneration` (volatile) prevents stale HTTP history overwrites items
+- Fresh session views replay from event cursor `0` while loading HTTP history, closing the snapshot-to-WebSocket gap
+- Foreground reconnect must not restore cached timeline rows or `lastEventId` over newer live state; cache the current timeline on background first
+- `events_lost` uses a short bounded retry to reconcile up to 150 durable history records without reconnecting, because the current socket continues the retained-ring replay; stop after the first visible repair and do not republish identical retry pages
+- History recovery and older-page loads disable LazyColumn placement animation and auto-scroll so large merges preserve the viewport
+- Cached pagination offsets are server message offsets, not timeline-item counts; trimming derives the new offset from absolute `history-{index}` source IDs
 - `toolExecutionActive` flag prevents runtime_state(idle) from resetting spinner during tool use
 - `turnCompleteGeneration` prevents stale runtime_state from re-enabling spinner after turn completes
 - LazyColumn keys must be unique — `itemKeys` uses seen-set with index fallback

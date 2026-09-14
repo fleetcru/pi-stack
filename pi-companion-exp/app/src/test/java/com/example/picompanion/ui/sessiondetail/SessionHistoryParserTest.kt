@@ -9,6 +9,12 @@ import kotlinx.serialization.json.jsonArray
 
 class SessionHistoryParserTest {
   @Test
+  fun computesAbsoluteIndexesForNewestAndOlderPages() {
+    assertEquals(170, historyPageStartIndex(totalMessages = 200, offset = 0, pageSize = 30))
+    assertEquals(95, historyPageStartIndex(totalMessages = 200, offset = 30, pageSize = 75))
+  }
+
+  @Test
   fun parsesStandaloneToolRecordsWithoutRole() {
     val messages = Json.parseToJsonElement(
       """[
@@ -82,6 +88,22 @@ class SessionHistoryParserTest {
       (fullPage[1] as SessionTimelineItem.Chat).sourceId,
       (shiftedPage.single() as SessionTimelineItem.Chat).sourceId,
     )
+  }
+
+  @Test
+  fun keepsConsecutiveIdenticalUserMessages() {
+    val messages = Json.parseToJsonElement(
+      """[
+        {"role":"user","timestamp":"same-time","content":"ok"},
+        {"role":"user","timestamp":"same-time","content":"ok"}
+      ]""",
+    ).jsonArray
+
+    val items = SessionHistoryParser.parse(messages, pageStartIndex = 10)
+
+    assertEquals(2, items.size)
+    assertEquals("history-10-segment-0", (items[0] as SessionTimelineItem.Chat).sourceId)
+    assertEquals("history-11-segment-0", (items[1] as SessionTimelineItem.Chat).sourceId)
   }
 
   @Test

@@ -11,6 +11,7 @@ internal object SessionStateCache {
     val project: String,
     val cwd: String,
     val lastEventId: Long,
+    val totalHistoryMessages: Int,
   )
 
   private const val MaxEntries = 5
@@ -36,12 +37,45 @@ internal object SessionStateCache {
       }
     }
 
-    val retainedHistory = normalize(entry.historicalItems.takeLast(500))
-    val retainedItems = normalize(entry.items.takeLast(500))
+    val provisionalHistory = entry.historicalItems.takeLast(500)
+    val firstRetainedIndex = provisionalHistory.firstNotNullOfOrNull(::historySourceIndex)
+    // Keep every segment from the first retained source message. A hard item
+    // cut can otherwise keep the tail of a multi-part assistant message while
+    // dropping its opening text or tool call.
+    val retainedHistory = normalize(
+      if (firstRetainedIndex == null) {
+        provisionalHistory
+      } else {
+        entry.historicalItems.dropWhile { item ->
+          historySourceIndex(item)?.let { it < firstRetainedIndex } ?: true
+        }
+      },
+    )
+    val provisionalItems = entry.items.takeLast(500)
+    val firstRetainedItemIndex = provisionalItems.firstNotNullOfOrNull(::historySourceIndex)
+    val retainedItems = normalize(
+      if (firstRetainedItemIndex == null) {
+        provisionalItems
+      } else {
+        entry.items.dropWhile { item ->
+          historySourceIndex(item)?.let { it < firstRetainedItemIndex } ?: true
+        }
+      },
+    )
+    val retainedOffset = if (
+      retainedHistory.size < entry.historicalItems.size &&
+      entry.totalHistoryMessages > 0 &&
+      firstRetainedIndex != null
+    ) {
+      (entry.totalHistoryMessages - firstRetainedIndex).coerceAtLeast(0)
+    } else {
+      entry.nextHistoryOffset
+    }
     entries[key] = entry.copy(
       items = retainedItems,
       historicalItems = retainedHistory,
-      nextHistoryOffset = minOf(entry.nextHistoryOffset, retainedHistory.size),
+      nextHistoryOffset = retainedOffset,
+      hasOlder = entry.hasOlder || retainedHistory.size < entry.historicalItems.size,
     )
   }
 
@@ -53,8 +87,8 @@ internal object SessionStateCache {
   }
 
   private fun SessionTimelineItem.cacheId(): String = when (this) {
-    is SessionTimelineItem.Chat -> "chat|$isUser|$time|${text.length}|${text.hashCode()}|${text.take(50)}"
-    is SessionTimelineItem.Tool -> "tool|$callId"
+    is SessionTimelineItem.Chat -> "chat|${sourceId ?: "$isUser|$time|${text.length}|${text.hashCode()}|${text.take(50)}"}"
+    is SessionTimelineItem.Tool -> "tool|${sourceId ?: callId}"
     is SessionTimelineItem.FileChange -> "file|$operation|$path"
     is SessionTimelineItem.System -> "system|$text"
   }

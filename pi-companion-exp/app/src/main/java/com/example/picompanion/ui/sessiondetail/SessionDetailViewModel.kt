@@ -117,6 +117,8 @@ class SessionDetailViewModel(
   val loadingOlderHistory: StateFlow<Boolean> = _loadingOlderHistory.asStateFlow()
   private val _historyLoadError = MutableStateFlow<String?>(null)
   val historyLoadError: StateFlow<String?> = _historyLoadError.asStateFlow()
+  private val _historyRecovering = MutableStateFlow(false)
+  val historyRecovering: StateFlow<Boolean> = _historyRecovering.asStateFlow()
   private val historyState = SessionHistoryState()
   private val historyMutex = kotlinx.coroutines.sync.Mutex()
   // Generation counter for loadHistory: incremented on each connect() so a
@@ -160,6 +162,7 @@ class SessionDetailViewModel(
   private var activeServer: com.example.picompanion.data.settings.ServerEntry? = null
   private var reconnectJob: Job? = null
   private var promptReconcileJob: Job? = null
+  private var historyRecoveryJob: Job? = null
   private var relayHealthJob: Job? = null
   private var reconnectAttempt = 0
   @Volatile private var closed = false
@@ -188,7 +191,7 @@ class SessionDetailViewModel(
       reconnectJob?.cancel()
       reconnectJob = null
       reconnectAttempt = 0
-      transport.disconnect()
+      transport.disconnectForReplay()
       scheduleReconnect(immediate = true)
     }
     override fun onLost(network: Network) {
@@ -274,6 +277,9 @@ class SessionDetailViewModel(
     // backoff reconnect that could otherwise open a second ticketed stream.
     reconnectJob?.cancel()
     reconnectJob = null
+    historyRecoveryJob?.cancel()
+    historyRecoveryJob = null
+    _historyRecovering.value = false
     // A reconnect must not let buffered tokens from the old socket append to
     // the first assistant message received on the new socket.
     assistantFlushJob?.cancel()
@@ -355,11 +361,11 @@ class SessionDetailViewModel(
         }
       }
 
-      // Ticket acquisition runs alongside metadata/history startup. Resume from
-      // the cached cursor when available; fresh sessions intentionally skip replay
-      // because durable history is loading in parallel.
+      // Ticket acquisition runs alongside metadata/history startup. A fresh
+      // view replays from zero so events emitted between the HTTP snapshot and
+      // WebSocket open cannot disappear. The history merge removes overlap.
       val since = if (replayEventsSinceLastSeen) {
-        lastEventId.takeIf { it > 0 } ?: Long.MAX_VALUE
+        lastEventId.takeIf { it > 0 } ?: 0L
       } else {
         Long.MAX_VALUE
       }
@@ -385,13 +391,24 @@ class SessionDetailViewModel(
           }
           is SocketEvent.EventsLost -> {
             appendItem(SessionTimelineItem.System("Connection missed session events; restoring conversation history"))
-            // Use one reconnect path and resume from the last event actually
-            // delivered to this ViewModel. Opening with null requested a full
-            // ring replay and raced the normal backoff reconnect.
-            reconnectJob?.cancel()
-            reconnectJob = null
-            viewModelScope.launch { loadHistory() }
-            scheduleReconnect(immediate = true)
+            // The server continues with its retained-ring replay on this same
+            // socket. Starting another connection from the old cursor can loop
+            // on the same gap, so reconcile durable history without reconnecting.
+            if (historyRecoveryJob?.isActive != true) {
+              _historyRecovering.value = true
+              historyRecoveryJob = viewModelScope.launch {
+                try {
+                  // Retry briefly because a live event can reach the socket
+                  // just before its completed message becomes visible to history.
+                  repeat(3) { attempt ->
+                    if (attempt > 0) delay(if (attempt == 1) 250 else 1_000)
+                    if (loadHistory(limit = 150)) return@launch
+                  }
+                } finally {
+                  _historyRecovering.value = false
+                }
+              }
+            }
           }
           is SocketEvent.Disconnected -> {
             _connectionState.value = ConnectionState.Disconnected(event.reason)
@@ -413,20 +430,26 @@ class SessionDetailViewModel(
 
   private fun restoreCachedSession(serverId: String) {
     val cached = SessionStateCache.get("$serverId:$sessionId") ?: return
-    _items.value = cached.items
-    historyState.restore(cached.historicalItems, cached.nextHistoryOffset, cached.hasOlder)
-    _hasOlderHistory.value = cached.hasOlder
-    _sessionTitle.value = cached.title
-    _sessionProject.value = cached.project
-    _sessionCwd.value = cached.cwd
-    hasSessionMetadata = true
-    lastEventId = cached.lastEventId
-    timelineSeq = cached.items.maxOfOrNull { item -> when (item) {
-      is SessionTimelineItem.Chat -> item.order
-      is SessionTimelineItem.Tool -> item.order
-      is SessionTimelineItem.FileChange -> item.order
-      is SessionTimelineItem.System -> item.order
-    } } ?: 0
+    if (shouldRestoreCachedTimeline(_items.value, historyState.historicalItems)) {
+      _items.value = cached.items
+      historyState.restore(
+        cached.historicalItems,
+        cached.nextHistoryOffset,
+        cached.hasOlder,
+        cached.totalHistoryMessages,
+      )
+      _hasOlderHistory.value = cached.hasOlder
+      timelineSeq = cached.items.maxOfOrNull { item -> item.order } ?: 0
+    } else {
+      historyState.retainTotalMessages(cached.totalHistoryMessages)
+    }
+    // Metadata can still fill an empty header during reconnect, but a cache
+    // must never roll the live cursor or timeline back to an older snapshot.
+    if (_sessionTitle.value.isEmpty()) _sessionTitle.value = cached.title
+    if (_sessionProject.value.isEmpty()) _sessionProject.value = cached.project
+    if (_sessionCwd.value.isEmpty()) _sessionCwd.value = cached.cwd
+    hasSessionMetadata = hasSessionMetadata || cached.title.isNotEmpty() || cached.cwd.isNotEmpty()
+    lastEventId = maxOf(lastEventId, cached.lastEventId)
   }
 
   private fun cacheCurrentSession() {
@@ -440,6 +463,7 @@ class SessionDetailViewModel(
       project = _sessionProject.value,
       cwd = _sessionCwd.value,
       lastEventId = lastEventId,
+      totalHistoryMessages = historyState.totalMessages,
     ))
   }
 
@@ -463,17 +487,21 @@ class SessionDetailViewModel(
     viewModelScope.launch { loadHistory() }
   }
 
-  private suspend fun loadHistory(offset: Int = 0, appendOld: Boolean = false) {
+  private suspend fun loadHistory(
+    offset: Int = 0,
+    appendOld: Boolean = false,
+    limit: Int = if (appendOld) 75 else 40,
+  ): Boolean {
     // Queue concurrent refreshes instead of silently dropping one while a
     // previous history request is still in flight.
     val generation = historyGeneration
-    historyMutex.withLock {
-      // Skip if a newer connect() has started — this stale request would
-      // overwrite fresh history with data from a previous connection.
-      if (generation != historyGeneration) return
+    return historyMutex.withLock {
+      // Skip if a newer connect() has started. A recovery loop can retry with
+      // the new generation rather than overwriting it with stale history.
+      if (generation != historyGeneration) return@withLock false
       if (appendOld) _loadingOlderHistory.value = true
       try {
-        when (val result = repository.getSessionMessages(sessionId, offset = offset, limit = if (appendOld) 75 else 40)) {
+        when (val result = repository.getSessionMessages(sessionId, offset = offset, limit = limit)) {
           is com.example.picompanion.data.api.HttpResult.Success -> {
             val data = result.value["data"]?.jsonObject
             val messages = data?.get("messages") as? JsonArray
@@ -483,7 +511,7 @@ class SessionDetailViewModel(
               val historyMeta = data["history"]?.jsonObject
               val totalMessages = historyMeta?.get("total")?.jsonPrimitive?.intOrNull
                 ?: (offset + messages.size)
-              val pageStartIndex = (totalMessages - offset - messages.size).coerceAtLeast(0)
+              val pageStartIndex = historyPageStartIndex(totalMessages, offset, messages.size)
               val history = withContext(Dispatchers.Default) {
                 SessionHistoryParser.parse(messages, pageStartIndex)
               }
@@ -498,17 +526,25 @@ class SessionDetailViewModel(
               // Build merged list OUTSIDE _items.update to avoid withOrder()
               // being called on CAS retries (which would create different
               // order values and cause LazyColumn key instability).
-              _items.value = historyState.applyPage(
+              val currentItems = _items.value
+              val mergedItems = historyState.applyPage(
                 page = history,
                 appendOld = appendOld,
                 nextOffset = nextOffset,
                 hasOlder = hasOlder,
-                liveItems = _items.value,
+                liveItems = currentItems,
                 stamp = ::withOrder,
+                totalMessages = totalMessages,
+                pageStartIndex = pageStartIndex,
               )
-              cacheCurrentSession()
-              // Log AFTER the update to confirm items were set
+              val changed = mergedItems != currentItems
+              if (changed) _items.value = mergedItems
+              // Avoid repeated cache normalization when a recovery retry sees
+              // the exact same durable page and produces no visible change.
+              if (changed || appendOld) cacheCurrentSession()
+              return@withLock changed
             }
+            false
           }
           is com.example.picompanion.data.api.HttpResult.Failure -> {
             android.util.Log.w(
@@ -516,6 +552,7 @@ class SessionDetailViewModel(
               "Could not load session history: ${result.message}",
             )
             _historyLoadError.value = result.message
+            false
           }
         }
       } finally {
@@ -1139,9 +1176,15 @@ class SessionDetailViewModel(
       // Mark it so message_start is ignored and the image-bearing optimistic
       // row remains the only visible user message.
       lastSentPrompt = message
-      recentSentPrompts["img-${UUID.randomUUID()}"] = message
+      val optimisticId = "img-${UUID.randomUUID()}"
+      recentSentPrompts[optimisticId] = message
       appendItem(SessionTimelineItem.Chat(
-        author = "You", text = message, time = "now", isUser = true, imageUris = imageUris,
+        author = "You",
+        text = message,
+        time = "now",
+        isUser = true,
+        imageUris = imageUris,
+        sourceId = optimisticId,
       ))
       viewModelScope.launch {
         _sendState.value = SendState.Sending
@@ -1213,6 +1256,7 @@ class SessionDetailViewModel(
       text = message,
       time = "now",
       isUser = true,
+      sourceId = requestId,
     ))
 
     // REST is the authoritative route for both local RPC and bridged TUI
@@ -1587,7 +1631,7 @@ class SessionDetailViewModel(
 
   fun reconnect() {
     reconnectJob?.cancel()
-    transport.disconnect()
+    transport.disconnectForReplay()
     scheduleReconnect(immediate = true)
   }
 
@@ -1609,6 +1653,7 @@ class SessionDetailViewModel(
 
   fun onBackground() {
     publishInventorySnapshot()
+    cacheCurrentSession()
     appInForeground = false
     // Keep the stream alive while the process is backgrounded so terminal
     // runtime transitions can produce timely notifications. Android may still
@@ -1628,6 +1673,8 @@ class SessionDetailViewModel(
     closed = true
     reconnectJob?.cancel()
     relayHealthJob?.cancel()
+    historyRecoveryJob?.cancel()
+    _historyRecovering.value = false
     if (networkCallbackRegistered) connectivityManager.unregisterNetworkCallback(networkCallback)
     transport.close()
     super.onCleared()
@@ -1692,6 +1739,11 @@ sealed interface SendState {
   data class Failed(val message: String) : SendState
 }
 
+internal fun shouldRestoreCachedTimeline(
+  currentItems: List<SessionTimelineItem>,
+  currentHistory: List<SessionTimelineItem>,
+): Boolean = currentItems.isEmpty() && currentHistory.isEmpty()
+
 internal fun bridgeReceiptSendState(status: String?, hasPendingPrompt: Boolean): SendState? {
   if (!hasPendingPrompt) return null
   return if (status == "failed") {
@@ -1731,6 +1783,7 @@ sealed interface SessionTimelineItem {
     val startedAt: Long? = null,
     val endedAt: Long? = null,
     override val order: Long = 0,
+    val sourceId: String? = null,
   ) : SessionTimelineItem
 
   data class FileChange(

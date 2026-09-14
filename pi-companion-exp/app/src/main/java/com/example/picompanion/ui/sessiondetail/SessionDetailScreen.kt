@@ -87,6 +87,7 @@ fun SessionDetailScreen(
   val hasOlderHistory by viewModel.hasOlderHistory.collectAsStateWithLifecycle()
   val loadingOlderHistory by viewModel.loadingOlderHistory.collectAsStateWithLifecycle()
   val historyLoadError by viewModel.historyLoadError.collectAsStateWithLifecycle()
+  val historyRecovering by viewModel.historyRecovering.collectAsStateWithLifecycle()
   val timelinePrefixItems = (if (hasOlderHistory) 1 else 0) + (if (historyLoadError != null) 1 else 0)
   val timelineEndIndex = (items.lastIndex + timelinePrefixItems).coerceAtLeast(0)
   val initialEndIndex = remember(sessionId) { timelineEndIndex }
@@ -166,9 +167,25 @@ fun SessionDetailScreen(
   // Item placement only animates after the first scroll settles. Animating
   // during the cache → history → live fill makes every row slide into place,
   // which reads as the whole screen "jumping" on session open.
-  val animateItems = initialScrollDone && items.isNotEmpty()
-  LaunchedEffect(items.size, streamVersion) {
+  val animateItems = initialScrollDone && items.isNotEmpty() &&
+    !historyRecovering && !loadingOlderHistory
+  var historyMergePendingScroll by remember(sessionId) { mutableStateOf(false) }
+  LaunchedEffect(items.size, streamVersion, historyRecovering, loadingOlderHistory) {
     if (items.isEmpty()) return@LaunchedEffect
+    if (historyRecovering || loadingOlderHistory) {
+      historyMergePendingScroll = true
+      return@LaunchedEffect
+    }
+    if (historyMergePendingScroll) {
+      historyMergePendingScroll = false
+      // A first-load recovery still needs one instant jump to the latest row.
+      // Existing readers keep their LazyColumn anchor after a large merge.
+      if (!initialScrollDone) {
+        listState.scrollToItem(timelineEndIndex)
+        initialScrollDone = true
+      }
+      return@LaunchedEffect
+    }
     if (!initialScrollDone) {
       // Position before revealing uncached history. Animating from index zero
       // briefly paints old rows while entering a session.

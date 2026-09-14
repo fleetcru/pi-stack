@@ -29,6 +29,7 @@ import android.net.NetworkCapabilities
 import java.util.concurrent.atomic.AtomicBoolean
 import com.example.picompanion.ui.sessiondetail.SessionHistoryParser
 import com.example.picompanion.ui.sessiondetail.SessionStateCache
+import com.example.picompanion.ui.sessiondetail.historyPageStartIndex
 import com.example.picompanion.ui.sessions.SessionInventoryState
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -211,8 +212,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         val payload = (result as? HttpResult.Success)?.value ?: return@async
         val data = payload["data"] as? JsonObject ?: return@async
         val messages = data["messages"] as? JsonArray ?: return@async
-        val parsed = SessionHistoryParser.parse(messages)
         val history = data["history"] as? JsonObject
+        val totalMessages = history?.get("total")?.jsonPrimitive?.intOrNull ?: messages.size
+        val pageStartIndex = historyPageStartIndex(totalMessages, offset = 0, pageSize = messages.size)
+        val parsed = SessionHistoryParser.parse(messages, pageStartIndex)
         SessionStateCache.put(key, SessionStateCache.Entry(
           items = parsed,
           historicalItems = parsed,
@@ -222,6 +225,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
           project = session.project.orEmpty(),
           cwd = session.cwd.orEmpty(),
           lastEventId = 0,
+          totalHistoryMessages = totalMessages,
         ))
       }
     }.awaitAll()

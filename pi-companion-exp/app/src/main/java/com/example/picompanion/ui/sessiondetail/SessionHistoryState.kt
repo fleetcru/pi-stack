@@ -8,11 +8,23 @@ internal class SessionHistoryState {
     private set
   var historicalItems: List<SessionTimelineItem> = emptyList()
     private set
+  var totalMessages: Int = 0
+    private set
 
-  fun restore(items: List<SessionTimelineItem>, offset: Int, older: Boolean) {
+  fun restore(
+    items: List<SessionTimelineItem>,
+    offset: Int,
+    older: Boolean,
+    totalMessages: Int = 0,
+  ) {
     historicalItems = items
     nextOffset = offset
     hasOlder = older
+    this.totalMessages = totalMessages
+  }
+
+  fun retainTotalMessages(totalMessages: Int) {
+    this.totalMessages = maxOf(this.totalMessages, totalMessages)
   }
 
   fun applyPage(
@@ -22,9 +34,13 @@ internal class SessionHistoryState {
     hasOlder: Boolean,
     liveItems: List<SessionTimelineItem>,
     stamp: (SessionTimelineItem) -> SessionTimelineItem,
+    totalMessages: Int = this.totalMessages,
+    pageStartIndex: Int? = null,
   ): List<SessionTimelineItem> {
+    val previousTotalMessages = this.totalMessages
     this.nextOffset = nextOffset
     this.hasOlder = hasOlder
+    this.totalMessages = totalMessages
     val previousOrders = (historicalItems + liveItems)
       .filter { it.order > 0 }
       .associate { historyItemId(it) to it.order }
@@ -35,13 +51,24 @@ internal class SessionHistoryState {
     // This preserves transcript chronology without relying on local arrival
     // order, which can put live rows before history when HTTP finishes late.
     val previousHistory = historicalItems
+    var resetForHistoryGap = false
     val refreshedHistory = if (appendOld) {
       page + previousHistory
     } else {
       val pageIds = page.mapTo(HashSet(), ::historyItemId)
       val firstOverlap = previousHistory.indexOfFirst { historyItemId(it) in pageIds }
+      // Absolute message totals are stable when Pi appends to a transcript.
+      // If the newest page starts after the previous transcript end, more
+      // records arrived than this page can bridge and the old/new ranges have
+      // a real gap. Restart from the contiguous newest range so pagination can
+      // fill it instead of presenting old rows in the wrong order.
+      resetForHistoryGap = firstOverlap < 0 &&
+        previousHistory.isNotEmpty() &&
+        previousTotalMessages > 0 &&
+        pageStartIndex != null &&
+        pageStartIndex > previousTotalMessages
       val olderPrefix = when {
-        previousHistory.isEmpty() -> emptyList()
+        previousHistory.isEmpty() || resetForHistoryGap -> emptyList()
         firstOverlap >= 0 -> previousHistory.take(firstOverlap)
         else -> previousHistory
       }
@@ -51,24 +78,27 @@ internal class SessionHistoryState {
       .distinctBy(::historyItemId)
       .map { item -> previousOrders[historyItemId(item)]?.let { item.withOrder(it) } ?: item }
 
-    val optimisticImages = liveItems.filterIsInstance<SessionTimelineItem.Chat>()
+    val unmatchedOptimisticImages = liveItems.filterIsInstance<SessionTimelineItem.Chat>()
       .filter { it.time == "now" && it.imageUris.isNotEmpty() }
+      .toMutableList()
     val merged = LinkedHashMap<String, SessionTimelineItem>()
     historicalItems.forEach { item ->
-      val withLocalPreview = (item as? SessionTimelineItem.Chat)?.let { durable ->
-        optimisticImages.firstOrNull { optimistic ->
+      val durable = item as? SessionTimelineItem.Chat
+      val previewIndex = durable?.let {
+        unmatchedOptimisticImages.indexOfFirst { optimistic ->
           optimistic.isUser == durable.isUser && optimistic.text.trim() == durable.text.trim()
-        }?.let { optimistic -> durable.copy(imageUris = optimistic.imageUris) }
-      } ?: item
+        }
+      } ?: -1
+      val withLocalPreview = if (durable != null && previewIndex >= 0) {
+        durable.copy(imageUris = unmatchedOptimisticImages.removeAt(previewIndex).imageUris)
+      } else {
+        item
+      }
       merged[historyItemId(withLocalPreview)] = withLocalPreview
     }
-    // Keep an optimistic image row when its durable echo has not arrived yet.
-    optimisticImages.filter { optimistic ->
-      historicalItems.none { durable ->
-        durable is SessionTimelineItem.Chat &&
-          durable.isUser == optimistic.isUser && durable.text.trim() == optimistic.text.trim()
-      }
-    }.forEach { merged[historyItemId(it)] = it }
+    // Match durable image echoes one-to-one. Repeated prompts with the same
+    // caption must not cause every optimistic preview to disappear at once.
+    unmatchedOptimisticImages.forEach { merged[historyItemId(it)] = it }
 
     val liveItemIds = liveItems.mapTo(mutableSetOf(), ::historyItemId)
     val newlyDurableChats = historicalItems
@@ -79,15 +109,25 @@ internal class SessionHistoryState {
       .filter { !appendOld && historyItemId(it) !in liveItemIds }
       .toList()
     val newestDurableAssistant = newlyDurableChats.lastOrNull { !it.isUser }
-    liveItems.forEach { item ->
+    val unmatchedDurableChats = newlyDurableChats.toMutableList()
+    val reconciledLiveText = BooleanArray(liveItems.size)
+    liveItems.forEachIndexed { index, item ->
+      val chat = item as? SessionTimelineItem.Chat ?: return@forEachIndexed
+      val ephemeralText = chat.time.isEmpty() || chat.time == "now"
+      if (!ephemeralText || chat.imageUris.isNotEmpty()) return@forEachIndexed
+      val durableIndex = unmatchedDurableChats.indexOfFirst { durable ->
+        durable.replacesEphemeral(chat, allowPrefix = durable === newestDurableAssistant)
+      }
+      if (durableIndex >= 0) {
+        reconciledLiveText[index] = true
+        unmatchedDurableChats.removeAt(durableIndex)
+      }
+    }
+    liveItems.forEachIndexed { index, item ->
+      if (resetForHistoryGap && historySourceIndex(item) != null) return@forEachIndexed
       val chat = item as? SessionTimelineItem.Chat
       val optimisticImage = chat?.time == "now" && chat.imageUris.isNotEmpty()
-      val ephemeralText = chat != null && (chat.time.isEmpty() || chat.time == "now")
-      val reconciledLiveText = chat != null && ephemeralText && chat.imageUris.isEmpty() &&
-        newlyDurableChats.any { durable ->
-          durable.replacesEphemeral(chat, allowPrefix = durable === newestDurableAssistant)
-        }
-      if (!optimisticImage && !reconciledLiveText) {
+      if (!optimisticImage && !reconciledLiveText[index]) {
         val id = historyItemId(item)
         if (item is SessionTimelineItem.Tool || merged[id] == null) merged[id] = item
       }
