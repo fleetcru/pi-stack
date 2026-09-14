@@ -76,7 +76,17 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
 
   fun refreshIfStale() {
     val serverId = activeServerId
-    if (serverId == null || SessionInventoryState.isStale(serverId)) refresh(force = true)
+    if (refreshJob?.isActive == true) {
+      // Ignore only the duplicate first ON_RESUME. If another screen changed
+      // inventory during this request, keep the normal one-rerun guarantee.
+      if (serverId != null && SessionInventoryState.isStale(serverId)) {
+        refresh(force = true)
+      }
+      return
+    }
+    if (serverId != null && SessionInventoryState.isStale(serverId)) {
+      refresh(force = true)
+    }
   }
 
   private fun updateSessionLocally(patch: SessionInventoryState.MetadataPatch) {
@@ -126,36 +136,63 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
         }
         activeServerId = server.id
         val inventoryRevision = SessionInventoryState.currentRevision(server.id)
+        val cachedSnapshot = SessionInventoryState.snapshot(server.id)
         val existingForServer = existing.takeIf { contentServerId == server.id }
+        val baseline = existingForServer ?: cachedSnapshot?.let {
+          SessionsUiState.Content(
+            activeSessions = it.activeSessions,
+            machineSessions = it.machineSessions,
+            globalSessions = it.globalSessions,
+            refreshing = true,
+          )
+        }
+        if (existingForServer == null && baseline != null) {
+          _uiState.value = baseline
+          contentServerId = server.id
+        }
 
-        // Fetch all session types in parallel. Keep the old content visible
-        // while this background refresh runs, so returning from a detail view
-        // does not flash an empty/loading screen.
+        // Start all inventory calls together. Active sessions paint as soon as
+        // their request completes instead of waiting for machine discovery.
         val activeDeferred = async(Dispatchers.IO) { client.listSessions(server) }
         val machineDeferred = async(Dispatchers.IO) { client.listMachineSessions(server) }
         val globalDeferred = async(Dispatchers.IO) { client.listGlobalSessions(server) }
 
         val activeResult = activeDeferred.await()
-        val machineResult = machineDeferred.await()
-        val globalResult = globalDeferred.await()
-
-        // Ignore results from a server that stopped being active while these
-        // requests were in flight. The settings collector queues its refresh.
-        if (settingsDataStore.settingsFlow.first().activeServer?.id != server.id) return@launch
-
+        if (activeServerId != server.id) return@launch
         val activeSessions = when (activeResult) {
           is HttpResult.Success -> SessionInventoryState.applyPending(server.id, activeResult.value.sessions)
             .sortedByDescending { it.updatedAt ?: it.createdAt ?: "" }
-          is HttpResult.Failure -> existingForServer?.activeSessions ?: emptyList()
+          is HttpResult.Failure -> baseline?.activeSessions ?: emptyList()
         }
+        if (activeResult is HttpResult.Success) {
+          val snapshot = SessionInventoryState.updateSnapshot(server.id, activeSessions = activeSessions)
+          _uiState.value = SessionsUiState.Content(
+            activeSessions = activeSessions,
+            machineSessions = baseline?.machineSessions ?: snapshot.machineSessions,
+            globalSessions = baseline?.globalSessions ?: snapshot.globalSessions,
+            refreshing = true,
+          )
+          contentServerId = server.id
+        }
+
+        val machineResult = machineDeferred.await()
+        val globalResult = globalDeferred.await()
+        if (activeServerId != server.id) return@launch
+
         val machineSessions = when (machineResult) {
           is HttpResult.Success -> visibleMachineSessions(activeSessions, machineResult.value.sessions)
-          is HttpResult.Failure -> existingForServer?.machineSessions ?: emptyList()
+          is HttpResult.Failure -> baseline?.machineSessions ?: emptyList()
         }
         val globalSessions = when (globalResult) {
           is HttpResult.Success -> visibleGlobalSessions(activeSessions, globalResult.value.sessions)
-          is HttpResult.Failure -> existingForServer?.globalSessions ?: emptyList()
+          is HttpResult.Failure -> baseline?.globalSessions ?: emptyList()
         }
+        SessionInventoryState.updateSnapshot(
+          serverId = server.id,
+          activeSessions = activeSessions.takeIf { activeResult is HttpResult.Success },
+          machineSessions = machineSessions.takeIf { machineResult is HttpResult.Success },
+          globalSessions = globalSessions.takeIf { globalResult is HttpResult.Success },
+        )
 
         val completeSuccess =
           activeResult is HttpResult.Success &&
@@ -163,7 +200,7 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
             globalResult is HttpResult.Success
         if (!completeSuccess) SessionInventoryState.markStale(server.id)
 
-        if (activeResult is HttpResult.Failure && machineResult is HttpResult.Failure && existingForServer == null) {
+        if (activeResult is HttpResult.Failure && machineResult is HttpResult.Failure && baseline == null) {
           _uiState.value = SessionsUiState.Error(activeResult.userMessage)
           return@launch
         }

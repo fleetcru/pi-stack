@@ -1,5 +1,6 @@
 package com.example.picompanion.ui.sessions
 
+import com.example.picompanion.data.model.MachineSession
 import com.example.picompanion.data.model.ServerSession
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -21,6 +22,21 @@ class SessionInventoryStateTest {
     assertTrue(SessionInventoryState.isStale(serverId))
     SessionInventoryState.markFresh(serverId, SessionInventoryState.currentRevision(serverId))
     assertFalse(SessionInventoryState.isStale(serverId))
+  }
+
+  @Test
+  fun snapshotMakesLoadedSessionsAvailableToOtherScreens() {
+    val serverId = "snapshot-test"
+    val sessions = listOf(ServerSession(id = "cached", title = "Cached"))
+
+    SessionInventoryState.updateSnapshot(serverId, activeSessions = sessions)
+    SessionInventoryState.updateSnapshot(serverId, globalSessions = emptyList())
+
+    assertEquals(sessions, SessionInventoryState.snapshot(serverId)?.activeSessions)
+    assertEquals(
+      emptyList<MachineSession>(),
+      SessionInventoryState.snapshot(serverId)?.machineSessions,
+    )
   }
 
   @Test

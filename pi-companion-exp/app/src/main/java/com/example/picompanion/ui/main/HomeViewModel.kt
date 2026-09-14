@@ -15,6 +15,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -44,6 +46,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
   val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
   private var refreshJob: Job? = null
   private var pollingJob: Job? = null
+  private var contentServerId: String? = null
   // The home screen fans out to five endpoints per refresh. Thirty seconds
   // keeps it current while reducing mobile radio wakeups and server load.
   private val refreshIntervalMs = 30_000L
@@ -96,44 +99,92 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         return@launch
       }
 
-      // Fetch all data in parallel
+      val serverName = server.name.ifBlank { server.url }
+      val cachedSnapshot = SessionInventoryState.snapshot(server.id)
+      if (cachedSnapshot != null) {
+        val current = (_uiState.value as? HomeUiState.Content)
+          ?.takeIf { contentServerId == server.id }
+        _uiState.value = HomeUiState.Content(
+          connected = isNetworkAvailable(),
+          serverName = serverName,
+          sessions = cachedSnapshot.activeSessions,
+          workers = current?.workers.orEmpty(),
+          globalSessions = cachedSnapshot.globalSessions,
+          machineSessions = cachedSnapshot.machineSessions,
+          activeSessions = current?.activeSessions ?: cachedSnapshot.activeSessions.size,
+          maxSessions = current?.maxSessions ?: 0,
+        )
+        contentServerId = server.id
+      }
+
+      // Start every request together, but let the main session inventory paint
+      // without waiting for the slower worker and machine discovery calls.
       val healthDeferred = async(Dispatchers.IO) { client.checkHealth(server) }
       val sessionsDeferred = async(Dispatchers.IO) { client.listRecentSessions(server) }
       val workersDeferred = async(Dispatchers.IO) { client.listWorkers(server) }
       val globalDeferred = async(Dispatchers.IO) { client.listGlobalSessions(server) }
       val machineDeferred = async(Dispatchers.IO) { client.listMachineSessions(server) }
 
-      val health = healthDeferred.await()
       val sessions = sessionsDeferred.await()
+      val sessionList = when (sessions) {
+        is HttpResult.Success -> sessions.value.sessions
+          .sortedByDescending { it.updatedAt ?: it.createdAt ?: "" }
+        is HttpResult.Failure -> cachedSnapshot?.activeSessions.orEmpty()
+      }
+      if (sessions is HttpResult.Success) {
+        val snapshot = SessionInventoryState.updateSnapshot(server.id, activeSessions = sessionList)
+        val current = (_uiState.value as? HomeUiState.Content)
+          ?.takeIf { contentServerId == server.id }
+        _uiState.value = HomeUiState.Content(
+          connected = true,
+          serverName = serverName,
+          sessions = sessionList,
+          workers = current?.workers.orEmpty(),
+          globalSessions = snapshot.globalSessions,
+          machineSessions = snapshot.machineSessions,
+          activeSessions = current?.activeSessions ?: sessionList.size,
+          maxSessions = current?.maxSessions ?: 0,
+        )
+        contentServerId = server.id
+      }
+
+      val health = healthDeferred.await()
       val workers = workersDeferred.await()
       val global = globalDeferred.await()
       val machine = machineDeferred.await()
 
-      if (health is HttpResult.Failure && sessions is HttpResult.Failure) {
+      if (health is HttpResult.Failure && sessions is HttpResult.Failure && cachedSnapshot == null) {
         _uiState.value = HomeUiState.Error(
-          message = (health as HttpResult.Failure).userMessage,
-          serverName = server.name.ifBlank { server.url },
+          message = health.userMessage,
+          serverName = serverName,
         )
         return@launch
       }
 
-      val connected = health is HttpResult.Success
-      val sessionList = ((sessions as? HttpResult.Success)?.value?.sessions ?: emptyList())
-        .sortedByDescending { it.updatedAt ?: it.createdAt ?: "" }
-      val workerList = (workers as? HttpResult.Success)?.value?.workers ?: emptyList()
+      val workerList = (workers as? HttpResult.Success)?.value?.workers
+        ?: (_uiState.value as? HomeUiState.Content)
+          ?.takeIf { contentServerId == server.id }
+          ?.workers
+          .orEmpty()
       val capacity = (health as? HttpResult.Success)?.value?.capacity
-      val machineSessions = visibleMachineSessions(
-        sessionList,
-        (machine as? HttpResult.Success)?.value?.sessions ?: emptyList(),
-      )
-      val globalSessions = visibleGlobalSessions(
-        sessionList,
-        (global as? HttpResult.Success)?.value?.sessions ?: emptyList(),
+      val machineSessions = when (machine) {
+        is HttpResult.Success -> visibleMachineSessions(sessionList, machine.value.sessions)
+        is HttpResult.Failure -> cachedSnapshot?.machineSessions.orEmpty()
+      }
+      val globalSessions = when (global) {
+        is HttpResult.Success -> visibleGlobalSessions(sessionList, global.value.sessions)
+        is HttpResult.Failure -> cachedSnapshot?.globalSessions.orEmpty()
+      }
+      SessionInventoryState.updateSnapshot(
+        serverId = server.id,
+        activeSessions = sessionList.takeIf { sessions is HttpResult.Success },
+        machineSessions = machineSessions.takeIf { machine is HttpResult.Success },
+        globalSessions = globalSessions.takeIf { global is HttpResult.Success },
       )
 
       _uiState.value = HomeUiState.Content(
-        connected = connected,
-        serverName = server.name.ifBlank { server.url },
+        connected = health is HttpResult.Success,
+        serverName = serverName,
         sessions = sessionList,
         workers = workerList,
         globalSessions = globalSessions,
@@ -141,36 +192,39 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         activeSessions = capacity?.activeSessions ?: sessionList.size,
         maxSessions = capacity?.maxSessions ?: 0,
       )
+      contentServerId = server.id
       // Warm only the two most likely next sessions, after visible Home data is
       // ready. This avoids delaying the list while making taps feel immediate.
       launch(Dispatchers.IO) { prefetchRecentSessions(server, sessionList.take(2)) }
     }
   }
 
-  private fun prefetchRecentSessions(
+  private suspend fun prefetchRecentSessions(
     server: com.example.picompanion.data.settings.ServerEntry,
     sessions: List<ServerSession>,
-  ) {
-    sessions.forEach { session ->
-      val key = "${server.id}:${session.id}"
-      if (SessionStateCache.contains(key)) return@forEach
-      val result = client.getSessionMessages(server, session.id, limit = 30)
-      val payload = (result as? HttpResult.Success)?.value ?: return@forEach
-      val data = payload["data"] as? JsonObject ?: return@forEach
-      val messages = data["messages"] as? JsonArray ?: return@forEach
-      val parsed = SessionHistoryParser.parse(messages)
-      val history = data["history"] as? JsonObject
-      SessionStateCache.put(key, SessionStateCache.Entry(
-        items = parsed,
-        historicalItems = parsed,
-        nextHistoryOffset = history?.get("nextOffset")?.jsonPrimitive?.intOrNull ?: parsed.size,
-        hasOlder = history?.get("hasOlder")?.jsonPrimitive?.booleanOrNull == true,
-        title = session.title.orEmpty(),
-        project = session.project.orEmpty(),
-        cwd = session.cwd.orEmpty(),
-        lastEventId = 0,
-      ))
-    }
+  ) = coroutineScope {
+    sessions.map { session ->
+      async {
+        val key = "${server.id}:${session.id}"
+        if (SessionStateCache.contains(key)) return@async
+        val result = client.getSessionMessages(server, session.id, limit = 30)
+        val payload = (result as? HttpResult.Success)?.value ?: return@async
+        val data = payload["data"] as? JsonObject ?: return@async
+        val messages = data["messages"] as? JsonArray ?: return@async
+        val parsed = SessionHistoryParser.parse(messages)
+        val history = data["history"] as? JsonObject
+        SessionStateCache.put(key, SessionStateCache.Entry(
+          items = parsed,
+          historicalItems = parsed,
+          nextHistoryOffset = history?.get("nextOffset")?.jsonPrimitive?.intOrNull ?: parsed.size,
+          hasOlder = history?.get("hasOlder")?.jsonPrimitive?.booleanOrNull == true,
+          title = session.title.orEmpty(),
+          project = session.project.orEmpty(),
+          cwd = session.cwd.orEmpty(),
+          lastEventId = 0,
+        ))
+      }
+    }.awaitAll()
   }
 
   override fun onCleared() {
