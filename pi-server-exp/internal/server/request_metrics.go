@@ -5,15 +5,17 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
 
 type requestMetric struct {
-	Count       uint64
-	ErrorCount  uint64
-	Total       time.Duration
-	Max         time.Duration
+	Count      uint64
+	ErrorCount uint64
+	Total      time.Duration
+	Max        time.Duration
 }
 
 type requestMetrics struct {
@@ -25,19 +27,31 @@ func newRequestMetrics() *requestMetrics {
 	return &requestMetrics{routes: make(map[string]requestMetric)}
 }
 
-func metricsMiddleware(metrics *requestMetrics, next http.Handler) http.Handler {
+func metricsMiddleware(metrics *requestMetrics, next http.Handler, resolvers ...*http.ServeMux) http.Handler {
+	var resolver *http.ServeMux
+	if len(resolvers) > 0 {
+		resolver = resolvers[0]
+	} else if mux, ok := next.(*http.ServeMux); ok {
+		resolver = mux
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
+		pattern := r.Pattern
+		if pattern == "" && resolver != nil {
+			_, pattern = resolver.Handler(r)
+		}
 		writer := &metricResponseWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(writer, r)
 		if metrics == nil {
 			return
 		}
-		pattern := r.Pattern
 		if pattern == "" {
 			pattern = "unmatched"
 		}
-		key := r.Method + " " + pattern
+		key := pattern
+		if !strings.HasPrefix(pattern, r.Method+" ") {
+			key = r.Method + " " + pattern
+		}
 		elapsed := time.Since(started)
 		metrics.mu.Lock()
 		value := metrics.routes[key]
@@ -54,6 +68,43 @@ func metricsMiddleware(metrics *requestMetrics, next http.Handler) http.Handler 
 	})
 }
 
+// counters returns a copy of the cumulative per-route counters. Used by the
+// performance sampler to compute per-interval request/error/latency deltas.
+func (m *requestMetrics) counters() map[string]requestMetric {
+	if m == nil {
+		return map[string]requestMetric{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]requestMetric, len(m.routes))
+	for route, value := range m.routes {
+		out[route] = value
+	}
+	return out
+}
+
+// performance renders the cumulative counters as numeric route statistics for
+// GET /v1/performance.
+func (m *requestMetrics) performance() []requestPerformance {
+	counters := m.counters()
+	out := make([]requestPerformance, 0, len(counters))
+	for route, value := range counters {
+		averageMs := 0.0
+		if value.Count > 0 {
+			averageMs = value.Total.Seconds() * 1000 / float64(value.Count)
+		}
+		out = append(out, requestPerformance{
+			Route:     route,
+			Count:     value.Count,
+			Errors:    value.ErrorCount,
+			AverageMs: averageMs,
+			MaxMs:     value.Max.Seconds() * 1000,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Route < out[j].Route })
+	return out
+}
+
 func (m *requestMetrics) snapshot() map[string]map[string]any {
 	if m == nil {
 		return map[string]map[string]any{}
@@ -67,10 +118,10 @@ func (m *requestMetrics) snapshot() map[string]map[string]any {
 			average = value.Total / time.Duration(value.Count)
 		}
 		out[route] = map[string]any{
-			"count": value.Count,
-			"errors": value.ErrorCount,
+			"count":   value.Count,
+			"errors":  value.ErrorCount,
 			"average": average.String(),
-			"max": value.Max.String(),
+			"max":     value.Max.String(),
 		}
 	}
 	return out

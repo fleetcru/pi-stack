@@ -53,7 +53,7 @@ func TestPrometheusMetricsExportsRequestCounters(t *testing.T) {
 	if response.Header().Get("Content-Type") != "text/plain; version=0.0.4; charset=utf-8" {
 		t.Fatalf("content type=%q", response.Header().Get("Content-Type"))
 	}
-	if !strings.Contains(body, `pi_server_http_requests_total{method="GET",route="GET /healthz"} 1`) {
+	if !strings.Contains(body, `pi_server_http_requests_total{method="GET",route="/healthz"} 1`) {
 		t.Fatalf("missing request metric: %s", body)
 	}
 	if !strings.Contains(body, "pi_server_goroutines ") {

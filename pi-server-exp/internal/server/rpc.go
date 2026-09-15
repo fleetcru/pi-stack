@@ -759,6 +759,18 @@ func (p *PiProcess) Status() map[string]any {
 	return map[string]any{"id": p.id, "cwd": p.spec.CWD, "args": p.spec.Args, "sessionPath": p.spec.SessionPath, "running": p.running, "status": status, "taskId": p.taskID, "runId": p.runID, "runtimeStatus": map[string]any{"state": p.runtimeState, "reason": p.runtimeReason, "detail": p.runtimeDetail, "since": p.runtimeSince, "lastError": p.runtimeError}, "pendingExtensionUiRequest": cloneEvent(p.pendingUIRequest), "restart": p.spec.Restart, "pid": pid, "wsSubscribers": len(p.subs), "eventCount": len(p.events), "latestEventId": p.eventSeq, "lastEventAt": p.lastEventAt, "droppedEvents": atomic.LoadUint64(&p.droppedEvents)}
 }
 
+// ProcessTarget returns the managed child process PID and running state.
+// It takes only PiProcess.mu, so the performance sampler may call it after
+// releasing SessionRegistry.mu without changing lock ordering.
+func (p *PiProcess) ProcessTarget() (pid int, running bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.cmd != nil && p.cmd.Process != nil {
+		pid = p.cmd.Process.Pid
+	}
+	return pid, p.running
+}
+
 func (p *PiProcess) Emit(event RPCEvent) { p.dispatch(event) }
 func (p *PiProcess) CWD() string         { return p.spec.CWD }
 

@@ -117,6 +117,26 @@ describe("PiServerClient", () => {
     expect(result.ok).toBe(true)
   })
 
+  it("performance() hits /v1/performance with GET and parses the report", async () => {
+    const report = {
+      sampleIntervalSeconds: 15,
+      historyLimit: 240,
+      server: { id: "server", name: "pi-server", kind: "server", pid: 1234, running: true, current: { at: "2026-01-01T00:00:00Z", cpuPercent: 4.5, rssBytes: 1024 * 1024 }, samples: [] },
+      sessions: [],
+      requests: [{ route: "/v1/sessions", count: 12, errors: 1, averageMs: 3.5, maxMs: 40 }],
+    }
+    const fetchFn = mockFetch([{ status: 200, body: report }])
+    const client = makeClient(fetchFn)
+
+    const result = await client.performance()
+
+    const [url, init] = fetchFn.mock.calls[0]!
+    expect(String(url)).toContain("/v1/performance")
+    expect(init!.method).toBe("GET")
+    expect(result).toEqual(report)
+    expect(result.server.current?.cpuPercent).toBe(4.5)
+  })
+
   it("capabilities() hits /v1/capabilities", async () => {
     const caps = { sessions: true, workers: false }
     const fetchFn = mockFetch([{ status: 200, body: caps }])

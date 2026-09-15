@@ -36,6 +36,8 @@ type Config struct {
 	RestartBackoff           time.Duration
 	EventHistoryMax          int
 	EventHistoryBytes        int
+	PerformanceInterval      time.Duration
+	PerformanceHistoryMax    int
 	EventJournalSyncInterval time.Duration
 	MaxWatches               int
 	LogLevel                 slog.Level
@@ -106,6 +108,8 @@ func ConfigFromEnv() Config {
 		RestartBackoff:           envDuration("PI_SERVER_RESTART_BACKOFF", time.Second),
 		EventHistoryMax:          envInt("PI_SERVER_EVENT_HISTORY_MAX", 100),
 		EventHistoryBytes:        envInt("PI_SERVER_EVENT_HISTORY_BYTES", 2<<20),
+		PerformanceInterval:      envDuration("PI_SERVER_PERFORMANCE_INTERVAL", 15*time.Second),
+		PerformanceHistoryMax:    envInt("PI_SERVER_PERFORMANCE_HISTORY_MAX", 240),
 		EventJournalSyncInterval: envDuration("PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL", 0),
 		MaxWatches:               envInt("PI_SERVER_MAX_WATCHES", 2048),
 		LogLevel:                 slog.LevelInfo,

@@ -468,6 +468,8 @@ Key invariants:
 | `PI_SERVER_PI_BINARY` | `pi` | Path to Pi CLI |
 | `PI_SERVER_PI_EXTENSIONS` | _(none)_ | Extensions to load |
 | `PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL` | `0` | Event-journal fsync interval; `0` keeps strict per-event durability |
+| `PI_SERVER_PERFORMANCE_INTERVAL` | `15s` | Sampling interval for `GET /v1/performance` in-memory history; minimum `1s` |
+| `PI_SERVER_PERFORMANCE_HISTORY_MAX` | `240` | Samples retained per server/session performance series; maximum `5760` |
 
 ## Testing
 

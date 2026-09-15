@@ -96,8 +96,39 @@ func schemas() map[string]any {
 		"AvailableModels":       obj(map[string]any{"models": arr(ref("AvailableModel"))}, "models"),
 		"ModelRequest":          obj(map[string]any{"provider": str(), "modelId": str()}, "provider", "modelId"),
 		"ThinkingRequest":       obj(map[string]any{"level": str()}, "level"),
-		"ModeRequest":           obj(map[string]any{"mode": str()}, "mode"),
-		"EnabledRequest":        obj(map[string]any{"enabled": schemaBool()}, "enabled"),
+		"PerformanceSample": obj(map[string]any{
+			"at":               str(),
+			"cpuPercent":       map[string]any{"type": []string{"number", "null"}},
+			"rssBytes":         map[string]any{"type": []string{"integer", "null"}},
+			"heapAllocBytes":   map[string]any{"type": "integer"},
+			"goroutines":       map[string]any{"type": "integer"},
+			"requestRate":      map[string]any{"type": "number"},
+			"errorRate":        map[string]any{"type": "number"},
+			"averageLatencyMs": map[string]any{"type": "number"},
+			"activeSessions":   map[string]any{"type": "integer"},
+			"activeRuns":       map[string]any{"type": "integer"},
+			"queuedRuns":       map[string]any{"type": "integer"},
+		}, "at", "cpuPercent", "rssBytes"),
+		"PerformanceSeries": obj(map[string]any{
+			"id": str(), "name": str(), "kind": map[string]any{"type": "string", "enum": []string{"server", "session"}},
+			"pid":     map[string]any{"type": "integer"},
+			"running": schemaBool(),
+			"current": map[string]any{"oneOf": []any{ref("PerformanceSample"), map[string]any{"type": "null"}}},
+			"samples": arr(ref("PerformanceSample")),
+		}, "id", "name", "kind", "pid", "running", "current", "samples"),
+		"RequestPerformance": obj(map[string]any{
+			"route": str(), "count": map[string]any{"type": "integer"}, "errors": map[string]any{"type": "integer"},
+			"averageMs": map[string]any{"type": "number"}, "maxMs": map[string]any{"type": "number"},
+		}, "route", "count", "errors", "averageMs", "maxMs"),
+		"PerformanceSnapshot": obj(map[string]any{
+			"sampleIntervalSeconds": map[string]any{"type": "number"},
+			"historyLimit":          map[string]any{"type": "integer"},
+			"server":                ref("PerformanceSeries"),
+			"sessions":              arr(ref("PerformanceSeries")),
+			"requests":              arr(ref("RequestPerformance")),
+		}, "sampleIntervalSeconds", "historyLimit", "server", "sessions", "requests"),
+		"ModeRequest":    obj(map[string]any{"mode": str()}, "mode"),
+		"EnabledRequest": obj(map[string]any{"enabled": schemaBool()}, "enabled"),
 		"AdminSettings": obj(map[string]any{
 			"addr": str(), "piBinary": str(), "extensions": arr(str()), "cwd": str(), "dataDir": str(),
 			"allowedOrigins": arr(str()), "allowedRoots": arr(str()), "allowedWorkerHosts": arr(str()),
@@ -130,6 +161,7 @@ func paths() map[string]any {
 	p := map[string]any{}
 	get := func(path, summary string) { p[path] = map[string]any{"get": op(summary, "RPCResponse", "")} }
 	post := func(path, summary, body string) { p[path] = map[string]any{"post": op(summary, "RPCResponse", body)} }
+	p["/v1/performance"] = map[string]any{"get": op("Performance metrics snapshot", "PerformanceSnapshot", "")}
 	p["/healthz"] = map[string]any{"get": op("Health check", "RPCResponse", "")}
 	p["/v1/diagnostics"] = map[string]any{"get": op("Operational diagnostics", "RPCResponse", "")}
 	p["/metrics"] = map[string]any{"get": op("Prometheus operational metrics", "RPCResponse", "")}

@@ -63,6 +63,7 @@ type Server struct {
 	distributedReconstructing bool
 	startedAt                 time.Time
 	admin                     *adminState
+	perf                      *performanceCollector
 }
 
 func New(cfg Config, logger *slog.Logger) *Server {
@@ -101,6 +102,11 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		startedAt:         time.Now(),
 		admin:             newAdminState(cfg),
 	}
+	perfInterval := cfg.PerformanceInterval
+	if perfInterval <= 0 {
+		perfInterval = defaultPerformanceInterval
+	}
+	s.perf = newPerformanceCollector(perfInterval, cfg.PerformanceHistoryMax, s.sessions, s.admission, s.metrics)
 	if len(s.resolvedRoots) == 0 {
 		s.resolvedRoots = resolveAllowedRoots([]string{cfg.CWD})
 	}
@@ -153,6 +159,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 	}
 	s.restoreDistributedRuns()
 	s.startWorkerHeartbeats()
+	s.perf.start(s.stopHeartbeat)
 	s.startAdminConfigWatch()
 	s.upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
@@ -182,9 +189,19 @@ func New(cfg Config, logger *slog.Logger) *Server {
 			}
 		}()
 	}
+	routes := s.routes()
+	var handler http.Handler = recoverMiddleware(routes)
+	handler = requestBodyLimitMiddleware(maxHTTPBodyBytes, handler)
+	handler = metricsCacheControlMiddleware(handler)
+	handler = authMiddlewareWithDevices(cfg.AuthToken, s.devices, handler)
+	handler = corsMiddleware(cfg.AllowedOrigins, handler)
+	handler = securityHeadersMiddleware(handler)
+	handler = metricsMiddleware(s.metrics, handler, routes)
+	handler = loggingMiddleware(logger, handler)
+	handler = requestIDMiddleware(handler)
 	s.httpSrv = &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           requestIDMiddleware(loggingMiddleware(logger, metricsMiddleware(s.metrics, securityHeadersMiddleware(corsMiddleware(cfg.AllowedOrigins, authMiddlewareWithDevices(cfg.AuthToken, s.devices, metricsCacheControlMiddleware(requestBodyLimitMiddleware(maxHTTPBodyBytes, recoverMiddleware(s.routes()))))))))),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,
@@ -209,9 +226,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpSrv.Shutdown(ctx)
 }
 
-func (s *Server) routes() http.Handler {
+func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc("GET /v1/performance", s.performance)
 	mux.HandleFunc("GET /v1/capabilities", s.capabilities)
 	mux.HandleFunc("GET /v1/models", s.listAvailableModels)
 	mux.HandleFunc("GET /v1/diagnostics", s.diagnostics)

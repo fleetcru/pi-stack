@@ -17,7 +17,7 @@ func TestMetricsMiddlewareRecordsPatternAndFailure(t *testing.T) {
 	metricsMiddleware(metrics, mux).ServeHTTP(response, request)
 
 	snapshot := metrics.snapshot()
-	value, ok := snapshot["GET GET /healthz"]
+	value, ok := snapshot["GET /healthz"]
 	if !ok {
 		t.Fatalf("missing route metric: %#v", snapshot)
 	}

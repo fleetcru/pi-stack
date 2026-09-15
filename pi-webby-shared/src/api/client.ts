@@ -47,6 +47,46 @@ export interface AdminState {
   restartRequired: boolean
 }
 
+export interface PerformanceSample {
+  at: string
+  cpuPercent: number | null
+  rssBytes: number | null
+  heapAllocBytes?: number
+  goroutines?: number
+  requestRate?: number
+  errorRate?: number
+  averageLatencyMs?: number
+  activeSessions?: number
+  activeRuns?: number
+  queuedRuns?: number
+}
+
+export interface PerformanceSeries {
+  id: string
+  name: string
+  kind: "server" | "session"
+  pid: number
+  running: boolean
+  current: PerformanceSample | null
+  samples: PerformanceSample[]
+}
+
+export interface RequestPerformance {
+  route: string
+  count: number
+  errors: number
+  averageMs: number
+  maxMs: number
+}
+
+export interface PerformanceReport {
+  sampleIntervalSeconds: number
+  historyLimit: number
+  server: PerformanceSeries
+  sessions: PerformanceSeries[]
+  requests: RequestPerformance[]
+}
+
 export interface TrustedDevice {
   id: string
   name: string
@@ -301,6 +341,10 @@ export class PiServerClient {
 
   schedulerStatus(): Promise<SchedulerStatus> {
     return this.request("/v1/scheduler")
+  }
+
+  performance(): Promise<PerformanceReport> {
+    return this.request("/v1/performance")
   }
 
   adminState(): Promise<AdminState> {

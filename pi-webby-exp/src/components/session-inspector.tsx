@@ -13,6 +13,7 @@ import {
   useSessionGitStatus,
   useSessionGitWorktrees,
 } from "@/api/hooks"
+import { SessionPerformancePanel } from "@/components/session-performance-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
@@ -262,7 +263,7 @@ export function SessionInspector({ session }: { session?: ApiSession }) {
         >
           <TabsList
             variant="line"
-            className="grid h-10 w-full shrink-0 grid-cols-4 px-2"
+            className="grid h-10 w-full shrink-0 grid-cols-5 px-2"
           >
             <TabsTrigger value="overview" className="min-w-0 px-1 text-[11px]">
               Overview
@@ -272,6 +273,9 @@ export function SessionInspector({ session }: { session?: ApiSession }) {
             </TabsTrigger>
             <TabsTrigger value="workspace" className="min-w-0 px-1 text-[11px]">
               Files
+            </TabsTrigger>
+            <TabsTrigger value="metrics" className="min-w-0 px-1 text-[11px]">
+              Metrics
             </TabsTrigger>
             <TabsTrigger value="settings" className="min-w-0 px-1 text-[11px]">
               Settings
@@ -295,6 +299,12 @@ export function SessionInspector({ session }: { session?: ApiSession }) {
             className="min-h-0 flex-1 overflow-hidden"
           >
             {activeTab === "workspace" && <Workspace session={session} />}
+          </TabsContent>
+          <TabsContent
+            value="metrics"
+            className="min-h-0 flex-1 overflow-hidden"
+          >
+            {activeTab === "metrics" && <SessionPerformancePanel sessionId={session.id} />}
           </TabsContent>
           <TabsContent
             value="settings"

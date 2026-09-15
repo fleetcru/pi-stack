@@ -32,6 +32,7 @@ import {
   type TrustedDevice,
 } from "@/api/client"
 import { DesktopTitleBar } from "@/components/desktop-title-bar"
+import { PerformancePanel } from "@/components/performance-panel"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
@@ -251,10 +252,12 @@ function AdminServerContent({ server, client, state, onRefresh }: { server: Serv
         <TabsList className="w-full justify-start overflow-hidden">
           <TabsTrigger value="settings">Settings</TabsTrigger>
           <TabsTrigger value="workers">Workers</TabsTrigger>
+          <TabsTrigger value="performance">Performance</TabsTrigger>
           <TabsTrigger value="devices">Trusted devices</TabsTrigger>
         </TabsList>
         <TabsContent value="settings"><SettingsPanel client={client} state={state} onRefresh={onRefresh} /></TabsContent>
         <TabsContent value="workers"><WorkersPanel client={client} /></TabsContent>
+        <TabsContent value="performance"><PerformancePanel client={client} /></TabsContent>
         <TabsContent value="devices"><DevicesPanel client={client} state={state} /></TabsContent>
       </Tabs>
     </>

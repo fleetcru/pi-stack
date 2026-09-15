@@ -101,7 +101,7 @@ func prometheusLabel(value string) string {
 
 func metricsCacheControlMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/metrics" || r.URL.Path == "/v1/diagnostics" {
+		if r.URL.Path == "/metrics" || r.URL.Path == "/v1/diagnostics" || r.URL.Path == "/v1/performance" {
 			w.Header().Set("Cache-Control", "no-store")
 		}
 		next.ServeHTTP(w, r)

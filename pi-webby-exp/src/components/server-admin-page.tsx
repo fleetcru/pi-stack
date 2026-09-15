@@ -52,6 +52,7 @@ import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { PerformancePanel } from "@/components/performance-panel"
 import { useAppStore } from "@/state/app-store"
 import type { ServerConnectionSettings } from "@pi-stack/webby-shared/state/app-store"
 
@@ -249,10 +250,12 @@ function AdminServerContent({ server, client, state, onRefresh }: { server: Serv
         <TabsList className="w-full justify-start overflow-hidden">
           <TabsTrigger value="settings">Settings</TabsTrigger>
           <TabsTrigger value="workers">Workers</TabsTrigger>
+          <TabsTrigger value="performance">Performance</TabsTrigger>
           <TabsTrigger value="devices">Trusted devices</TabsTrigger>
         </TabsList>
         <TabsContent value="settings"><SettingsPanel client={client} state={state} onRefresh={onRefresh} /></TabsContent>
         <TabsContent value="workers"><WorkersPanel client={client} /></TabsContent>
+        <TabsContent value="performance"><PerformancePanel client={client} /></TabsContent>
         <TabsContent value="devices"><DevicesPanel client={client} state={state} /></TabsContent>
       </Tabs>
     </>
