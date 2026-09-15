@@ -64,6 +64,7 @@ import com.example.picompanion.AppRoute
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.picompanion.data.model.ServerSession
+import com.example.picompanion.ui.sessions.displayStatus
 import com.example.picompanion.theme.PiCompanionTheme
 import com.example.picompanion.ui.components.IconTile
 import com.example.picompanion.ui.components.LoadingScreen
@@ -369,7 +370,7 @@ private fun LatestSessionCard(
 ) {
   val title = session.title ?: session.project ?: session.cwd ?: session.id
   val subtitle = session.project ?: session.cwd ?: ""
-  val status = session.status ?: "Unknown"
+  val status = session.displayStatus()
 
   Surface(
     modifier = modifier

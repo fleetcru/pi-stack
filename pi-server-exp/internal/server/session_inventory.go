@@ -152,6 +152,15 @@ func (s *Server) listSessions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		sum := localSummaryFromSpec(spec)
+		// Always overlay cheap live runtime. include=state additionally fetches
+		// get_state for model/title and may skip detached relay specs.
+		if spec.Transport == "relay" {
+			if snap := s.external.stateSnapshot(spec.ID); snap != nil {
+				if status, _ := snap["status"].(string); status != "" {
+					sum.Status = status
+				}
+			}
+		}
 		if includeState {
 			if spec.Transport == "relay" {
 				snap := s.external.stateSnapshot(spec.ID)

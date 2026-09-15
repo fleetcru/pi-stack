@@ -273,7 +273,7 @@ func (r *ExternalRegistry) publish(id string, ev RPCEvent) bool {
 		}
 	case "agent_start", "message_start", "message_update", "tool_execution_start", "tool_execution_update":
 		s.Status = "working"
-	case "agent_settled":
+	case "agent_end", "agent_settled":
 		if s.Status != "waiting_for_input" {
 			s.Status = "idle"
 		}

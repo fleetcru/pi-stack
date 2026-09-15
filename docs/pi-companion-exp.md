@@ -46,7 +46,7 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 - `SessionDrawer.kt`, `DirectoryBrowserSheet.kt`, `SectionCard.kt`, `StatusPill.kt`, `LoadingScreen.kt` — sheets, section wrappers, status chips, loading states.
 
 ### Main screen (`ui/main/`)
-- `HomeViewModel.kt` — dashboard state: daemon health, worker counts, recent sessions; polls REST and merges inventory. It paints a process-memory inventory snapshot before any spinner, then publishes the newest session list before slower worker and machine discovery calls finish. Inventory GETs omit `include=state` so refresh does not wait on per-session Pi RPCs. List cards use agent runtime (`idle`/`working`) rather than process liveness, so a live but finished session does not look like it is still working. The two recent-history prefetches run in parallel after visible data is ready.
+- `HomeViewModel.kt` — dashboard state: daemon health, worker counts, recent sessions; polls REST and merges inventory. It paints a process-memory inventory snapshot before any spinner, then publishes the newest session list before slower worker and machine discovery calls finish. Inventory GETs omit `include=state` so refresh does not wait on per-session Pi RPCs. List cards map process-only states (`running`, `created`) to idle and ignore stale mid-turn `working` patches, so finished sessions do not keep a working pulse. The two recent-history prefetches run in parallel after visible data is ready.
 - `MainScreen.kt`, `ShellScreen.kt` — dashboard composition and the app shell. `ShellScreen` places the floating bottom navigation in a `Scaffold` bottom-bar slot and applies its measured padding to every tab, so lists and controls remain above the bar.
 
 ### Sessions list (`ui/sessions/`)

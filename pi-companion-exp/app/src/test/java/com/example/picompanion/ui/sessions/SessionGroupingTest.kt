@@ -20,6 +20,8 @@ class SessionGroupingTest {
     assertEquals(listOf("w"), groups.single { it.title == "Running" }.sessions.map { it.id })
     assertEquals(setOf("i", "r"), groups.single { it.title == "Recent" }.sessions.map { it.id }.toSet())
     assertEquals(listOf("o"), groups.single { it.title == "Older" }.sessions.map { it.id })
+    assertEquals("idle", processRunning.displayStatus())
+    assertEquals("working", working.displayStatus())
   }
 
   @Test

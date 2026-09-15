@@ -700,7 +700,7 @@ func (p *PiProcess) updateRuntimeFromEventLocked(ev RPCEvent) {
 		if matched, _ := ev["_daemonExtensionUiCloseMatched"].(bool); matched && p.runtimeState == "waiting_for_input" {
 			p.setRuntimeLocked("working", "extension", "Processing response")
 		}
-	case "message_end":
+	case "message_end", "agent_end", "agent_settled":
 		if p.runtimeState != "waiting_for_input" {
 			p.setRuntimeLocked("idle", "", "Ready")
 		}

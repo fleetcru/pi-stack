@@ -43,11 +43,10 @@ fun SessionListItem(
   val displayTitle = session.title ?: session.project ?: session.cwd ?: session.id
   val displayProject = session.project ?: session.cwd ?: ""
   // Extract granular runtime state from session.state if available
-  val runtimeState = (session.state?.get("runtimeStatus") as? kotlinx.serialization.json.JsonObject)
-    ?.get("state")?.toString()?.trim('"')
   val runtimeDetail = (session.state?.get("runtimeStatus") as? kotlinx.serialization.json.JsonObject)
     ?.get("detail")?.toString()?.trim('"')
-  val effectiveStatus = runtimeState ?: session.status ?: "unknown"
+  val effectiveStatus = session.displayStatus()
+  val runtimeState = effectiveStatus
 
   with(sharedTransitionScope) {
     Surface(

@@ -56,7 +56,7 @@ class SessionInventoryStateTest {
     assertEquals("Old", SessionInventoryState.applyPending("server-b", listOf(session)).single().title)
     val patched = SessionInventoryState.applyPending("server-a", listOf(session)).single()
     assertEquals("New", patched.title)
-    assertEquals("working", patched.status)
+    assertEquals("idle", patched.status)
 
     val confirmed = session.copy(title = "New", project = "Two", status = "idle", updatedAt = "server-time")
     assertEquals(confirmed, SessionInventoryState.applyPending("server-a", listOf(confirmed)).single())

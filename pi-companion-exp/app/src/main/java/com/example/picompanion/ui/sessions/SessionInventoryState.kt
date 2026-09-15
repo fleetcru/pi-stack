@@ -69,8 +69,9 @@ internal object SessionInventoryState {
       sessions.map { session ->
         val key = "$serverId:${session.id}"
         val patch = pendingPatches[key] ?: return@map session
-        // Once the server reports the edited fields, its timestamp and status
-        // become authoritative again.
+        // Once the server reports the edited title/project, drop the patch.
+        // Never copy patch.status over inventory status: a mid-turn "working"
+        // snapshot must not make an idle session look active after refresh.
         if (patch.title == session.title.orEmpty() && patch.project == session.project.orEmpty()) {
           pendingPatches.remove(key)
           session
@@ -83,7 +84,6 @@ internal object SessionInventoryState {
   private fun MetadataPatch.applyTo(session: ServerSession): ServerSession = session.copy(
     title = title,
     project = project,
-    status = status ?: session.status,
     updatedAt = updatedAt,
   )
 }
