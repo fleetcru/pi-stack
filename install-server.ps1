@@ -16,6 +16,12 @@
 .PARAMETER AllowInsecure
     Allow binding to 0.0.0.0 without auth enforcement. Use only on trusted networks.
 
+.PARAMETER Channel
+    Release channel. 'dev' (default) tracks the rolling server-dev build that is
+    replaced on every main-branch push. 'stable' pins to the newest immutable
+    server-v* release. The dev channel falls back to stable when server-dev has
+    not been published yet.
+
 .PARAMETER SourceRevision
     Exact Git commit used only when a release binary is unavailable.
 
@@ -23,14 +29,17 @@
     .\install-server.ps1
     .\install-server.ps1 -Port 9000 -AuthToken "my-secret"
     .\install-server.ps1 -AllowInsecure
+    .\install-server.ps1 -Channel stable
 #>
 
 param(
     [int]$Port = 3142,
     [string]$AuthToken = "",
     [switch]$AllowInsecure,
+    [ValidateSet('dev', 'stable')]
+    [string]$Channel = $(if ($env:PI_SERVER_CHANNEL) { $env:PI_SERVER_CHANNEL } else { 'dev' }),
     [ValidatePattern('^[0-9a-fA-F]{40}$')]
-    [string]$SourceRevision = "098d635625f0bdb1edbb2e84f148d093afcfe8da"
+    [string]$SourceRevision = "40b6e9632eda9a926ba59d77a2e3af7a15762805"
 )
 
 $ErrorActionPreference = "Stop"
@@ -64,9 +73,17 @@ $Repo = "fleetcru/pi-stack"
 $InstallDir = "C:\pi-server"
 $DataDir = Join-Path $InstallDir "data"
 $ConfigDir = Join-Path $InstallDir "config"
-$BinaryUrl = "https://github.com/$Repo/releases/latest/download/pi-server-windows-amd64.exe"
-$ChecksumUrl = "https://github.com/$Repo/releases/latest/download/SHA256SUMS"
 $TaskName = "PiServer"
+
+# The rolling development release uses a fixed tag, so installers request it by
+# name rather than through releases/latest, which excludes prereleases.
+$ReleaseBase = if ($Channel -eq 'stable') {
+    "https://github.com/$Repo/releases/latest/download"
+} else {
+    "https://github.com/$Repo/releases/download/server-dev"
+}
+$BinaryUrl = "$ReleaseBase/pi-server-windows-amd64.exe"
+$ChecksumUrl = "$ReleaseBase/SHA256SUMS"
 
 # ── Helpers ───────────────────────────────────────────────
 function Write-Step($msg) { Write-Host "[info] $msg" -ForegroundColor Cyan }
@@ -90,13 +107,26 @@ New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
 Write-Ok "Directories created"
 
 # ── Download binary ───────────────────────────────────────
-Write-Step "Downloading pi-server..."
+Write-Step "Downloading pi-server ($Channel channel)..."
 $ExePath = Join-Path $InstallDir "pi-server.exe"
 
 try {
     $ChecksumPath = Join-Path $env:TEMP "pi-server-SHA256SUMS"
-    Invoke-WebRequest -Uri $BinaryUrl -OutFile $ExePath -UseBasicParsing
-    Invoke-WebRequest -Uri $ChecksumUrl -OutFile $ChecksumPath -UseBasicParsing
+    try {
+        Invoke-WebRequest -Uri $BinaryUrl -OutFile $ExePath -UseBasicParsing
+        Invoke-WebRequest -Uri $ChecksumUrl -OutFile $ChecksumPath -UseBasicParsing
+    } catch {
+        if ($Channel -eq 'dev') {
+            Write-Warn "No server-dev release found. Falling back to the newest stable release."
+            $ReleaseBase = "https://github.com/$Repo/releases/latest/download"
+            $BinaryUrl = "$ReleaseBase/pi-server-windows-amd64.exe"
+            $ChecksumUrl = "$ReleaseBase/SHA256SUMS"
+            Invoke-WebRequest -Uri $BinaryUrl -OutFile $ExePath -UseBasicParsing
+            Invoke-WebRequest -Uri $ChecksumUrl -OutFile $ChecksumPath -UseBasicParsing
+        } else {
+            throw
+        }
+    }
     $ExpectedHash = Get-ExpectedReleaseHash -ChecksumPath $ChecksumPath -AssetName "pi-server-windows-amd64.exe"
     Assert-ReleaseChecksum -FilePath $ExePath -ExpectedHash $ExpectedHash
     Remove-Item -LiteralPath $ChecksumPath -Force -ErrorAction SilentlyContinue

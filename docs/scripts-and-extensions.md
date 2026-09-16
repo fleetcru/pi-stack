@@ -27,9 +27,9 @@ Startup:
 - `fix-pi-server-node-path.sh` — repairs the Node path so the server can spawn Pi on Linux/macOS.
 
 Install:
-- `install-server.sh` — Linux VPS install (systemd unit).
-- `install-server.ps1` — Windows install requiring admin (scheduled task).
-- `install-server-user.ps1` — per-user Windows install, no admin needed.
+- `install-server.sh` — Linux VPS install (systemd unit). Pulls the rolling `server-dev` release by default; set `PI_SERVER_CHANNEL=stable` to pin to the newest immutable `server-v*` release. Falls back to stable automatically when `server-dev` has not been published yet, and verifies the download against `SHA256SUMS`.
+- `install-server.ps1` — Windows install requiring admin (scheduled task). Takes the same release channel through the `-Channel dev|stable` parameter (default `dev`, or the `PI_SERVER_CHANNEL` environment variable when the parameter is omitted).
+- `install-server-user.ps1` — per-user Windows install, no admin needed. Accepts the same `-Channel` parameter.
 - `install-exp-external-bridge.ps1` / `.cmd` — copies the relay-bridge extension into the user's Pi extensions directory.
 - `windows-installer-common.ps1` / `test-windows-installer.ps1` — shared installer logic and its test harness.
 

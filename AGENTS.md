@@ -86,7 +86,18 @@ Increment versions as follows:
 
 Versions below `1.0.0` mean the product is still evolving and may introduce breaking changes in a minor release. Start at `v0.1.0` for an initial experimental/public Companion release, or at `v1.0.0` only when declaring its interfaces and update behavior stable. Do not use CI build numbers in stable tags. CircleCI generates Android `versionCode` independently from the build timestamp.
 
-Version tags are immutable release identifiers. Never move, overwrite, or reuse a published version tag. Ask the user for the exact product and version before creating one. Companion version tags are reserved for `v*`; server and tray tags use their product prefixes so they do not trigger the Companion workflow. `companion-dev` is the one non-versioned exception: its tag stays fixed while CircleCI replaces the rolling prerelease APK and release notes.
+Version tags are immutable release identifiers. Never move, overwrite, or reuse a published version tag. Ask the user for the exact product and version before creating one. Companion version tags are reserved for `v*`; server and tray tags use their product prefixes so they do not trigger the Companion workflow. Two fixed non-versioned tags exist: `companion-dev` stays put while CircleCI replaces the rolling prerelease APK and release notes, and `server-dev` stays put while GitHub Actions replaces the rolling pi-server binaries.
+
+### pi-server releases
+
+`.github/workflows/build-server.yml` publishes pi-server on two channels. Both publish the same assets: `pi-server-linux-amd64`, `pi-server-windows-amd64.exe`, and `SHA256SUMS`.
+
+- **Development (`server-dev`)** is the rolling default. Every push to `main` that touches `pi-server-exp/**` replaces the binaries on the fixed `server-dev` prerelease. The tag never moves; only the assets and notes change.
+- **Stable (`server-v<semver>`)** is immutable and created only from an explicit tag push, plus manual `workflow_dispatch` runs which always produce a uniquely numbered prerelease.
+
+Race handling differs from the Companion dev channel because server assets are requested by exact filename, so overlapping runs cannot coexist under unique names. The `publish-dev` job uses `concurrency: server-dev-release` with `cancel-in-progress: true` to serialize runs, and records the publishing run number in an HTML comment (`<!-- build:N -->`) in the release body. A run whose number is not greater than the recorded one exits before uploading, so a slow pipeline can never overwrite a newer build. The `--clobber` upload happens only after that check passes.
+
+Installers select the channel through `PI_SERVER_CHANNEL`, defaulting to `dev`. Both `install-server.sh` and the Hetzner cloud-init fall back to the newest stable `server-v*` release when `server-dev` does not exist yet, so a fresh environment still provisions before the first main-branch publish. Set `PI_SERVER_CHANNEL=stable` to pin to an immutable release.
 
 ### Creating a GitHub Release
 

@@ -12,7 +12,7 @@ PORT="${PI_SERVER_PORT:-3142}"
 AUTH_TOKEN="${PI_SERVER_AUTH_TOKEN:-}"
 ALLOW_INSECURE="${PI_SERVER_ALLOW_INSECURE:-}"
 ALLOW_SOURCE_BUILD="${PI_SERVER_ALLOW_SOURCE_BUILD:-}"
-SOURCE_REVISION="${PI_SERVER_SOURCE_REVISION:-098d635625f0bdb1edbb2e84f148d093afcfe8da}"
+SOURCE_REVISION="${PI_SERVER_SOURCE_REVISION:-40b6e9632eda9a926ba59d77a2e3af7a15762805}"
 
 # ── Colors ────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -73,10 +73,31 @@ mkdir -p "$INSTALL_DIR" "$DATA_DIR" "$CONFIG_DIR"
 # ── Download or build binary ──────────────────────────────
 info "Downloading pi-server for ${OS}/${ARCH}..."
 
-BINARY_URL="https://github.com/${REPO}/releases/latest/download/pi-server-${OS}-${ARCH}"
+# Channel selection: the rolling development release (fixed tag, replaced on
+# every main push) is the default. Set PI_SERVER_CHANNEL=stable to pin to the
+# newest immutable server-v* release instead.
+CHANNEL="${PI_SERVER_CHANNEL:-dev}"
+RELEASE_BASE="https://github.com/${REPO}/releases"
+if [[ "$CHANNEL" == "stable" ]]; then
+  RELEASE_BASE="${RELEASE_BASE}/latest/download"
+else
+  RELEASE_BASE="${RELEASE_BASE}/download/server-dev"
+fi
+BINARY_URL="${RELEASE_BASE}/pi-server-${OS}-${ARCH}"
+CHECKSUM_URL="${RELEASE_BASE}/SHA256SUMS"
 
-CHECKSUM_URL="https://github.com/${REPO}/releases/latest/download/SHA256SUMS"
-if curl -sfSL --head "$BINARY_URL" &>/dev/null; then
+# Fall back from the dev channel to the newest stable release when the rolling
+# release has not been published yet.
+if [[ "$CHANNEL" != "stable" ]]; then
+  if ! curl -sfSL --head "$BINARY_URL" &>/dev/null; then
+    warn "No server-dev release found. Falling back to the newest stable release."
+    RELEASE_BASE="https://github.com/${REPO}/releases/latest/download"
+    BINARY_URL="${RELEASE_BASE}/pi-server-${OS}-${ARCH}"
+    CHECKSUM_URL="${RELEASE_BASE}/SHA256SUMS"
+  fi
+fi
+
+if curl -sfSL --head "$BINARY_URL" &>/dev/null && curl -sfSL --head "$CHECKSUM_URL" &>/dev/null; then
   tmp_binary=$(mktemp)
   tmp_checksums=$(mktemp)
   curl -sfSL "$BINARY_URL" -o "$tmp_binary"
@@ -117,7 +138,7 @@ elif [[ "$ALLOW_SOURCE_BUILD" == "1" ]]; then
   rm -rf "$TMPDIR"
   ok "Built from source"
 else
-  fail "No verified release binary found. Set PI_SERVER_ALLOW_SOURCE_BUILD=1 to explicitly permit a source build."
+  fail "No verified release binary found for channel '${CHANNEL}'. Set PI_SERVER_CHANNEL=stable to try the newest stable release, or PI_SERVER_ALLOW_SOURCE_BUILD=1 to explicitly permit a source build."
 fi
 
 # ── Generate auth token if needed ────────────────────────

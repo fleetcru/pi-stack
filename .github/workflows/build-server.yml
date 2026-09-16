@@ -109,7 +109,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
       - name: Download binaries
         uses: actions/download-artifact@v4
@@ -149,3 +148,101 @@ jobs:
               release/pi-server-windows-amd64.exe \
               release/SHA256SUMS
           fi
+
+  # Rolling main-branch build. Unlike the Companion dev channel, server assets
+  # keep fixed filenames because installers request them by exact name, so
+  # overlapping runs cannot coexist under unique names. The concurrency group
+  # serializes the publish job, and the recorded build number in the release
+  # body prevents a slower run from overwriting a newer one after the fact.
+  publish-dev:
+    name: Publish rolling development build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: server-dev-release
+      cancel-in-progress: true
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Stage raw release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp artifacts/pi-server-linux-amd64/pi-server-linux-amd64 release/
+          cp artifacts/pi-server-windows-amd64.exe/pi-server-windows-amd64.exe release/
+          cd release
+          sha256sum pi-server-linux-amd64 pi-server-windows-amd64.exe > SHA256SUMS
+          test -s pi-server-linux-amd64
+          test -s pi-server-windows-amd64.exe
+          test -s SHA256SUMS
+
+      - name: Publish rolling development release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: server-dev
+          CURRENT_RUN: ${{ github.run_number }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Concurrent builds may race to create the one rolling release.
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$COMMIT_SHA" \
+              --title "pi-server development build" \
+              --notes "Latest main-branch pi-server build." \
+              --prerelease \
+              || gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
+          fi
+
+          # Compare recorded build numbers before uploading so we never delete
+          # an asset another publisher just wrote.
+          EXISTING_BUILD=$(gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json body \
+            --jq '.body' \
+            | sed -nE 's/.*<!-- build:([0-9]+) -->.*/\1/p' || true)
+
+          if [[ -n "$EXISTING_BUILD" && "$EXISTING_BUILD" -ge "$CURRENT_RUN" ]]; then
+            echo "Development build $EXISTING_BUILD is newer than or equal to $CURRENT_RUN; skipping stale publish"
+            exit 0
+          fi
+
+          gh release upload "$RELEASE_TAG" \
+            release/pi-server-linux-amd64 \
+            release/pi-server-windows-amd64.exe \
+            release/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+          NOTES_FILE="$(mktemp)"
+          cat > "$NOTES_FILE" <<EOF
+          Latest main-branch pi-server build.
+
+          - Commit: \`$COMMIT_SHA\`
+          - Build: $CURRENT_RUN
+          - Published: $(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+          <!-- build:$CURRENT_RUN -->
+          EOF
+
+          # Drop the heredoc indentation so the marker stays on its own line.
+          sed -i 's/^          //' "$NOTES_FILE"
+
+          gh release edit "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$COMMIT_SHA" \
+            --notes-file "$NOTES_FILE"
+
+          rm -f "$NOTES_FILE"
+
+          echo "Published $RELEASE_TAG from build $CURRENT_RUN"
