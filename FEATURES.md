@@ -1,8 +1,12 @@
 # Feature proposals and history
 
-> Status: mixed. Global and machine session discovery are implemented. Share-token and peer-server sections remain proposals. Check the server OpenAPI document for the current API.
+> Status checked against the current codebase. Global session discovery is partially implemented for local sessions and registered workers. Peer-server aggregation and live session sharing are not implemented. The current API is documented in the server OpenAPI document.
 
 ## 1. Global Session Discovery
+
+> **Current status: Partially implemented.** `GET /v1/global-sessions` lists local sessions and registered-worker sessions. Webby and Companion can display the results. Peer-server aggregation, the proposed `servers` response array, and the proposed peer environment variables are not implemented.
+>
+> Worker sessions can be attached through `POST /v1/global-sessions/{id}/attach`, which creates or reuses the existing remote-session mapping. This is different from the share-token attach flow described in section 2.
 
 ### Problem
 
@@ -16,19 +20,25 @@ A single endpoint (and client UI) that answers: **"What Pi sessions exist everyw
 
 #### Server side
 
-Add a new endpoint:
+The current implementation exposes:
 
 ```
 GET /v1/global-sessions
+POST /v1/global-sessions/{id}/attach
 ```
 
-This aggregates sessions from:
+The list endpoint aggregates the local server and registered workers. It does not query peer servers.
+
+The implemented endpoint aggregates:
 
 1. **Local sessions** — the ones this pi-server instance owns directly.
 2. **Registered workers** — each worker's `/v1/sessions?scope=all` is proxied and merged.
-3. **Peer servers** (optional) — a configured list of other pi-server URLs that this instance trusts.
 
-Response shape:
+**Peer servers** remain a proposed third source and are not queried by the current endpoint.
+
+The response shape below remains the target proposal. The current response contains `sessions` and `partialFailures`; each session has `id`, `originId`, `workerId`, `session`, and `reachable` fields.
+
+Target response shape:
 
 ```jsonc
 {
@@ -58,6 +68,8 @@ Response shape:
 
 #### Configuration
 
+Peer-server configuration is **not implemented**. The following remains a proposal:
+
 Add to pi-server config (env vars or config file):
 
 ```
@@ -65,22 +77,24 @@ PI_SERVER_PEER_SERVERS=http://10.0.0.5:3141,http://10.0.0.9:3141
 PI_SERVER_PEER_AUTH_TOKENS=token-laptop,token-desktop   // optional per-peer auth
 ```
 
-Peer servers are queried with a short timeout (2-5s). Unreachable peers are marked `reachable: false` but don't block the response.
+If peer support is implemented later, peers should be queried with a short timeout (2-5s). Unreachable peers should be marked `reachable: false` without blocking the response.
 
 #### Client behavior
 
-- **pi-webby**: Add a "Global" view in the sidebar that lists all sessions grouped by server. Clicking a session opens it via the coordinator's proxy (existing remote session flow).
-- **pi-companion**: Add a "Global" tab or toggle on the Home screen. Shows a flat list of all sessions with server badges. Tapping opens the session detail via the remote proxy.
+- **pi-webby**: Implemented. The Global session view lists available local and worker sessions and opens worker sessions through the coordinator attach flow.
+- **pi-companion**: Implemented in the Home session inventory with global-session models, loading, and attach support. The UI covers local and registered-worker results, not peer servers.
 
 #### Security
 
-- Peer servers must be explicitly configured (no auto-discovery).
-- Auth tokens are stored server-side, never exposed to clients.
-- The `/v1/global-sessions` endpoint respects the caller's `PI_SERVER_ALLOWED_ROOTS` — sessions outside allowed roots are filtered.
+- The implemented worker flow uses explicitly registered workers; peer-server configuration and peer auth tokens are not present.
+- Worker auth tokens remain server-side and are not exposed to clients.
+- The current global-session response reports local and registered-worker sessions. Peer-server filtering is not applicable because peer-server aggregation is not implemented.
 
 ---
 
 ## 2. Live Session Sharing (Remote View & Interact)
+
+> **Current status: Not implemented.** There are no share-token endpoints, share permissions, share/revoke UI, shared-session attach route, or deep-link handlers in the current codebase. Existing global-session attachment is a separate worker-proxy feature.
 
 ### Problem
 
@@ -98,7 +112,7 @@ A session owner **shares** a session, generating a short-lived share token. Any 
 
 #### Server side
 
-New endpoints:
+The following endpoints are still proposed and are not present:
 
 ```
 POST /v1/sessions/{id}/share
@@ -193,14 +207,14 @@ Register URL schemes:
 
 ## Implementation Order
 
-| Step | What | Depends on |
-|---|---|---|
-| 1 | Global session discovery endpoint | Nothing — standalone |
-| 2 | Global sessions UI in webby + companion | Step 1 |
-| 3 | Session sharing server endpoints | Nothing — standalone |
-| 4 | Share/revoke UI in both clients | Step 3 |
-| 5 | Shared session attach + proxy | Steps 3 + existing remote proxy |
-| 6 | Deep link handling (Android intent, web redirect) | Step 3 |
-| 7 | Permissions enforcement on proxy layer | Step 5 |
+| Step | What | Current status | Depends on |
+|---|---|---|---|
+| 1 | Global session discovery endpoint | **Partial:** local sessions and registered workers only | Nothing — standalone |
+| 2 | Global sessions UI in Webby + Companion | **Partial:** current local/worker inventory is wired in both clients | Step 1 |
+| 3 | Session sharing server endpoints | **Not implemented** | Nothing — standalone |
+| 4 | Share/revoke UI in both clients | **Not implemented** | Step 3 |
+| 5 | Shared session attach + proxy | **Not implemented:** global worker attach is separate | Steps 3 + existing remote proxy |
+| 6 | Deep link handling (Android intent, web redirect) | **Not implemented** | Step 3 |
+| 7 | Permissions enforcement on proxy layer | **Not implemented** | Step 5 |
 
-Steps 1 and 3 can be built in parallel. Steps 2, 4, 6, 7 follow their respective predecessors.
+The local and registered-worker portion of step 1 and the sharing work in step 3 are independent. The remaining peer-discovery and sharing steps follow their respective predecessors.

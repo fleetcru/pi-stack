@@ -1,5 +1,7 @@
 # Durable daemon event history
 
+> **Status: Implemented.** The event journal, restart cursor restoration, durable idempotency keys, and relay command receipts are present in the current server. The caveats below describe configured behavior rather than unfinished features.
+
 Pi Stack keeps its existing live event ring and transport behavior, while also
 persisting daemon-emitted session events under:
 
@@ -20,17 +22,13 @@ The journal is intentionally additive:
   history.
 - The journal is bounded using the existing `PI_SERVER_EVENT_HISTORY_MAX` and
   `PI_SERVER_EVENT_HISTORY_BYTES` settings.
-- Writes are flushed with `fsync` before an event is published to subscribers.
+- With the default `PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL=0`, writes are flushed with `fsync` before an event is published to subscribers. A positive sync interval batches `fsync` calls, so publication can occur before the latest batch reaches disk.
 - Old records are compacted atomically after the journal grows beyond twice the
   configured replay budget.
 - A torn final record is ignored during startup so a crash does not make the
   session unavailable.
 
-This is a durable replay journal, not yet a full event-sourced database. The
-next safe extension would be durable command receipts keyed by client command
-ID. That can provide idempotent command retry without changing existing
-endpoints; it should be added before introducing cross-device conflict
-resolution or multi-user authorization.
+This is a durable replay journal, not a full event-sourced database. Durable command receipts keyed by client command ID are now implemented for relay commands. They provide retry acknowledgment, not a replayable response store. A stronger response store would still be future work before introducing cross-device conflict resolution or multi-user authorization.
 
 
 ## Durable command idempotency

@@ -1,173 +1,91 @@
 # Remaining work
 
-This file records the remaining work identified after the comprehensive audit remediation on `fix/comprehensive-audit`.
+This list was rechecked against the current repository. Statuses below describe the code that is currently checked in, not planned work.
 
-**Current count:** 17 numbered concerns remain. Items 8 and 19 are complete and were removed. Items 11 and 12 were narrowed after their low-risk parts were completed.
+Items 8 and 19 were completed previously and remain omitted from the numbering.
 
 ## High priority
 
 ### 1. File-access TOCTOU protection
 
-The server validates paths before opening them. A symlink or path component could change between validation and file access.
-
-A proper fix needs descriptor-relative operations or equivalent platform-specific handling. This is not a quick patch.
-
-Risk: local file access outside configured roots under hostile concurrent filesystem manipulation.
+**Status: Partially addressed.** `pi-server-exp/internal/server/file_content.go` validates the resolved path, opens it, and compares the opened file with the validated file using `os.SameFile`. This closes the common replacement race. Fully descriptor-relative access for every path component is still not implemented.
 
 ### 2. Remote cleartext transport
 
-Android and Desktop permit remote `http://` and `ws://` connections by design.
-
-Bearer tokens and session content can be exposed if traffic crosses an untrusted network. Tailscale reduces this risk, but the applications do not enforce that distinction.
-
-Possible future changes:
-
-- Warn clearly for non-loopback cleartext endpoints.
-- Prefer HTTPS and WSS.
-- Optionally require explicit per-server approval for cleartext remote connections.
+**Status: Partially addressed.** Android and Desktop warn users when a non-loopback HTTP server is configured, but both still permit `http://` and `ws://`. HTTPS/WSS enforcement or explicit per-server approval for cleartext connections is not implemented.
 
 ### 3. Runtime event ordering
 
-The real-time pipeline depends on event ordering across lifecycle, runtime-state, tool, and message events. Unit tests cover parsing and timeline behavior, but not the complete process-to-client sequence.
-
-Problem cases include:
-
-- `runtime_state: idle` arriving before a tool completion
-- Reconnect during an assistant delta
-- Lifecycle completion racing with buffered text
-- Replay overlapping live events
-- `events_lost` during an active turn
-
-Add deterministic event-ordering tests with a fake Pi process.
+**Status: Not complete.** The server and clients contain ordering protections and focused tests, but there is no deterministic end-to-end test covering idle-before-tool-completion, reconnect during assistant deltas, lifecycle races, replay overlap, and `events_lost` during an active turn.
 
 ### 4. End-to-end relay and worker tests
 
-The server has focused unit and handler tests, but needs complete integration tests for:
-
-- External relay reconnect
-- Durable queued command delivery
-- Lease replacement
-- Server restart during a relay command
-- Worker disconnect during a session
-- Event replay after reconnect
-- Local, remote, and relay admission-limit interaction
-
-This is the largest remaining reliability gap.
+**Status: Partially addressed.** Focused tests cover relay, worker fencing, proxy behavior, history, and admission. A complete integration suite covering restart during relay commands, queued command delivery, worker disconnects, replay, and local/remote/relay admission interactions is still missing.
 
 ### 5. Android ViewModel and socket tests
 
-Android's most stateful code still has limited automated coverage.
-
-Tests are needed for:
-
-- Reconnect during an active turn
-- Stale history responses
-- Buffered assistant deltas
-- Tool completion ordering
-- `events_lost`
-- Extension UI recovery
-- Duplicate event suppression
-- Tab recreation and process restoration
-- Batch creation errors
-
-The parser tests do not verify the full event pipeline.
+**Status: Partially addressed.** Unit tests cover parsing, caching, history merging, deduplication, socket behavior, and prompt queues. Full tests for tab recreation, process restoration, background/foreground reconnects, extension UI recovery, and complete event-pipeline ordering are still missing.
 
 ### 6. Windows process-tree cleanup
 
-The Windows server and tray lifecycle code may terminate the direct process without reliably killing every descendant.
-
-Risk: orphaned Pi, shell, Git, or Node processes after shutdown or failed updates.
-
-A Windows Job Object would be the strongest solution.
+**Status: Not complete.** Windows cleanup still kills the direct process. No Windows Job Object or equivalent descendant-process ownership is implemented in `pi-server-exp` or `pi-server-tray`.
 
 ### 7. Runtime API validation
 
-Some server configuration and request fields rely on scattered handler validation. Centralize validation for:
-
-- Limits and timeouts
-- Session metadata
-- Worker settings
-- Git operation inputs
-- Relay command payloads
-- Runtime configuration changes
-
-Malformed values should fail consistently before changing state.
+**Status: Partially addressed.** Individual handlers validate several fields, including worker URLs, Git refs, extension UI responses, limits, and worktree paths. A single validation layer for all configuration, session, worker, Git, relay, and runtime mutation inputs is not implemented.
 
 ## Medium priority
 
 ### 9. Inspector mutation consistency
 
-Consolidate Git mutation handling across Webby and Desktop rather than maintaining parallel component logic.
+**Status: Not complete.** Webby and Desktop still carry parallel copies of `session-inspector.tsx`, including Git mutation handling. The copies are currently synchronized, but the consolidation described here has not happened.
 
 ### 10. Shared frontend implementation
 
-`pi-webby-shared` handles APIs, hooks, state, and timeline logic, but Webby and Desktop still duplicate substantial component behavior. This creates drift and requires fixes to be ported between clients.
+**Status: Partially addressed.** `pi-webby-shared` now contains shared API, state, hooks, socket, and timeline code. Major UI components such as the workspace, inspector, sidebar, and dialogs are still duplicated in Webby and Desktop.
 
 ### 11. Companion state and polling
 
-Review:
-
-- Repeated `settingsFlow.first()` calls
-- Frequent Home polling
-- Settings persistence debounce
-- Active-server removal race
-- ViewModel lifetime across tab changes
-
-These are mostly performance and UX issues, but some can cause stale state or lost edits.
+**Status: Not complete.** Home polling now uses a 30-second interval, cached inventory, and concurrent requests. Repeated `settingsFlow.first()` calls and the broader review of polling, persistence debounce, active-server races, and ViewModel lifetimes remain open.
 
 ### 12. File and history memory usage
 
-Known server inefficiencies include:
-
-- Per-request file buffers
-- Entire relay history files read into memory
-
-These can become visible with many sessions or large histories.
+**Status: Partially addressed.** File content reads are capped at 1 MiB. Relay HTTP history uses bounded paging and an index instead of loading the complete transcript for every request. A legacy full-history helper remains, so this area is not fully cleaned up.
 
 ### 13. Browser-native confirmation dialogs
 
-Some Git actions still use `window.confirm()`. Replace these with a shared confirmation dialog for consistent keyboard behavior, styling, and mutation feedback.
+**Status: Not complete.** Git actions in both Webby and Desktop still call `window.confirm()` from `session-inspector.tsx`.
 
 ### 14. Strict TypeScript configuration
 
-Webby, Desktop, and shared code should use one strict base TypeScript configuration. Separate settings can allow code to compile in one client but fail in another.
+**Status: Not complete.** Webby and Desktop use strict TypeScript settings, but `pi-webby-shared/tsconfig.json` still sets `strict` to `false`. There is no shared strict base configuration.
 
 ### 15. Cross-client behavioral tests
 
-Add a shared fixture suite that feeds identical history and live events into Webby, Desktop, and Companion and verifies the normalized timeline result.
+**Status: Not complete.** Webby and shared timeline tests exist, but there is no common fixture suite that feeds the same history and live events through Webby, Desktop, and Companion.
 
 ## Release and process concerns
 
 ### 16. Large branch review
 
-At the time this list was created, the tracked diff covered roughly 85 files, 2,005 additions, and 410 deletions, plus untracked source and test files.
-
-Split commits by area:
-
-1. Server correctness and security
-2. Installer and launcher hardening
-3. Tray lifecycle and updates
-4. Shared and Webby behavior and tests
-5. Desktop tests and mutation handling
-6. Android parser, image, clipboard, and UI fixes
-7. CI and documentation
+**Status: Complete as a current repository concern.** The repository is on `main`, and no large audit diff is present. The only current changes are this documentation update. This item requires no further code work unless a new large branch is created.
 
 ### 17. Local Go race tests unavailable
 
-`go test -race` could not run locally because GCC was unavailable. CI covers it, but the branch should not merge until that job passes.
+**Status: Still blocked in this environment.** `cd pi-server-exp && go test ./...` passes. `go test ./... -race` cannot start here because CGO is disabled. The race-enabled check still needs to pass in CI or an environment with CGO enabled.
 
 ### 18. Dependency security remediation
 
-The April 2026 audit found 24 npm advisories in Webby and 20 in Desktop at moderate severity or higher. Most paths run through development tools such as shadcn, jsdom, ESLint, Vite, and OpenAPI tooling. The direct `react-router` dependency also has an advisory, although this application does not use its RSC mode.
-
-Dependency upgrades require separate review and approval. Go and Rust scans remain incomplete because `govulncheck` and `cargo-audit` are not installed. The Android release dependency graph was reviewed manually because the project has no vulnerability scanner configured. GitHub Actions use mutable version tags rather than commit SHAs.
+**Status: Not complete.** The documented npm advisory remediation, Go and Rust vulnerability scans, Android dependency scanning, and GitHub Actions SHA pinning remain open. The old advisory counts should be refreshed by a new scan before being treated as current.
 
 ## Completed low-risk follow-ups
 
-- Runtime setting toggles now appear only when Pi reports their current values.
-- Removed the obsolete Android `Main` navigation route.
-- Machine-session opening failures now show a visible error.
-- Verified that `runGit` already preserves successful stderr through `CombinedOutput`.
-- Added a validated `limit` query parameter for file trees, bounded from 1 to 2,000.
-- Archived the historical Companion UI and server-wiring plans under `docs/archive`.
-- Ran the available dependency audits and recorded unresolved remediation above.
+These remain complete:
+
+- Runtime setting toggles appear only when Pi reports their current values.
+- The obsolete Android `Main` navigation route was removed.
+- Machine-session opening failures show a visible error.
+- `runGit` preserves successful stderr through `CombinedOutput`.
+- File-tree `limit` is validated and bounded from 1 to 2,000.
+- Historical Companion UI and server-wiring plans were archived under `docs/archive`.
+- Available dependency audits were run, with unresolved work recorded above.

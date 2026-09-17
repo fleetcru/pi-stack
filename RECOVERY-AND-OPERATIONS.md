@@ -1,5 +1,7 @@
 # Recovery and trusted-device operations
 
+> **Status: Implemented.** The recovery files, trusted-device endpoints, diagnostics endpoint, and worker-generation fencing described here are present in the current server.
+
 The daemon keeps recovery state in `PI_SERVER_DATA_DIR`:
 
 - `events/`: bounded per-session event journals
@@ -20,13 +22,12 @@ Content-Type: application/json
 ```
 
 The response contains the device token once. Store it securely and use it as
-the Bearer token from that device. List devices with `GET /v1/devices` and
-revoke one with `DELETE /v1/devices/{id}`. Revocation is persisted and takes
+the Bearer token from that device. List devices with `GET /v1/devices`, revoke one with `DELETE /v1/devices/{id}`, and permanently remove a revoked device with `DELETE /v1/devices/{id}/purge`. Revocation is persisted and takes
 effect on the next request. Device tokens are never written in plaintext.
 
 `GET /v1/diagnostics` reports uptime, session/worker/device counts, and event
 journal disk usage. It intentionally does not expose tokens, command payloads,
-or session contents.
+or session contents. The endpoint requires authentication.
 
 Worker generations are advanced when a worker is added or updated. A remote
 lifecycle subscription remembers the generation it started with and stops when
