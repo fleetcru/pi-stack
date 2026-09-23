@@ -421,3 +421,23 @@ private fun DirectoryRow(
     )
   }
 }
+
+/** Compat overload for call sites that still pass (cwd, prompt, count). */
+@Composable
+fun DirectoryBrowserSheet(
+  visible: Boolean,
+  server: ServerEntry?,
+  onDismiss: () -> Unit,
+  onSelect: (cwd: String, prompt: String, count: Int) -> Unit,
+  isCreating: Boolean = false,
+) {
+  DirectoryBrowserSheet(
+    visible = visible,
+    server = server,
+    onDismiss = onDismiss,
+    isCreating = isCreating,
+    onSelect = { selection ->
+      onSelect(selection.cwd, selection.prompt, selection.count)
+    },
+  )
+}
