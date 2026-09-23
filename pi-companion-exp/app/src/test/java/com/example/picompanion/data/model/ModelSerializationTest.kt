@@ -17,8 +17,6 @@ class ModelSerializationTest {
 
     private val json = apiJson
 
-    // ── HealthResponse ──────────────────────────────────
-
     @Test
     fun healthResponseMinimalJson() {
         val parsed = json.decodeFromString<HealthResponse>("""{"ok":true}""")
@@ -41,8 +39,6 @@ class ModelSerializationTest {
         val parsed = json.decodeFromString<HealthResponse>("""{"ok":true,"unknown":"value","extra":123}""")
         assertTrue(parsed.ok)
     }
-
-    // ── ServerSession ───────────────────────────────────
 
     @Test
     fun serverSessionDefaults() {
@@ -74,8 +70,6 @@ class ModelSerializationTest {
         assertTrue(parsed.state?.get("external")?.toString()?.contains("true") == true)
     }
 
-    // ── CreateSessionRequest ────────────────────────────
-
     @Test
     fun createSessionRequestDefaults() {
         val req = CreateSessionRequest(cwd = "/home")
@@ -95,13 +89,12 @@ class ModelSerializationTest {
             restart = true,
             title = "Test",
             project = "proj",
+            createWorktree = CreateWorktreeOptions(enabled = true),
         )
         val encoded = json.encodeToString(CreateSessionRequest.serializer(), req)
         val decoded = json.decodeFromString(CreateSessionRequest.serializer(), encoded)
         assertEquals(req, decoded)
     }
-
-    // ── CreateSessionResponse ───────────────────────────
 
     @Test
     fun createSessionResponseParses() {
@@ -120,8 +113,6 @@ class ModelSerializationTest {
         org.junit.Assert.assertNull(parsed.ws)
     }
 
-    // ── WebSocketTicketResponse ─────────────────────────
-
     @Test
     fun webSocketTicketResponseRoundTrip() {
         val resp = WebSocketTicketResponse(ticket = "t1", expiresAt = "2025-01-01", ws = "/ws/t1")
@@ -129,8 +120,6 @@ class ModelSerializationTest {
         val decoded = json.decodeFromString(WebSocketTicketResponse.serializer(), encoded)
         assertEquals(resp, decoded)
     }
-
-    // ── ServerWorker ────────────────────────────────────
 
     @Test
     fun serverWorkerDefaults() {
@@ -154,8 +143,6 @@ class ModelSerializationTest {
         assertEquals(4, parsed.maxSessions)
     }
 
-    // ── WorkerWriteRequest ──────────────────────────────
-
     @Test
     fun workerWriteRequestRoundTrip() {
         val req = WorkerWriteRequest(id = "w1", url = "http://x:1", token = "secret", tags = listOf("gpu"))
@@ -171,8 +158,6 @@ class ModelSerializationTest {
         val decoded = json.decodeFromString(WorkerWriteRequest.serializer(), encoded)
         org.junit.Assert.assertNull(decoded.token)
     }
-
-    // ── DirectoryListResponse ───────────────────────────
 
     @Test
     fun directoryListResponseDefaults() {
@@ -191,8 +176,6 @@ class ModelSerializationTest {
         assertEquals("docs", parsed.directories[0].name)
     }
 
-    // ── FileContentResponse ─────────────────────────────
-
     @Test
     fun fileContentResponseDefaults() {
         val resp = FileContentResponse(path = "/f.txt")
@@ -201,8 +184,6 @@ class ModelSerializationTest {
         assertFalse(resp.binary)
         assertFalse(resp.truncated)
     }
-
-    // ── GlobalSession ───────────────────────────────────
 
     @Test
     fun globalSessionParses() {
@@ -215,8 +196,6 @@ class ModelSerializationTest {
         assertTrue(parsed.reachable)
     }
 
-    // ── MachineSession ──────────────────────────────────
-
     @Test
     fun machineSessionParses() {
         val body = """{"id":"m1","path":"/sessions/m1","cwd":"/home","size":1024}"""
@@ -224,8 +203,6 @@ class ModelSerializationTest {
         assertEquals("m1", parsed.id)
         assertEquals(1024L, parsed.size)
     }
-
-    // ── ServerEntry serialization ───────────────────────
 
     @Test
     fun serverEntryRoundTrip() {
@@ -254,8 +231,6 @@ class ModelSerializationTest {
         assertEquals("x", parsed.id)
         assertEquals("http://y", parsed.url)
     }
-
-    // ── AppSettings serialization ───────────────────────
 
     @Test
     fun appSettingsRoundTrip() {
