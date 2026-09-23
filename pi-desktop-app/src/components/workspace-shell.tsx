@@ -11,7 +11,7 @@ import { useGlobalSessions, useMachineSessions, usePiServerClient, useServerHeal
 import { PiServerApiError, type ApiSession } from "@/api/client"
 import { CapacityControl } from "@/components/capacity-control"
 import { DesktopTitleBar } from "@/components/desktop-title-bar"
-import { CreateSessionDialog } from "@/components/create-session-dialog"
+import { NewSessionDialog } from "@/components/new-session-dialog"
 import { MobileWorkspace } from "@/components/mobile-workspace"
 import {
   CollapsedSidebar,
@@ -38,7 +38,7 @@ import { useAppStore } from "@/state/app-store"
 
 export function WorkspaceShell() {
   const [inspectorOpen, setInspectorOpen] = useState(true)
-  const [createSessionOpen, setCreateSessionOpen] = useState(false)
+  const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [serverConnectionsOpen, setServerConnectionsOpen] = useState(false)
   const [workerManagementOpen, setWorkerManagementOpen] = useState(false)
   const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState(false)
@@ -52,7 +52,7 @@ export function WorkspaceShell() {
     selectSession(sessionId)
     navigate(sessionId ? `/sessions/${encodeURIComponent(sessionId)}` : "/")
   }
-  const { composerExpandToken, requestCreate } = useWorkspaceCreateRequest(selectedSessionId, openSession, setCreateSessionOpen)
+  const { composerFocusToken, requestCreate } = useWorkspaceCreateRequest(selectedSessionId, openSession, setNewSessionOpen)
   const { data: health, error: healthError, refetch: refetchHealth } = useServerHealth()
   const { data: sessionResult, isLoading: sessionsLoading } = useSessions()
   const { data: workers = [] } = useWorkers(deferredDataReady)
@@ -232,7 +232,7 @@ export function WorkspaceShell() {
                 <SessionWorkspace key={selectedSession.id} sessionId={selectedSession.id} />
               </Suspense>
             ) : (
-              <EmptyWorkspace onCreated={openSession} expandMoreOptionsToken={composerExpandToken} />
+              <EmptyWorkspace onCreated={openSession} focusToken={composerFocusToken} />
             )}
           </section>
         </ResizablePanel>
@@ -264,15 +264,15 @@ export function WorkspaceShell() {
           onOpenMachine={async (id) => { const result = await client.openMachineSession(id); openSession(result.id) }}
           onHome={() => openSession(undefined)}
           onCreate={requestCreate}
-          expandMoreOptionsToken={composerExpandToken}
+          focusToken={composerFocusToken}
           onManageServers={() => setServerConnectionsOpen(true)}
           onManageWorkers={() => setWorkerManagementOpen(true)}
           onAdmin={() => navigate("/admin")}
         />
       </div>
-      <CreateSessionDialog
-        open={createSessionOpen}
-        onOpenChange={setCreateSessionOpen}
+      <NewSessionDialog
+        open={newSessionOpen}
+        onOpenChange={setNewSessionOpen}
       />
       <ServerConnectionsDialog
         open={serverConnectionsOpen}
