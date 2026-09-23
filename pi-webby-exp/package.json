@@ -14,7 +14,6 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-
     "@base-ui/react": "^1.6.0",
     "@fontsource-variable/inter": "^5.2.8",
     "@shadcn/react": "^0.2.1",
@@ -48,6 +47,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10",
+    "@testing-library/dom": "^10.4.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
