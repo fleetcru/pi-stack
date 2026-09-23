@@ -23,6 +23,7 @@ export function QuickSessionComposer({
   defaultMoreOptionsOpen = false,
   expandMoreOptionsToken,
   onRequestClose,
+  onMoreOptions: _onMoreOptions,
 }: {
   onCreated: (sessionId: string) => void
   /** inline = empty workspace card; dialog = modal create surface */
@@ -31,6 +32,8 @@ export function QuickSessionComposer({
   /** Bump to expand More options (e.g. sidebar + on empty workspace). */
   expandMoreOptionsToken?: number
   onRequestClose?: () => void
+  /** Optional legacy callback; More options is now in-composer. */
+  onMoreOptions?: () => void
 }) {
   const flow = useQuickSessionCreateFlow({
     variant,
