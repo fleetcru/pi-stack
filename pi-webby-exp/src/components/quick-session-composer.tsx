@@ -173,4 +173,115 @@ export function QuickSessionComposer({
         </div>
       </form>
       {error && <p role="alert" className="mt-2 px-3 text-sm text-destructive">{error}</p>}
-      {rootsQuery.isError && <p role="alert" className="mt and-2 px-3 text-sm text-destructive">Could not load allowed project folders.</p>}
+      {rootsQuery.isError && <p role="alert" className="mt-2 px-3 text-sm text-destructive">Could not load allowed project folders.</p>}
+      <div className="mt-2 flex min-w-0 items-center gap-1 overflow-x-auto px-2 py-1 text-xs text-muted-foreground">
+        <Select value={effectiveCwd || null} onValueChange={(value) => setCwd(String(value))}>
+          <SelectTrigger
+            size="sm"
+            className="max-w-72 shrink-0 border-transparent bg-transparent px-2 shadow-none hover:bg-muted"
+            aria-label="Project folder"
+            title={effectiveCwd || "No allowed project folders"}
+            disabled={rootsUnavailable && !cwd}
+          >
+            <Folder />
+            <span className="truncate">
+              {rootsQuery.isLoading
+                ? "Loading projects..."
+                : selectedRoot?.name || (effectiveCwd ? effectiveCwd.split(/[\\/]/).filter(Boolean).at(-1) || effectiveCwd : "No allowed projects")}
+            </span>
+          </SelectTrigger>
+          <SelectContent side="bottom" align="start" alignItemWithTrigger={false} className="w-96 max-w-[calc(100vw-2rem)]">
+            <SelectGroup>
+              <SelectLabel>Allowed project folders</SelectLabel>
+              {roots.map((root) => (
+                <SelectItem key={root.path} value={root.path}>
+                  <span className="min-w-0 flex-1 truncate">{root.name}</span>
+                  <span className="max-w-64 truncate text-xs text-muted-foreground">{root.path}</span>
+                </SelectItem>
+              ))}
+              {cwd && !roots.some((root) => root.path === cwd) && (
+                <SelectItem value={cwd}>
+                  <span className="min-w-0 flex-1 truncate">{cwd.split(/[\\/]/).filter(Boolean).at(-1) || cwd}</span>
+                  <span className="max-w-64 truncate text-xs text-muted-foreground">{cwd}</span>
+                </SelectItem>
+              )}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <Select value={workerId} onValueChange={(value) => changeWorker(String(value))}>
+          <SelectTrigger size="sm" className="max-w-52 shrink-0 border-transparent bg-transparent px-2 shadow-none hover:bg-muted" aria-label="Worker">
+            <Monitor />
+            <span className="truncate">{workerId === "local" ? "Local" : selectedWorker?.id || workerId}</span>
+          </SelectTrigger>
+          <SelectContent side="bottom" align="start" alignItemWithTrigger={false} className="min-w-56">
+            <SelectGroup>
+              <SelectLabel>Session location</SelectLabel>
+              <SelectItem value="local">Local</SelectItem>
+            </SelectGroup>
+            {remoteWorkers.length > 0 && (
+              <SelectGroup>
+                <SelectLabel>Remote workers</SelectLabel>
+                {remoteWorkers.map((worker) => (
+                  <SelectItem key={worker.id} value={worker.id} disabled={worker.status === "error"}>
+                    <span className="min-w-0 flex-1 truncate">{worker.id}</span>
+                    {worker.status && <span className="text-xs text-muted-foreground">{worker.status}</span>}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            )}
+          </SelectContent>
+        </Select>
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          aria-expanded={moreOptionsOpen}
+          aria-label="Advanced session options"
+          onClick={() => setMoreOptionsOpen((open) => !open)}
+        >
+          <SlidersHorizontal data-icon="inline-start" />
+          Advanced
+          <ChevronDown className={cn("size-3.5 transition-transform", moreOptionsOpen && "rotate-180")} />
+        </Button>
+      </div>
+
+      {moreOptionsOpen && (
+        <QuickSessionMoreOptions
+          cwd={cwd}
+          effectiveCwd={effectiveCwd}
+          title={title}
+          isolated={isolated}
+          sessionCount={sessionCount}
+          args={args}
+          labels={labels}
+          advancedOpen={advancedOpen}
+          browsing={browsing}
+          browserLoading={browserLoading}
+          browserPath={browserPath}
+          browserParent={browserParent}
+          directories={directories}
+          browserError={browserError}
+          onCwdChange={setCwd}
+          onTitleChange={setTitle}
+          onIsolatedChange={setIsolated}
+          onSessionCountChange={setSessionCount}
+          onArgsChange={setArgs}
+          onLabelsChange={setLabels}
+          onAdvancedOpenChange={setAdvancedOpen}
+          onToggleBrowsing={() => {
+            const next = !browsing
+            setBrowsing(next)
+            if (next) void loadDirectories()
+          }}
+          onLoadDirectories={(path) => void loadDirectories(path)}
+          onUseBrowserPath={() => {
+            if (browserPath) {
+              setCwd(browserPath)
+              setBrowsing(false)
+            }
+          }}
+        />
+      )}
+    </div>
+  )
+}

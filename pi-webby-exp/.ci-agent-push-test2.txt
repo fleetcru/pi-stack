@@ -1,1 +1,0 @@
-file:///tmp/composer_for_paste.tsx
