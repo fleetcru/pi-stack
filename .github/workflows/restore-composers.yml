@@ -1,6 +1,11 @@
 name: restore-composers
 on:
   workflow_dispatch:
+  push:
+    branches: [feat/unified-new-session-flow]
+    paths:
+      - 'pi-webby-exp/.ci-restore/**'
+      - '.github/workflows/restore-composers.yml'
 jobs:
   restore:
     runs-on: ubuntu-latest
@@ -13,6 +18,7 @@ jobs:
       - name: Decode and restore composers
         run: |
           set -euo pipefail
+          test -f pi-webby-exp/.ci-restore/composer.b64.part07
           cat pi-webby-exp/.ci-restore/composer.b64.part0{0,1,2,3,4,5,6,7} | tr -d '\n' | base64 -d > /tmp/composer.tsx
           echo "sha1=$(sha1sum /tmp/composer.tsx)"
           test "$(sha1sum /tmp/composer.tsx | awk '{print $1}')" = "7f62f15b5420cf73a2f3ae2342119a3a233229d5"
@@ -24,5 +30,5 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git status
-          git commit -m "fix(ci): restore quick-session-composer from verified b64 parts (webby + desktop)"
+          git commit -m "fix(ci): restore quick-session-composer from verified b64 parts (webby + desktop)" || exit 0
           git push
