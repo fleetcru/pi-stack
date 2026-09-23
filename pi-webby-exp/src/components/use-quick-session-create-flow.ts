@@ -63,10 +63,15 @@ export function useQuickSessionCreateFlow({
     return [...groups.entries()]
   }, [models])
 
-  useEffect(() => {
-    if (expandMoreOptionsToken === undefined || expandMoreOptionsToken <= 0) return
-    setMoreOptionsOpen(true)
-  }, [expandMoreOptionsToken])
+  // Expand Advanced when a parent bumps the token (tests / deep-links).
+  // Adjust state during render instead of an effect (react-hooks/set-state-in-effect).
+  const [prevExpandToken, setPrevExpandToken] = useState(expandMoreOptionsToken)
+  if (expandMoreOptionsToken !== prevExpandToken) {
+    setPrevExpandToken(expandMoreOptionsToken)
+    if (expandMoreOptionsToken !== undefined && expandMoreOptionsToken > 0) {
+      setMoreOptionsOpen(true)
+    }
+  }
 
   useEffect(() => {
     if (focusToken === undefined || focusToken <= 0) return
