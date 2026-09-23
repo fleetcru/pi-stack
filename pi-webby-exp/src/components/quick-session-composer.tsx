@@ -22,23 +22,24 @@ export function QuickSessionComposer({
   variant = "inline",
   defaultMoreOptionsOpen = false,
   expandMoreOptionsToken,
+  focusToken,
   onRequestClose,
-  onMoreOptions: _onMoreOptions,
 }: {
   onCreated: (sessionId: string) => void
   /** inline = empty workspace card; dialog = modal create surface */
   variant?: "inline" | "dialog"
   defaultMoreOptionsOpen?: boolean
-  /** Bump to expand More options (e.g. sidebar + on empty workspace). */
+  /** Bump to expand the in-composer Advanced panel (tests / deep-links). */
   expandMoreOptionsToken?: number
+  /** Bump to focus the prompt (sidebar + on empty workspace). */
+  focusToken?: number
   onRequestClose?: () => void
-  /** Optional legacy callback; More options is now in-composer. */
-  onMoreOptions?: () => void
 }) {
   const flow = useQuickSessionCreateFlow({
     variant,
     defaultMoreOptionsOpen,
     expandMoreOptionsToken,
+    focusToken,
     onCreated,
     onRequestClose,
   })
@@ -53,6 +54,7 @@ export function QuickSessionComposer({
         )}
       >
         <Textarea
+          ref={flow.promptRef}
           autoFocus
           value={flow.prompt}
           onChange={(event) => flow.setPrompt(event.target.value)}
@@ -191,10 +193,11 @@ export function QuickSessionComposer({
           size="xs"
           variant="ghost"
           aria-expanded={flow.moreOptionsOpen}
+          aria-label="Advanced session options"
           onClick={() => flow.setMoreOptionsOpen((open) => !open)}
         >
           <SlidersHorizontal data-icon="inline-start" />
-          More options
+          Advanced
           <ChevronDown className={cn("size-3.5 transition-transform", flow.moreOptionsOpen && "rotate-180")} />
         </Button>
       </div>
