@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
-import { cleanup, render, screen, waitFor } from "@testing-library/react"
+import { cleanup, render, screen, waitFor, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import "@testing-library/jest-dom/vitest"
 
@@ -10,6 +10,7 @@ const hooks = vi.hoisted(() => ({
   createWorkerSession: vi.fn(),
   prompt: vi.fn(),
   sessionPost: vi.fn(),
+  listDirectories: vi.fn(),
 }))
 
 vi.mock("@/api/hooks", () => ({
@@ -41,6 +42,7 @@ vi.mock("@/api/hooks", () => ({
     createWorkerSession: hooks.createWorkerSession,
     prompt: hooks.prompt,
     sessionPost: hooks.sessionPost,
+    listDirectories: hooks.listDirectories,
   }),
 }))
 
@@ -67,11 +69,11 @@ describe("QuickSessionComposer", () => {
     const onCreated = vi.fn()
     const user = userEvent.setup()
 
-    render(<QuickSessionComposer onCreated={onCreated} onMoreOptions={vi.fn()} />)
+    render(<QuickSessionComposer onCreated={onCreated} />)
     await user.type(screen.getByRole("textbox", { name: "First message for the new session" }), "Inspect the API")
     await user.click(screen.getByRole("button", { name: "Create session and send message" }))
 
-    await waitFor(() => expect(hooks.createSession).toHaveBeenCalledWith({ cwd: "/workspace", start: true }))
+    await waitFor(() => expect(hooks.createSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/workspace", start: true })))
     expect(onCreated).toHaveBeenCalledWith("session-1")
     expect(hooks.prompt).toHaveBeenCalledWith("session-1", { message: "Inspect the API" })
   })
@@ -81,13 +83,13 @@ describe("QuickSessionComposer", () => {
     hooks.prompt.mockResolvedValue({ ok: true })
     const user = userEvent.setup()
 
-    render(<QuickSessionComposer onCreated={vi.fn()} onMoreOptions={vi.fn()} />)
+    render(<QuickSessionComposer onCreated={vi.fn()} />)
     await user.click(screen.getByRole("combobox", { name: "Project folder" }))
     await user.click(await screen.findByRole("option", { name: /other/ }))
-    await user.type(screen.getByRole("textbox"), "Inspect the API")
+    await user.type(screen.getByRole("textbox", { name: "First message for the new session" }), "Inspect the API")
     await user.click(screen.getByRole("button", { name: "Create session and send message" }))
 
-    await waitFor(() => expect(hooks.createSession).toHaveBeenCalledWith({ cwd: "/other", start: true }))
+    await waitFor(() => expect(hooks.createSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/other", start: true })))
   })
 
   it("creates the session on the selected worker with that worker's allowed root", async () => {
@@ -95,14 +97,14 @@ describe("QuickSessionComposer", () => {
     hooks.prompt.mockResolvedValue({ ok: true })
     const user = userEvent.setup()
 
-    render(<QuickSessionComposer onCreated={vi.fn()} onMoreOptions={vi.fn()} />)
+    render(<QuickSessionComposer onCreated={vi.fn()} />)
     await user.click(screen.getByRole("combobox", { name: "Worker" }))
     await user.click(await screen.findByRole("option", { name: /remote-1/ }))
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Project folder" })).toHaveTextContent("remote-app"))
-    await user.type(screen.getByRole("textbox"), "Inspect the API")
+    await user.type(screen.getByRole("textbox", { name: "First message for the new session" }), "Inspect the API")
     await user.click(screen.getByRole("button", { name: "Create session and send message" }))
 
-    await waitFor(() => expect(hooks.createWorkerSession).toHaveBeenCalledWith("remote-1", { cwd: "/srv/remote-app", start: true }))
+    await waitFor(() => expect(hooks.createWorkerSession).toHaveBeenCalledWith("remote-1", expect.objectContaining({ cwd: "/srv/remote-app", start: true })))
   })
 
   it("keeps the composer open when the session starts but the message fails", async () => {
@@ -111,8 +113,8 @@ describe("QuickSessionComposer", () => {
     const onCreated = vi.fn()
     const user = userEvent.setup()
 
-    render(<QuickSessionComposer onCreated={onCreated} onMoreOptions={vi.fn()} />)
-    await user.type(screen.getByRole("textbox"), "Inspect the API")
+    render(<QuickSessionComposer onCreated={onCreated} />)
+    await user.type(screen.getByRole("textbox", { name: "First message for the new session" }), "Inspect the API")
     await user.click(screen.getByRole("button", { name: "Create session and send message" }))
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Retry will use the existing session")
@@ -131,10 +133,10 @@ describe("QuickSessionComposer", () => {
     hooks.prompt.mockResolvedValue({ ok: true })
     const user = userEvent.setup()
 
-    render(<QuickSessionComposer onCreated={vi.fn()} onMoreOptions={vi.fn()} />)
+    render(<QuickSessionComposer onCreated={vi.fn()} />)
     await user.click(screen.getByRole("button", { name: "Choose model" }))
     await user.click(await screen.findByRole("option", { name: /GPT-5/ }))
-    await user.type(screen.getByRole("textbox"), "Inspect the API")
+    await user.type(screen.getByRole("textbox", { name: "First message for the new session" }), "Inspect the API")
     await user.click(screen.getByRole("button", { name: "Create session and send message" }))
 
     await waitFor(() => expect(hooks.sessionPost).toHaveBeenCalledWith("session-1", "model", { provider: "openai", modelId: "gpt-5" }))
@@ -147,10 +149,10 @@ describe("QuickSessionComposer", () => {
     hooks.prompt.mockResolvedValue({ ok: true })
     const user = userEvent.setup()
 
-    render(<QuickSessionComposer onCreated={vi.fn()} onMoreOptions={vi.fn()} />)
+    render(<QuickSessionComposer onCreated={vi.fn()} />)
     await user.click(screen.getByRole("combobox", { name: "Thinking effort" }))
     await user.click(await screen.findByRole("option", { name: "High" }))
-    await user.type(screen.getByRole("textbox"), "Inspect the API")
+    await user.type(screen.getByRole("textbox", { name: "First message for the new session" }), "Inspect the API")
     await user.click(screen.getByRole("button", { name: "Create session and send message" }))
 
     await waitFor(() => expect(hooks.sessionPost).toHaveBeenCalledWith("session-1", "thinking-level", { level: "high" }))
@@ -162,36 +164,80 @@ describe("QuickSessionComposer", () => {
     hooks.prompt.mockResolvedValue({ ok: true })
     const user = userEvent.setup()
 
-    render(<QuickSessionComposer onCreated={vi.fn()} onMoreOptions={vi.fn()} />)
+    render(<QuickSessionComposer onCreated={vi.fn()} />)
     await user.click(screen.getByRole("button", { name: "Choose model" }))
     await user.click(await screen.findByRole("option", { name: /GPT-5/ }))
     await user.click(screen.getByRole("button", { name: "Choose model" }))
     await user.click(await screen.findByRole("option", { name: "Default model" }))
-    await user.type(screen.getByRole("textbox"), "Inspect the API")
+    await user.type(screen.getByRole("textbox", { name: "First message for the new session" }), "Inspect the API")
     await user.click(screen.getByRole("button", { name: "Create session and send message" }))
 
     await waitFor(() => expect(hooks.prompt).toHaveBeenCalledOnce())
     expect(hooks.sessionPost).not.toHaveBeenCalled()
   })
 
-  it("opens the full session dialog from More options", async () => {
-    const onMoreOptions = vi.fn()
-    render(<QuickSessionComposer onCreated={vi.fn()} onMoreOptions={onMoreOptions} />)
+  it("expands More options in the composer instead of opening a separate form", async () => {
+    render(<QuickSessionComposer onCreated={vi.fn()} />)
+    expect(screen.queryByText("Isolated git worktree")).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: /More options/ }))
+    expect(screen.getByText("Isolated git worktree")).toBeInTheDocument()
+    expect(screen.getByText("Title")).toBeInTheDocument()
+    expect(screen.getByText("Advanced options")).toBeInTheDocument()
+  })
 
-    await userEvent.click(screen.getByRole("button", { name: "More options" }))
-    expect(onMoreOptions).toHaveBeenCalledOnce()
+  it("passes the selected worker when browsing folders", async () => {
+    hooks.listDirectories.mockResolvedValue({ path: "/workspace", parent: undefined, directories: [], roots: [{ name: "workspace", path: "/workspace" }] })
+    const user = userEvent.setup()
+    render(<QuickSessionComposer onCreated={vi.fn()} defaultMoreOptionsOpen />)
+    expect(screen.getByText("Isolated git worktree")).toBeInTheDocument()
+    await user.click(screen.getByText("Browse"))
+    await waitFor(() => expect(hooks.listDirectories).toHaveBeenCalledWith(undefined, "local"))
+    await user.click(screen.getByRole("combobox", { name: "Worker" }))
+    await user.click(await screen.findByRole("option", { name: /remote-1/ }))
+    // Worker change closes the browser; open it again for the remote worker.
+    await user.click(screen.getByText("Browse"))
+    await waitFor(() => expect(hooks.listDirectories).toHaveBeenCalledWith(undefined, "remote-1"))
+  })
+
+  it("creates without a prompt when More options is open", async () => {
+    hooks.createSession.mockResolvedValue({ id: "session-empty" })
+    const onCreated = vi.fn()
+    const user = userEvent.setup()
+    render(<QuickSessionComposer onCreated={onCreated} defaultMoreOptionsOpen />)
+    await user.click(screen.getByRole("button", { name: "Create session" }))
+    await waitFor(() => expect(hooks.createSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/workspace", start: true })))
+    expect(hooks.prompt).not.toHaveBeenCalled()
+    expect(onCreated).toHaveBeenCalledWith("session-empty")
+  })
+
+  it("clamps batch count and creates multiple sessions", async () => {
+    hooks.createSession.mockResolvedValue({ id: "batch" })
+    const user = userEvent.setup()
+    render(<QuickSessionComposer onCreated={vi.fn()} defaultMoreOptionsOpen />)
+    const count = screen.getByRole("spinbutton")
+    fireEvent.change(count, { target: { value: "99" } })
+    expect(count).toHaveValue(12)
+    await user.click(screen.getByRole("button", { name: "Start 12 sessions" }))
+    await waitFor(() => expect(hooks.createSession).toHaveBeenCalledTimes(12))
   })
 
   it("submits with Control+Enter", async () => {
     hooks.createSession.mockResolvedValue({ id: "session-2" })
     hooks.prompt.mockResolvedValue({ ok: true })
     const user = userEvent.setup()
-    render(<QuickSessionComposer onCreated={vi.fn()} onMoreOptions={vi.fn()} />)
+    render(<QuickSessionComposer onCreated={vi.fn()} />)
 
     const input = screen.getByRole("textbox", { name: "First message for the new session" })
     await user.type(input, "Run tests")
     await user.keyboard("{Control>}{Enter}{/Control}")
 
     await waitFor(() => expect(hooks.createSession).toHaveBeenCalledOnce())
+  })
+
+  it("expands More options when expandMoreOptionsToken changes", async () => {
+    const { rerender } = render(<QuickSessionComposer onCreated={vi.fn()} />)
+    expect(screen.queryByText("Isolated git worktree")).not.toBeInTheDocument()
+    rerender(<QuickSessionComposer onCreated={vi.fn()} expandMoreOptionsToken={1} />)
+    expect(await screen.findByText("Isolated git worktree")).toBeInTheDocument()
   })
 })
