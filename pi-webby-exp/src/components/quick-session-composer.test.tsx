@@ -182,7 +182,7 @@ describe("QuickSessionComposer", () => {
     await userEvent.click(screen.getByRole("button", { name: /Advanced session options/ }))
     expect(screen.getByText("Isolated git worktree")).toBeInTheDocument()
     expect(screen.getByText("Title")).toBeInTheDocument()
-    expect(screen.getByText("Advanced options")).toBeInTheDocument()
+    expect(screen.getByText("Arguments & labels")).toBeInTheDocument()
   })
 
   it("passes the selected worker when browsing folders", async () => {
