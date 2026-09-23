@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 
 import { useAvailableModels, useCreateSession, useDirectoryRoots, usePiServerClient, useWorkers } from "@/api/hooks"
 import { initialComposerState } from "@/components/quick-session-composer-state"
@@ -7,15 +7,18 @@ export function useQuickSessionCreateFlow({
   variant,
   defaultMoreOptionsOpen,
   expandMoreOptionsToken,
+  focusToken,
   onCreated,
   onRequestClose,
 }: {
   variant: "inline" | "dialog"
   defaultMoreOptionsOpen: boolean
   expandMoreOptionsToken?: number
+  focusToken?: number
   onCreated: (sessionId: string) => void
   onRequestClose?: () => void
 }) {
+  const promptRef = useRef<HTMLTextAreaElement | null>(null)
   const [prompt, setPrompt] = useState("")
   const [error, setError] = useState<string>()
   const [submitting, setSubmitting] = useState(false)
@@ -65,6 +68,11 @@ export function useQuickSessionCreateFlow({
     setMoreOptionsOpen(true)
   }, [expandMoreOptionsToken])
 
+  useEffect(() => {
+    if (focusToken === undefined || focusToken <= 0) return
+    promptRef.current?.focus()
+  }, [focusToken])
+
   function resetBrowser() {
     setBrowsing(false)
     setBrowserLoading(false)
@@ -92,8 +100,7 @@ export function useQuickSessionCreateFlow({
     setLabels(next.labels)
     setAdvancedOpen(next.advancedOpen)
     resetBrowser()
-    if (variant === "dialog") setMoreOptionsOpen(true)
-    else setMoreOptionsOpen(false)
+    setMoreOptionsOpen(defaultMoreOptionsOpen)
   }
 
   async function loadDirectories(path?: string) {
@@ -238,6 +245,7 @@ export function useQuickSessionCreateFlow({
       : "Create session"
 
   return {
+    promptRef,
     prompt, setPrompt,
     error,
     workerId,
