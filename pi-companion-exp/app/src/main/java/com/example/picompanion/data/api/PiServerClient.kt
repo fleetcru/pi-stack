@@ -109,6 +109,15 @@ class PiServerClient(
     return doPost(server, "/v1/sessions", body, CreateSessionResponse.serializer())
   }
 
+  fun createWorkerSession(
+    server: ServerEntry,
+    workerId: String,
+    request: CreateSessionRequest,
+  ): HttpResult<CreateSessionResponse> {
+    val body = json.encodeToString(CreateSessionRequest.serializer(), request)
+    return doPost(server, "/v1/workers/$workerId/sessions", body, CreateSessionResponse.serializer())
+  }
+
   fun sendPrompt(
     server: ServerEntry,
     sessionId: String,
@@ -236,9 +245,14 @@ class PiServerClient(
 
   // ── Directories ────────────────────────────────────────
 
-  fun listDirectories(server: ServerEntry, path: String? = null): HttpResult<DirectoryListResponse> {
+  fun listDirectories(
+    server: ServerEntry,
+    path: String? = null,
+    workerId: String = "local",
+  ): HttpResult<DirectoryListResponse> {
     val queryParams = if (path != null) mapOf("path" to path) else emptyMap()
-    return doGet(server, "/v1/directories", queryParams, DirectoryListResponse.serializer())
+    val endpoint = if (workerId == "local") "/v1/directories" else "/v1/workers/$workerId/directories"
+    return doGet(server, endpoint, queryParams, DirectoryListResponse.serializer())
   }
 
   fun listFiles(server: ServerEntry, cwd: String): HttpResult<FileListResponse> =
