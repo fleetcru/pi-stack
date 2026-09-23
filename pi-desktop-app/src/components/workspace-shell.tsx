@@ -8,7 +8,7 @@ import {
 } from "lucide-react"
 
 import { useGlobalSessions, useMachineSessions, usePiServerClient, useServerHealth, useSessions, useWorkers } from "@/api/hooks"
-import { PiServerApiError, type ApiSession } from "@/api/client"
+import { PiServerApiError } from "@/api/client"
 import { CapacityControl } from "@/components/capacity-control"
 import { DesktopTitleBar } from "@/components/desktop-title-bar"
 import { NewSessionDialog } from "@/components/new-session-dialog"
