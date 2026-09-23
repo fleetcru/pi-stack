@@ -1,13 +1,9 @@
-import { describe, it, expect, vi, afterEach } from "vitest"
+import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from "vitest"
 import { render, screen, within, cleanup, waitFor, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import "@testing-library/jest-dom/vitest"
 import { CreateSessionDialog } from "./create-session-dialog"
 import { useAppStore } from "@/state/app-store"
-
-// ---------------------------------------------------------------------------
-// Mocks
-// ---------------------------------------------------------------------------
 
 vi.mock("lucide-react", async (importOriginal) => {
   const actual: Record<string, unknown> = await importOriginal()
@@ -23,6 +19,9 @@ vi.mock("lucide-react", async (importOriginal) => {
 const hookMocks = vi.hoisted(() => ({
   createSession: vi.fn(),
   createWorkerSession: vi.fn(),
+  prompt: vi.fn(),
+  sessionPost: vi.fn(),
+  listDirectories: vi.fn().mockResolvedValue({ path: "/repo", directories: [], roots: [{ name: "repo", path: "/repo" }] }),
 }))
 
 vi.mock("@/api/hooks", () => ({
@@ -31,11 +30,19 @@ vi.mock("@/api/hooks", () => ({
     isPending: false,
     error: null,
   }),
+  useAvailableModels: () => ({ data: { models: [] }, isLoading: false }),
+  useDirectoryRoots: () => ({
+    data: [{ name: "repo", path: "/repo" }],
+    isLoading: false,
+    isError: false,
+  }),
   usePiServerClient: () => ({
     baseUrl: "http://localhost:3141",
-    listDirectories: vi.fn().mockResolvedValue({}),
+    listDirectories: hookMocks.listDirectories,
     getWorkerHealth: vi.fn(),
     createWorkerSession: hookMocks.createWorkerSession,
+    prompt: hookMocks.prompt,
+    sessionPost: hookMocks.sessionPost,
   }),
   useWorkers: () => ({
     data: [
@@ -44,10 +51,6 @@ vi.mock("@/api/hooks", () => ({
     ],
   }),
 }))
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function resetStore() {
   useAppStore.setState({
@@ -65,11 +68,17 @@ function getDialogContent(): HTMLElement {
   return dialogs[dialogs.length - 1]!
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe("CreateSessionDialog", () => {
+  beforeAll(() => {
+    vi.stubGlobal("ResizeObserver", class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    })
+    window.HTMLElement.prototype.scrollIntoView = vi.fn()
+  })
+  afterAll(() => vi.unstubAllGlobals())
+
   afterEach(() => {
     cleanup()
     resetStore()
@@ -82,76 +91,24 @@ describe("CreateSessionDialog", () => {
     expect(within(dialog).getByText("New session")).toBeInTheDocument()
   })
 
-  it("renders the dialog description", () => {
+  it("defaults worker to local and shows More options content", () => {
     render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
     const dialog = getDialogContent()
-    expect(within(dialog).getByText(/Start a Pi agent in an allowed project folder/)).toBeInTheDocument()
-  })
-
-  it("renders the Worker label and Check health button", () => {
-    render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
-    const dialog = getDialogContent()
-    expect(within(dialog).getByText("Worker")).toBeInTheDocument()
-    expect(within(dialog).getByText("Check health")).toBeInTheDocument()
-  })
-
-  it("renders the Project folder input", () => {
-    render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
-    const dialog = getDialogContent()
-    expect(within(dialog).getByPlaceholderText("/home/user/project")).toBeInTheDocument()
-  })
-
-  it("renders the Title input as optional", () => {
-    render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
-    const dialog = getDialogContent()
+    expect(within(dialog).getByRole("combobox", { name: "Worker" })).toHaveTextContent("Local")
+    expect(within(dialog).getByText("Isolated git worktree")).toBeInTheDocument()
     expect(within(dialog).getByText("Title")).toBeInTheDocument()
-    expect(within(dialog).getByText("(optional)")).toBeInTheDocument()
-    expect(within(dialog).getByPlaceholderText("Refactor authentication")).toBeInTheDocument()
-  })
-
-  it("renders the Browse button", () => {
-    render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
-    const dialog = getDialogContent()
     expect(within(dialog).getByText("Browse")).toBeInTheDocument()
-  })
-
-  it("renders the Advanced options collapsible", () => {
-    render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
-    const dialog = getDialogContent()
     expect(within(dialog).getByText("Advanced options")).toBeInTheDocument()
   })
 
-  it("create session button is disabled when cwd is empty", () => {
-    render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
-    const dialog = getDialogContent()
-    const submitBtn = within(dialog).getByText("Create session")
-    expect(submitBtn).toBeDisabled()
-  })
-
-  it("renders Worker select placeholder", () => {
-    render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
-    const dialog = getDialogContent()
-    expect(within(dialog).getByText("Select a worker")).toBeInTheDocument()
-  })
-
-  async function fillRequiredFields(workerName = "local") {
-    const user = userEvent.setup()
-    const dialog = getDialogContent()
-    await user.type(within(dialog).getByPlaceholderText("/home/user/project"), "/repo")
-    await user.click(within(dialog).getByRole("combobox"))
-    await user.click(await screen.findByRole("option", { name: new RegExp(workerName, "i") }))
-    return user
-  }
-
-  it("creates one local session", async () => {
+  it("creates one local session without a prompt", async () => {
     hookMocks.createSession.mockResolvedValue({ id: "local-1" })
     const onOpenChange = vi.fn()
     render(<CreateSessionDialog open={true} onOpenChange={onOpenChange} />)
-    const user = await fillRequiredFields()
-
+    const user = userEvent.setup()
     await user.click(within(getDialogContent()).getByRole("button", { name: "Create session" }))
-
     await waitFor(() => expect(hookMocks.createSession).toHaveBeenCalledTimes(1))
+    expect(hookMocks.createSession).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/repo", start: true }))
     expect(useAppStore.getState().selectedSessionId).toBe("local-1")
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
@@ -159,11 +116,10 @@ describe("CreateSessionDialog", () => {
   it("shows a total batch failure", async () => {
     hookMocks.createSession.mockRejectedValue(new Error("capacity full"))
     render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
-    const user = await fillRequiredFields()
+    const user = userEvent.setup()
     const count = within(getDialogContent()).getByRole("spinbutton")
     fireEvent.change(count, { target: { value: "2" } })
     await user.click(within(getDialogContent()).getByRole("button", { name: "Start 2 sessions" }))
-
     expect(await within(getDialogContent()).findByText("capacity full")).toBeInTheDocument()
     expect(hookMocks.createSession).toHaveBeenCalledTimes(2)
   })
@@ -173,21 +129,18 @@ describe("CreateSessionDialog", () => {
       .mockResolvedValueOnce({ id: "ok-1" })
       .mockRejectedValueOnce(new Error("failed"))
     render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
-    const user = await fillRequiredFields()
+    const user = userEvent.setup()
     const count = within(getDialogContent()).getByRole("spinbutton")
     fireEvent.change(count, { target: { value: "2" } })
     await user.click(within(getDialogContent()).getByRole("button", { name: "Start 2 sessions" }))
-
     expect(await within(getDialogContent()).findByText("1 of 2 sessions started")).toBeInTheDocument()
     expect(useAppStore.getState().selectedSessionId).toBe("ok-1")
   })
 
   it("clamps the displayed batch count to twelve", async () => {
     render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
-    const user = await fillRequiredFields()
     const count = within(getDialogContent()).getByRole("spinbutton")
-    await user.clear(count)
-    await user.type(count, "99")
+    fireEvent.change(count, { target: { value: "99" } })
     expect(count).toHaveValue(12)
     expect(within(getDialogContent()).getByRole("button", { name: "Start 12 sessions" })).toBeInTheDocument()
   })
@@ -196,7 +149,7 @@ describe("CreateSessionDialog", () => {
     let resolve!: (value: { id: string }) => void
     hookMocks.createSession.mockReturnValue(new Promise((done) => { resolve = done }))
     render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
-    const user = await fillRequiredFields()
+    const user = userEvent.setup()
     const submit = within(getDialogContent()).getByRole("button", { name: "Create session" })
     await user.click(submit)
     await user.click(submit)
@@ -208,10 +161,21 @@ describe("CreateSessionDialog", () => {
   it("creates a remote worker session", async () => {
     hookMocks.createWorkerSession.mockResolvedValue({ id: "remote-session" })
     render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
-    const user = await fillRequiredFields("remote-1")
+    const user = userEvent.setup()
+    await user.click(within(getDialogContent()).getByRole("combobox", { name: "Worker" }))
+    await user.click(await screen.findByRole("option", { name: /remote-1/ }))
     await user.click(within(getDialogContent()).getByRole("button", { name: "Create session" }))
     await waitFor(() => expect(hookMocks.createWorkerSession).toHaveBeenCalledTimes(1))
     expect(hookMocks.createSession).not.toHaveBeenCalled()
+  })
+
+  it("passes workerId when browsing directories", async () => {
+    render(<CreateSessionDialog open={true} onOpenChange={vi.fn()} />)
+    const user = userEvent.setup()
+    await user.click(within(getDialogContent()).getByRole("combobox", { name: "Worker" }))
+    await user.click(await screen.findByRole("option", { name: /remote-1/ }))
+    await user.click(within(getDialogContent()).getByText("Browse"))
+    await waitFor(() => expect(hookMocks.listDirectories).toHaveBeenCalledWith(undefined, "remote-1"))
   })
 
   it("does not render when open is false", () => {
