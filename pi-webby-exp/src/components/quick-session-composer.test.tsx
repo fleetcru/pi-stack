@@ -176,10 +176,10 @@ describe("QuickSessionComposer", () => {
     expect(hooks.sessionPost).not.toHaveBeenCalled()
   })
 
-  it("expands More options in the composer instead of opening a separate form", async () => {
+  it("expands Advanced options in the composer instead of opening a separate form", async () => {
     render(<QuickSessionComposer onCreated={vi.fn()} />)
     expect(screen.queryByText("Isolated git worktree")).not.toBeInTheDocument()
-    await userEvent.click(screen.getByRole("button", { name: /More options/ }))
+    await userEvent.click(screen.getByRole("button", { name: /Advanced session options/ }))
     expect(screen.getByText("Isolated git worktree")).toBeInTheDocument()
     expect(screen.getByText("Title")).toBeInTheDocument()
     expect(screen.getByText("Advanced options")).toBeInTheDocument()
@@ -199,7 +199,7 @@ describe("QuickSessionComposer", () => {
     await waitFor(() => expect(hooks.listDirectories).toHaveBeenCalledWith(undefined, "remote-1"))
   })
 
-  it("creates without a prompt when More options is open", async () => {
+  it("creates without a prompt when Advanced options is open", async () => {
     hooks.createSession.mockResolvedValue({ id: "session-empty" })
     const onCreated = vi.fn()
     const user = userEvent.setup()
@@ -234,10 +234,19 @@ describe("QuickSessionComposer", () => {
     await waitFor(() => expect(hooks.createSession).toHaveBeenCalledOnce())
   })
 
-  it("expands More options when expandMoreOptionsToken changes", async () => {
+  it("expands Advanced options when expandMoreOptionsToken changes", async () => {
     const { rerender } = render(<QuickSessionComposer onCreated={vi.fn()} />)
     expect(screen.queryByText("Isolated git worktree")).not.toBeInTheDocument()
     rerender(<QuickSessionComposer onCreated={vi.fn()} expandMoreOptionsToken={1} />)
     expect(await screen.findByText("Isolated git worktree")).toBeInTheDocument()
+  })
+
+  it("focuses the prompt when focusToken changes", async () => {
+    const { rerender } = render(<QuickSessionComposer onCreated={vi.fn()} />)
+    const input = screen.getByRole("textbox", { name: "First message for the new session" })
+    input.blur()
+    expect(input).not.toHaveFocus()
+    rerender(<QuickSessionComposer onCreated={vi.fn()} focusToken={1} />)
+    await waitFor(() => expect(input).toHaveFocus())
   })
 })
