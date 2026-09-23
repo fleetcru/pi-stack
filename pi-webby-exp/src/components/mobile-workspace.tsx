@@ -25,7 +25,7 @@ export function MobileWorkspace({
   onOpenMachine,
   onHome,
   onCreate,
-  expandMoreOptionsToken = 0,
+  focusToken = 0,
   onManageServers,
   onManageWorkers,
   onAdmin,
@@ -40,7 +40,7 @@ export function MobileWorkspace({
   onOpenMachine: (id: string) => Promise<void>
   onHome: () => void
   onCreate: () => void
-  expandMoreOptionsToken?: number
+  focusToken?: number
   onManageServers: () => void
   onManageWorkers: () => void
   onAdmin: () => void
@@ -62,7 +62,7 @@ export function MobileWorkspace({
         <Button size="icon-sm" variant="ghost" aria-label="Create session" onClick={onCreate}><Plus /></Button>
         <Button size="icon-sm" variant="ghost" aria-label="Open inspector" disabled={!selectedSession} onClick={() => setInspectorOpen(true)}><PanelRight /></Button>
       </header>
-      {selectedSession ? <Suspense fallback={<div className="h-full animate-pulse rounded-xl bg-muted/30" />}><SessionWorkspace key={selectedSession.id} sessionId={selectedSession.id} /></Suspense> : <EmptyWorkspace onCreated={onOpenSession} expandMoreOptionsToken={expandMoreOptionsToken} />}
+      {selectedSession ? <Suspense fallback={<div className="h-full animate-pulse rounded-xl bg-muted/30" />}><SessionWorkspace key={selectedSession.id} sessionId={selectedSession.id} /></Suspense> : <EmptyWorkspace onCreated={onOpenSession} focusToken={focusToken} />}
       <Sheet open={sessionsOpen} onOpenChange={setSessionsOpen}>
         <SheetContent side="left" className="w-[88vw] max-w-sm p-0" showCloseButton>
           <SheetHeader>
