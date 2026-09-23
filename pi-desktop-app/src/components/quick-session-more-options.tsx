@@ -9,6 +9,9 @@ import { cn } from "@/lib/utils"
 
 export type DirectoryEntry = { name: string; path: string }
 
+const fieldLabelClass = "flex h-5 items-center text-xs font-medium uppercase tracking-wide text-muted-foreground"
+const fieldInputClass = "h-10 w-full rounded-xl border-border/70 bg-background/60"
+
 export function QuickSessionMoreOptions({
   cwd,
   effectiveCwd,
@@ -62,13 +65,13 @@ export function QuickSessionMoreOptions({
 }) {
   return (
     <div className="mt-3 overflow-hidden rounded-[20px] border border-border/80 bg-muted/50 p-4 shadow-[0_12px_40px_-32px_rgba(0,0,0,0.65)] ring-1 ring-foreground/[0.025]">
-      <div className="grid gap-4">
-        <div className="grid gap-2">
-          <div className="flex items-center justify-between gap-3">
-            <Label htmlFor="quick-session-cwd" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      <div className="grid gap-3">
+        <div className="grid gap-1.5">
+          <div className="flex h-5 items-center justify-between gap-3">
+            <Label htmlFor="quick-session-cwd" className={fieldLabelClass}>
               Project folder
             </Label>
-            <Button type="button" size="xs" variant="ghost" className="h-7 text-xs" onClick={onToggleBrowsing}>
+            <Button type="button" size="xs" variant="ghost" className="h-5 px-2 text-xs" onClick={onToggleBrowsing}>
               {browsing ? "Hide browser" : "Browse"}
             </Button>
           </div>
@@ -78,13 +81,13 @@ export function QuickSessionMoreOptions({
             onChange={(event) => onCwdChange(event.target.value)}
             placeholder="/home/user/project"
             aria-label="Project folder path"
-            className="h-10 rounded-xl border-border/70 bg-background/60 font-mono text-xs"
+            className={cn(fieldInputClass, "font-mono text-xs")}
           />
         </div>
 
         {browsing && (
-          <div className="overflow-hidden rounded-2xl border border-border/70 bg-background/40">
-            <div className="flex items-center gap-2 border-b border-border/70 px-3 py-2">
+          <div className="overflow-hidden rounded-xl border border-border/70 bg-background/40">
+            <div className="flex h-10 items-center gap-2 border-b border-border/70 px-2.5">
               <Button type="button" size="icon-xs" variant="ghost" title="Allowed roots" onClick={() => onLoadDirectories()}>
                 <House />
               </Button>
@@ -97,20 +100,20 @@ export function QuickSessionMoreOptions({
             </div>
             <div className="max-h-44 overflow-auto p-1.5">
               {browserLoading ? (
-                <div className="flex items-center gap-2 px-3 py-4 text-xs text-muted-foreground">
+                <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
                   <LoaderCircle className="size-3.5 animate-spin" /> Loading folders
                 </div>
               ) : browserError ? (
-                <p className="px-3 py-4 text-xs text-destructive">{browserError}</p>
+                <p className="px-3 py-3 text-xs text-destructive">{browserError}</p>
               ) : directories.length === 0 ? (
-                <p className="px-3 py-4 text-xs text-muted-foreground">No folders here</p>
+                <p className="px-3 py-3 text-xs text-muted-foreground">No folders here</p>
               ) : (
                 directories.map((directory) => (
                   <button
                     key={directory.path}
                     type="button"
                     className={cn(
-                      "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-muted/80",
+                      "flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-muted/80",
                       (cwd || effectiveCwd) === directory.path && "bg-primary/10 text-primary",
                     )}
                     onClick={() => onLoadDirectories(directory.path)}
@@ -122,7 +125,7 @@ export function QuickSessionMoreOptions({
               )}
             </div>
             {browserPath && (
-              <div className="flex justify-end border-t border-border/70 p-2">
+              <div className="flex h-10 items-center justify-end border-t border-border/70 px-2.5">
                 <Button type="button" size="xs" className="rounded-lg" onClick={onUseBrowserPath}>
                   <FolderOpen /> Use this folder
                 </Button>
@@ -131,23 +134,23 @@ export function QuickSessionMoreOptions({
           </div>
         )}
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="grid gap-2">
-            <Label htmlFor="quick-session-title" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <div className="grid gap-1.5">
+          <div className="grid grid-cols-[minmax(0,1fr)_5.5rem] gap-3">
+            <Label htmlFor="quick-session-title" className={fieldLabelClass}>
               Title <span className="normal-case tracking-normal text-muted-foreground/80">(optional)</span>
             </Label>
+            <Label htmlFor="quick-session-count" className={fieldLabelClass}>
+              Sessions
+            </Label>
+          </div>
+          <div className="grid grid-cols-[minmax(0,1fr)_5.5rem] items-center gap-3">
             <Input
               id="quick-session-title"
               value={title}
               onChange={(event) => onTitleChange(event.target.value)}
               placeholder="Refactor authentication"
-              className="h-10 rounded-xl border-border/70 bg-background/60"
+              className={fieldInputClass}
             />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="quick-session-count" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Sessions
-            </Label>
             <Input
               id="quick-session-count"
               type="number"
@@ -157,38 +160,37 @@ export function QuickSessionMoreOptions({
               step={1}
               onChange={(event) => onSessionCountChange(Math.min(12, Math.max(1, Math.trunc(Number(event.target.value) || 1))))}
               aria-describedby="session-count-help"
-              className="h-10 rounded-xl border-border/70 bg-background/60"
+              className={cn(fieldInputClass, "text-center tabular-nums")}
             />
-            <p id="session-count-help" className="text-[11px] leading-snug text-muted-foreground">
-              Up to 12 at once. Titles get numbered when count is over 1.
-            </p>
           </div>
+          <p id="session-count-help" className="text-[11px] leading-snug text-muted-foreground">
+            Up to 12 at once. Titles get numbered when count is over 1.
+          </p>
         </div>
 
-        <div className="flex items-start gap-3 rounded-2xl border border-border/70 bg-background/35 px-3.5 py-3">
-          <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl bg-muted/80 text-muted-foreground">
-            <GitBranch className="size-4" />
+        <div className="flex min-h-10 items-center gap-3 rounded-xl border border-border/70 bg-background/40 px-3 py-2.5">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/80 text-muted-foreground">
+            <GitBranch className="size-3.5" />
           </div>
-          <div className="min-w-0 flex-1 grid gap-1">
-            <div className="flex items-center justify-between gap-3">
-              <Label htmlFor="quick-session-worktree" className="text-sm font-medium leading-none">
-                Isolated git worktree
-              </Label>
-              <Switch
-                id="quick-session-worktree"
-                checked={isolated}
-                onCheckedChange={onIsolatedChange}
-                aria-label="Isolated git worktree"
-              />
-            </div>
-            <p className="text-[11px] leading-snug text-muted-foreground">
+          <div className="min-w-0 flex-1">
+            <Label htmlFor="quick-session-worktree" className="text-sm font-medium leading-none">
+              Isolated git worktree
+            </Label>
+            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
               Spawn a branch under <span className="font-mono text-[10px]">.pi-worktrees/&lt;title&gt;</span> so edits stay off your working tree.
             </p>
           </div>
+          <Switch
+            id="quick-session-worktree"
+            checked={isolated}
+            onCheckedChange={onIsolatedChange}
+            aria-label="Isolated git worktree"
+            className="shrink-0"
+          />
         </div>
 
         <Collapsible open={advancedOpen} onOpenChange={onAdvancedOpenChange}>
-          <CollapsibleTrigger className="flex w-full items-center justify-between rounded-2xl border border-border/70 bg-background/25 px-3.5 py-2.5 text-sm font-medium transition-colors hover:bg-muted/40">
+          <CollapsibleTrigger className="flex h-10 w-full items-center justify-between rounded-xl border border-border/70 bg-background/40 px-3 text-sm font-medium transition-colors hover:bg-muted/40">
             <span className="flex items-center gap-2">
               <Tags className="size-3.5 text-muted-foreground" />
               Arguments &amp; labels
@@ -196,8 +198,8 @@ export function QuickSessionMoreOptions({
             <ChevronDown className={cn("size-4 text-muted-foreground transition-transform", advancedOpen && "rotate-180")} />
           </CollapsibleTrigger>
           <CollapsibleContent className="grid gap-3 pt-3">
-            <div className="grid gap-2">
-              <Label htmlFor="quick-session-args" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <div className="grid gap-1.5">
+              <Label htmlFor="quick-session-args" className={fieldLabelClass}>
                 Arguments <span className="normal-case tracking-normal text-muted-foreground/80">(optional)</span>
               </Label>
               <Input
@@ -205,11 +207,11 @@ export function QuickSessionMoreOptions({
                 value={args}
                 onChange={(event) => onArgsChange(event.target.value)}
                 placeholder="--model provider/model"
-                className="h-10 rounded-xl border-border/70 bg-background/60 font-mono text-xs"
+                className={cn(fieldInputClass, "font-mono text-xs")}
               />
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="quick-session-labels" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <div className="grid gap-1.5">
+              <Label htmlFor="quick-session-labels" className={fieldLabelClass}>
                 Labels <span className="normal-case tracking-normal text-muted-foreground/80">(comma separated)</span>
               </Label>
               <Input
@@ -217,7 +219,7 @@ export function QuickSessionMoreOptions({
                 value={labels}
                 onChange={(event) => onLabelsChange(event.target.value)}
                 placeholder="backend, urgent"
-                className="h-10 rounded-xl border-border/70 bg-background/60"
+                className={fieldInputClass}
               />
             </div>
           </CollapsibleContent>
