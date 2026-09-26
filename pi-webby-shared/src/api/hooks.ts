@@ -1,11 +1,10 @@
 import {
   useMutation,
-  useInfiniteQuery,
   useQuery,
   useQueryClient,
   type UseQueryOptions,
 } from "@tanstack/react-query"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 
 import {
   PiServerClient,
@@ -25,159 +24,38 @@ import {
   type SessionEvent,
   type SessionSocketStatus,
 } from "./session-socket"
-// Each app injects its own store hook at startup via setAppStoreHook().
-import type { ServerConnectionSettings } from "../state/app-store"
+import {
+  useAppStore,
+  usePiServerClient,
+  piQueryKeys,
+} from "./hooks-base"
 
-type AppState = {
-  connection?: ServerConnectionSettings
-  servers: ServerConnectionSettings[]
-  selectedSessionId?: string
-  selectSession: (sessionId?: string) => void
-  setLiveSessionState: (sessionId: string, state: {
-    status: SessionSocketStatus
-    latestEventId?: number
-    lastEventAt?: number
-    taskId?: string
-    runId?: string
-    runtimeState?: string
-    runtimeReason?: string
-    resynchronizing: boolean
-  }) => void
-  clearLiveSessionState: (sessionId: string) => void
-}
-type UseAppStore = <T>(selector: (state: AppState) => T) => T
+export {
+  setAppStoreHook,
+  usePiServerClient,
+  useServerConfigured,
+  useServerHealth,
+  useAvailableModels,
+  useSchedulerStatus,
+  useServerCapabilities,
+  useDirectoryRoots,
+  useWorkers,
+  useSessions,
+  useGlobalSessions,
+  useMachineSessions,
+  piQueryKeys,
+} from "./hooks-base"
 
-let _useAppStore: UseAppStore | undefined
-
-/** Inject the app-specific store hook. Must be called before any hooks are used. */
-export function setAppStoreHook(hook: UseAppStore) {
-  _useAppStore = hook
-}
-
-function useAppStore<T>(selector: (state: AppState) => T): T {
-  if (!_useAppStore) throw new Error("setAppStoreHook() must be called before using hooks")
-  return _useAppStore(selector)
-}
-
-export const piQueryKeys = {
-  health: (baseUrl: string) => ["pi-server", baseUrl, "health"] as const,
-  scheduler: (baseUrl: string) => ["pi-server", baseUrl, "scheduler"] as const,
-  capabilities: (baseUrl: string) =>
-    ["pi-server", baseUrl, "capabilities"] as const,
-  models: (baseUrl: string, workerId: string) => ["pi-server", baseUrl, "workers", workerId, "models"] as const,
-  directories: (baseUrl: string, workerId: string) => ["pi-server", baseUrl, "workers", workerId, "directories"] as const,
-  workers: (baseUrl: string) => ["pi-server", baseUrl, "workers"] as const,
-  sessions: (baseUrl: string) => ["pi-server", baseUrl, "sessions"] as const,
-  globalSessions: (baseUrl: string) => ["pi-server", baseUrl, "global-sessions"] as const,
-  machineSessions: (baseUrl: string) => ["pi-server", baseUrl, "machine-sessions"] as const,
-  session: (baseUrl: string, id: string) =>
-    ["pi-server", baseUrl, "sessions", id] as const,
-  sessionData: (baseUrl: string, id: string, resource: string) =>
-    ["pi-server", baseUrl, "sessions", id, resource] as const,
-  git: (baseUrl: string, id: string, resource: string) =>
-    ["pi-server", baseUrl, "sessions", id, "git", resource] as const,
-  files: (baseUrl: string, cwd: string) =>
-    ["pi-server", baseUrl, "files", cwd] as const,
-  fileContent: (baseUrl: string, sessionId: string, path: string) =>
-    ["pi-server", baseUrl, "sessions", sessionId, "file-content", path] as const,
-}
-
-/** A stable client that changes only when the configured server changes. */
-export function usePiServerClient(): PiServerClient {
-  const connection = useAppStore((state) => state.connection)
-  return useMemo(() => new PiServerClient(connection), [connection])
-}
-
-export function useServerConfigured() {
-  return useAppStore((state) => Boolean(state.connection?.baseUrl))
-}
-
-export function useServerHealth() {
-  const client = usePiServerClient()
-  const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.health(client.cacheScope), queryFn: () => client.health(), refetchInterval: 30_000, enabled: configured })
-}
-
-export function useAvailableModels(workerId = "local") {
-  const client = usePiServerClient()
-  const configured = useServerConfigured()
-  return useQuery({
-    queryKey: piQueryKeys.models(client.cacheScope, workerId),
-    queryFn: () => client.listAvailableModels(workerId),
-    enabled: configured && Boolean(workerId),
-    staleTime: 5 * 60_000,
-  })
-}
-
-export function useSchedulerStatus(enabled = true) {
-  const client = usePiServerClient()
-  const configured = useServerConfigured()
-  return useQuery({
-    queryKey: piQueryKeys.scheduler(client.cacheScope),
-    queryFn: () => client.schedulerStatus(),
-    refetchInterval: 2_000,
-    enabled: configured && enabled,
-  })
-}
-
-export function useServerCapabilities() {
-  const client = usePiServerClient()
-  const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.capabilities(client.cacheScope), queryFn: () => client.capabilities(), staleTime: Infinity, enabled: configured })
-}
-
-export function useDirectoryRoots(workerId = "local") {
-  const client = usePiServerClient()
-  const configured = useServerConfigured()
-  return useQuery({
-    queryKey: piQueryKeys.directories(client.cacheScope, workerId),
-    queryFn: () => client.listDirectories(undefined, workerId),
-    enabled: configured && Boolean(workerId),
-    select: (result) => result.roots?.length ? result.roots : result.directories ?? [],
-    staleTime: 30_000,
-  })
-}
-
-export function useWorkers(enabled = true) {
-  const client = usePiServerClient()
-  const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.workers(client.cacheScope), queryFn: () => client.listWorkers(), select: (result) => result.workers, refetchInterval: 30_000, enabled: configured && enabled })
-}
-
-export function useSessions() {
-  const client = usePiServerClient()
-  const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.sessions(client.cacheScope), queryFn: () => client.listSessions(), refetchInterval: 20_000, enabled: configured })
-}
-
-export function useGlobalSessions(enabled = true) {
-  const client = usePiServerClient()
-  const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.globalSessions(client.cacheScope), queryFn: () => client.listGlobalSessions(), refetchInterval: 20_000, enabled: configured && enabled })
-}
-
-export function useMachineSessions(enabled = true) {
-  const client = usePiServerClient()
-  const configured = useServerConfigured()
-  return useQuery({ queryKey: piQueryKeys.machineSessions(client.cacheScope), queryFn: () => client.listMachineSessions(), refetchInterval: 30_000, enabled: configured && enabled })
-}
-
-export function useSessionHistory(sessionId?: string) {
-  const client = usePiServerClient()
-  const configured = useServerConfigured()
-  return useInfiniteQuery({
-    queryKey: ["pi-server", client.cacheScope, "sessions", sessionId ?? "none", "history"],
-    queryFn: ({ pageParam }) => client.getSessionMessages(sessionId!, pageParam),
-    initialPageParam: 0,
-    getNextPageParam: (page) => {
-      const history = (page.data as { history?: { hasOlder?: boolean; nextOffset?: number } } | undefined)?.history
-      return history?.hasOlder ? history.nextOffset : undefined
-    },
-    enabled: configured && Boolean(sessionId),
-    staleTime: 30_000,
-    maxPages: 10,
-  })
-}
+export {
+  SESSION_HISTORY_PAGE_SIZE,
+  SESSION_HISTORY_STALE_TIME_MS,
+  SESSION_HISTORY_GC_TIME_MS,
+  SESSION_HISTORY_PREFETCH_DEBOUNCE_MS,
+  useSessionHistory,
+  usePrefetchSessionHistory,
+  createDebouncedSessionHistoryPrefetch,
+  useSessionHistoryPrefetchHandlers,
+} from "./session-history"
 
 export function useSession(sessionId?: string) {
   const client = usePiServerClient()
@@ -495,7 +373,7 @@ export function useActiveSessionSocket(
             setError(new Error("Session event buffer overflow; restoring conversation history"))
             setHealth((current) => ({ ...current, resynchronizing: true }))
             void queryClient.invalidateQueries({
-              queryKey: ["pi-server", client.cacheScope, "sessions", activeSessionId, "history"],
+              queryKey: piQueryKeys.sessionHistory(client.cacheScope, activeSessionId),
             })
           }
         }
@@ -519,7 +397,7 @@ export function useActiveSessionSocket(
         resyncingRef.current = true
         setHealth((current) => ({ ...current, gap: { expectedAfter, received }, resynchronizing: true }))
         void queryClient.invalidateQueries({
-          queryKey: ["pi-server", client.cacheScope, "sessions", activeSessionId, "history"],
+          queryKey: piQueryKeys.sessionHistory(client.cacheScope, activeSessionId),
         })
       },
       onError: (err) => { if (!disposed) setError(err) },

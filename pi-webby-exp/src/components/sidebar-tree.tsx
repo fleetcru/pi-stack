@@ -10,6 +10,7 @@ import {
 
 import { cn } from "@/lib/utils"
 import { useAppStore } from "@/state/app-store"
+import { useSessionHistoryPrefetchHandlers } from "@/api/hooks"
 
 type SessionStatus = "working" | "waiting" | "active" | "idle" | "reconnecting" | "error"
 
@@ -192,12 +193,20 @@ function SessionLeaf({
   const togglePin = useAppStore((state) => state.togglePinSession)
   const isRelay = source === "external" || session.state?.external === true
   const label = session.title || shortSessionID(session.id)
+  // Debounced hover/focus prefetch warms useSessionHistory cache before click.
+  const prefetchHandlers = useSessionHistoryPrefetchHandlers(session.id, selected)
 
   return (
-    <div className="group/leaf relative">
+    <div
+      className="group/leaf relative"
+      onMouseEnter={prefetchHandlers.onMouseEnter}
+      onMouseLeave={prefetchHandlers.onMouseLeave}
+    >
       <button
         type="button"
         onClick={() => onSelect(session.id)}
+        onFocus={prefetchHandlers.onFocus}
+        onBlur={prefetchHandlers.onBlur}
         title={label}
         className={cn(
           "flex h-8 w-full items-center gap-2 rounded-lg pr-2 pl-11 text-left text-xs text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",

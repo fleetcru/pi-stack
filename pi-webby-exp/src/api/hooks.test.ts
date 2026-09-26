@@ -1,8 +1,10 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, vi } from "vitest"
 import {
   piQueryKeys,
   getSessionDisplayName,
   workerSessionGroups,
+  createDebouncedSessionHistoryPrefetch,
+  SESSION_HISTORY_PREFETCH_DEBOUNCE_MS,
 } from "./hooks"
 import type { ApiSession, ApiWorker } from "./client"
 
@@ -34,6 +36,13 @@ describe("piQueryKeys", () => {
   it("session() returns expected tuple", () => {
     const key = piQueryKeys.session("http://localhost:3141", "abc")
     expect(key).toEqual(["pi-server", "http://localhost:3141", "sessions", "abc"])
+  })
+
+  it("sessionHistory() returns expected tuple", () => {
+    const key = piQueryKeys.sessionHistory("http://localhost:3141", "abc")
+    expect(key).toEqual([
+      "pi-server", "http://localhost:3141", "sessions", "abc", "history",
+    ])
   })
 
   it("sessionData() returns expected tuple", () => {
@@ -165,5 +174,35 @@ describe("workerSessionGroups", () => {
     const groups = workerSessionGroups(sessions, workers)
     expect(groups.size).toBe(1)
     expect(groups.get("local")).toHaveLength(3)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// createDebouncedSessionHistoryPrefetch
+// ---------------------------------------------------------------------------
+
+describe("createDebouncedSessionHistoryPrefetch", () => {
+  it("debounces prefetch and cancels on unhover before delay", () => {
+    vi.useFakeTimers()
+    const prefetch = vi.fn()
+    const scheduler = createDebouncedSessionHistoryPrefetch(prefetch, SESSION_HISTORY_PREFETCH_DEBOUNCE_MS)
+
+    scheduler.schedule("sess-a")
+    scheduler.schedule("sess-b")
+    expect(prefetch).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(SESSION_HISTORY_PREFETCH_DEBOUNCE_MS - 1)
+    expect(prefetch).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(1)
+    expect(prefetch).toHaveBeenCalledTimes(1)
+    expect(prefetch).toHaveBeenCalledWith("sess-b")
+
+    scheduler.schedule("sess-c")
+    scheduler.cancel()
+    vi.advanceTimersByTime(SESSION_HISTORY_PREFETCH_DEBOUNCE_MS)
+    expect(prefetch).toHaveBeenCalledTimes(1)
+
+    vi.useRealTimers()
   })
 })
