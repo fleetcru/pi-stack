@@ -6,7 +6,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.picompanion.data.api.HttpResult
 import com.example.picompanion.di.AppModule
-import com.example.picompanion.data.model.CreateSessionRequest
 import com.example.picompanion.data.model.ServerSession
 import com.example.picompanion.data.model.visibleGlobalSessions
 import com.example.picompanion.data.model.visibleMachineSessions
@@ -23,11 +22,6 @@ import kotlinx.coroutines.launch
 
 class SessionsViewModel(application: Application) : AndroidViewModel(application) {
 
-  private data class CreateOutcome(
-    val sessionId: String?,
-    val error: String?,
-  )
-
   private val client = AppModule.client
   private val settingsDataStore = AppModule.settingsDataStore
   private val repository = SessionsRepository(client, settingsDataStore)
@@ -37,6 +31,9 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
 
   private val _createdSessionId = MutableStateFlow<String?>(null)
   val createdSessionId: StateFlow<String?> = _createdSessionId.asStateFlow()
+
+  private val _isCreating = MutableStateFlow(false)
+  val isCreating: StateFlow<Boolean> = _isCreating.asStateFlow()
 
   private val _selectedTab = MutableStateFlow(SessionTab.Active)
   val selectedTab: StateFlow<SessionTab> = _selectedTab.asStateFlow()
@@ -77,8 +74,6 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
   fun refreshIfStale() {
     val serverId = activeServerId
     if (refreshJob?.isActive == true) {
-      // Ignore only the duplicate first ON_RESUME. If another screen changed
-      // inventory during this request, keep the normal one-rerun guarantee.
       if (serverId != null && SessionInventoryState.isStale(serverId)) {
         refresh(force = true)
       }
@@ -111,8 +106,6 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
   fun refresh(force: Boolean = false) {
     val now = SystemClock.elapsedRealtime()
     if (!force && now - lastRefreshCompletedAt < resumeRefreshCooldownMs) return
-    // Mark the request immediately so init plus the first ON_RESUME event do
-    // not queue a second inventory refresh while this one is still running.
     lastRefreshCompletedAt = now
     if (refreshJob?.isActive == true) {
       refreshPending = true
@@ -152,8 +145,6 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
           _uiState.value = SessionsUiState.Loading
         }
 
-        // Start all inventory calls together. Active sessions paint as soon as
-        // their request completes instead of waiting for machine discovery.
         val activeDeferred = async(Dispatchers.IO) { client.listSessions(server, limit = 200) }
         val machineDeferred = async(Dispatchers.IO) { client.listMachineSessions(server) }
         val globalDeferred = async(Dispatchers.IO) { client.listGlobalSessions(server) }
@@ -226,39 +217,36 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
     }
   }
 
-  fun createSession(cwd: String, prompt: String = "", count: Int = 1) {
+  fun createSession(
+    cwd: String,
+    prompt: String = "",
+    count: Int = 1,
+    title: String? = null,
+    createWorktree: Boolean = false,
+    workerId: String = "local",
+  ) {
+    if (_isCreating.value) return
+    _isCreating.value = true
     viewModelScope.launch {
-      val outcomes = kotlinx.coroutines.coroutineScope {
-        (1..count.coerceIn(1, 12)).map { index ->
-          async(Dispatchers.IO) {
-            val title = if (count > 1) "New session $index" else null
-            when (val created = repository.createSession(
-              CreateSessionRequest(cwd = cwd, title = title, start = true)
-            )) {
-              is HttpResult.Success -> {
-                if (prompt.isBlank()) {
-                  CreateOutcome(created.value.id, null)
-                } else {
-                  when (val sent = repository.sendPrompt(created.value.id, prompt)) {
-                    is HttpResult.Success -> CreateOutcome(created.value.id, null)
-                    is HttpResult.Failure -> CreateOutcome(created.value.id, "Session created, but task was not sent: ${sent.userMessage}")
-                  }
-                }
-              }
-              is HttpResult.Failure -> CreateOutcome(null, created.userMessage)
-            }
-          }
-        }.awaitAll()
+      try {
+        val outcomes = repository.createSessions(
+          cwd = cwd,
+          prompt = prompt,
+          count = count,
+          title = title,
+          createWorktree = createWorktree,
+          workerId = workerId,
+        )
+        val sessionIds = outcomes.mapNotNull { it.sessionId }
+        if (sessionIds.isNotEmpty()) {
+          activeServerId?.let(SessionInventoryState::markStale)
+          if (count == 1) _createdSessionId.value = sessionIds.last()
+          else refresh(force = true)
+        }
+        outcomes.firstOrNull { it.error != null }?.error?.let { _actionError.value = it }
+      } finally {
+        _isCreating.value = false
       }
-      val sessionIds = outcomes.mapNotNull { it.sessionId }
-      if (sessionIds.isNotEmpty()) {
-        activeServerId?.let(SessionInventoryState::markStale)
-        // Keep the session list visible when creating a batch. The user can
-        // choose which thread to open instead of being moved to the last one.
-        if (count == 1) _createdSessionId.value = sessionIds.last()
-        else refresh(force = true)
-      }
-      outcomes.firstOrNull { it.error != null }?.error?.let { _actionError.value = it }
     }
   }
 

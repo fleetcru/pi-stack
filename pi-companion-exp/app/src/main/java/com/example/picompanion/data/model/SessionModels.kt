@@ -93,6 +93,11 @@ data class MachineSessionListResponse(
 )
 
 @Serializable
+data class CreateWorktreeOptions(
+  val enabled: Boolean = true,
+)
+
+@Serializable
 data class CreateSessionRequest(
   val cwd: String,
   val args: List<String> = emptyList(),
@@ -107,6 +112,7 @@ data class CreateSessionRequest(
   val metadata: Map<String, String> = emptyMap(),
   val sessionPath: String? = null,
   val worktreePath: String? = null,
+  val createWorktree: CreateWorktreeOptions? = null,
   val id: String? = null,
 )
 
