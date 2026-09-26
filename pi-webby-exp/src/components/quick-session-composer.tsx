@@ -1,109 +1,103 @@
-import { useMemo, useState } from "react"
-import { ArrowUp, BrainCircuit, Folder, LoaderCircle, Monitor, SlidersHorizontal, Sparkles } from "lucide-react"
+import {
+  ArrowUp,
+  BrainCircuit,
+  ChevronDown,
+  Folder,
+  LoaderCircle,
+  Monitor,
+  SlidersHorizontal,
+} from "lucide-react"
 
-import { useAvailableModels, useCreateSession, useDirectoryRoots, usePiServerClient, useWorkers } from "@/api/hooks"
 import { Button } from "@/components/ui/button"
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-
-const THINKING_LEVELS = [
-  { value: "__default", label: "Default effort" },
-  { value: "off", label: "Off" },
-  { value: "minimal", label: "Minimal" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "max", label: "Maximum" },
-  { value: "xhigh", label: "Extra high" },
-  { value: "ultra", label: "Ultra" },
-] as const
+import { QuickSessionModelPicker } from "@/components/quick-session-model-picker"
+import { QuickSessionMoreOptions } from "@/components/quick-session-more-options"
+import { THINKING_LEVELS } from "@/components/quick-session-composer-state"
+import { useQuickSessionCreateFlow } from "@/components/use-quick-session-create-flow"
+import { cn } from "@/lib/utils"
 
 export function QuickSessionComposer({
   onCreated,
-  onMoreOptions,
+  variant = "inline",
+  defaultMoreOptionsOpen = false,
+  expandMoreOptionsToken,
+  focusToken,
+  onRequestClose,
 }: {
   onCreated: (sessionId: string) => void
-  onMoreOptions: () => void
+  /** inline = empty workspace card; dialog = modal create surface */
+  variant?: "inline" | "dialog"
+  defaultMoreOptionsOpen?: boolean
+  /** Bump to expand the in-composer Advanced panel (tests / deep-links). */
+  expandMoreOptionsToken?: number
+  /** Bump to focus the prompt (sidebar + on empty workspace). */
+  focusToken?: number
+  onRequestClose?: () => void
 }) {
-  const [prompt, setPrompt] = useState("")
-  const [error, setError] = useState<string>()
-  const [submitting, setSubmitting] = useState(false)
-  const [draftSessionId, setDraftSessionId] = useState<string>()
-  const [workerId, setWorkerId] = useState("local")
-  const [cwd, setCwd] = useState("")
-  const [provider, setProvider] = useState("")
-  const [modelId, setModelId] = useState("")
-  const [thinkingLevel, setThinkingLevel] = useState("__default")
-  const [modelPickerOpen, setModelPickerOpen] = useState(false)
-  const createSession = useCreateSession()
-  const client = usePiServerClient()
-  const workersQuery = useWorkers()
-  const rootsQuery = useDirectoryRoots(workerId)
-  const modelsQuery = useAvailableModels(workerId)
-  const workers = workersQuery.data ?? []
-  const roots = useMemo(() => rootsQuery.data ?? [], [rootsQuery.data])
-  const models = useMemo(() => modelsQuery.data?.models ?? [], [modelsQuery.data?.models])
-  const remoteWorkers = workers.filter((worker) => worker.id !== "local")
-  const effectiveCwd = roots.some((root) => root.path === cwd) ? cwd : roots[0]?.path ?? ""
-  const selectedRoot = roots.find((root) => root.path === effectiveCwd)
-  const selectedWorker = workers.find((worker) => worker.id === workerId)
-  const selectedModelKey = provider && modelId ? JSON.stringify([provider, modelId]) : "__default"
-  const selectedModel = models.find((model) => model.provider === provider && model.id === modelId)
-  const modelsByProvider = useMemo(() => {
-    const groups = new Map<string, typeof models>()
-    for (const model of models) groups.set(model.provider, [...(groups.get(model.provider) ?? []), model])
-    return [...groups.entries()]
-  }, [models])
-
-  async function submit(event: React.FormEvent) {
-    event.preventDefault()
-    const message = prompt.trim()
-    if (!message || !effectiveCwd || submitting || createSession.isPending) return
-
-    setError(undefined)
-    setSubmitting(true)
-    try {
-      const input = { cwd: effectiveCwd, start: true }
-      const session = draftSessionId
-        ? { id: draftSessionId }
-        : workerId === "local"
-          ? await createSession.mutateAsync(input)
-          : await client.createWorkerSession(workerId, input)
-      try {
-        if (provider && modelId) {
-          await client.sessionPost(session.id, "model", { provider, modelId })
-        }
-        if (thinkingLevel !== "__default") {
-          await client.sessionPost(session.id, "thinking-level", { level: thinkingLevel })
-        }
-        await client.prompt(session.id, { message })
-      } catch (cause) {
-        setDraftSessionId(session.id)
-        setError(`Session created, but setup was not completed. ${cause instanceof Error ? cause.message : "Request failed."} Retry will use the existing session.`)
-        return
-      }
-      setPrompt("")
-      setDraftSessionId(undefined)
-      onCreated(session.id)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not start the session")
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  const busy = submitting || createSession.isPending
-  const rootsUnavailable = rootsQuery.isLoading || roots.length === 0
+  // Destructure so eslint react-hooks/refs does not treat property access on an
+  // object that also contains promptRef as "accessing a ref during render".
+  const {
+    promptRef,
+    prompt, setPrompt,
+    error,
+    workerId,
+    cwd, setCwd,
+    thinkingLevel, setThinkingLevel,
+    modelPickerOpen, setModelPickerOpen,
+    moreOptionsOpen, setMoreOptionsOpen,
+    title, setTitle,
+    isolated, setIsolated,
+    sessionCount, setSessionCount,
+    args, setArgs,
+    labels, setLabels,
+    advancedOpen, setAdvancedOpen,
+    browsing, setBrowsing,
+    browserLoading,
+    browserPath,
+    browserParent,
+    directories,
+    browserError,
+    rootsQuery,
+    modelsQuery,
+    roots,
+    remoteWorkers,
+    effectiveCwd,
+    selectedRoot,
+    selectedWorker,
+    selectedModelKey,
+    selectedModel,
+    models,
+    modelsByProvider,
+    setProvider,
+    setModelId,
+    busy,
+    rootsUnavailable,
+    canSubmit,
+    submitLabel,
+    loadDirectories,
+    changeWorker,
+    submit,
+  } = useQuickSessionCreateFlow({
+    variant,
+    defaultMoreOptionsOpen,
+    expandMoreOptionsToken,
+    focusToken,
+    onCreated,
+    onRequestClose,
+  })
 
   return (
-    <div className="w-full max-w-4xl">
+    <div className={cn("w-full", variant === "inline" ? "max-w-4xl" : "max-w-none")}>
       <form
         onSubmit={submit}
-        className="overflow-hidden rounded-[20px] border border-border/80 !bg-muted/70 shadow-[0_18px_60px_-36px_rgba(0,0,0,0.75)] ring-1 ring-foreground/[0.025] transition-[border-color,box-shadow] focus-within:border-foreground/30 focus-within:shadow-[0_22px_70px_-38px_rgba(0,0,0,0.9)]"
+        className={cn(
+          "overflow-hidden rounded-[20px] border border-border/80 !bg-muted/70 shadow-[0_18px_60px_-36px_rgba(0,0,0,0.75)] ring-1 ring-foreground/[0.025] transition-[border-color,box-shadow] focus-within:border-foreground/30 focus-within:shadow-[0_22px_70px_-38px_rgba(0,0,0,0.9)]",
+          variant === "dialog" && "shadow-none ring-0",
+        )}
       >
         <Textarea
+          ref={promptRef}
           autoFocus
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
@@ -118,72 +112,25 @@ export function QuickSessionComposer({
           className="min-h-20 resize-none rounded-none border-0 !bg-muted/70 px-5 pt-5 pb-3 text-sm leading-6 shadow-none focus-visible:ring-0"
         />
         <div className="flex items-center gap-1 overflow-x-auto !bg-muted/70 px-3 py-2">
-          <Popover open={modelPickerOpen} onOpenChange={setModelPickerOpen}>
-            <PopoverTrigger
-              render={
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="max-w-64 justify-start px-2 text-muted-foreground"
-                  aria-label="Choose model"
-                  disabled={modelsQuery.isLoading || models.length === 0}
-                />
-              }
-            >
-              <Sparkles data-icon="inline-start" />
-              <span className="truncate text-foreground">
-                {modelsQuery.isLoading ? "Loading models..." : selectedModel?.name || selectedModel?.id || "Default model"}
-              </span>
-              {selectedModel && <span className="truncate text-xs">{selectedModel.provider}</span>}
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-96 max-w-[calc(100vw-2rem)] gap-0 p-0">
-              <Command>
-                <CommandInput placeholder="Search models..." />
-                <CommandList>
-                  <CommandEmpty>No matching models.</CommandEmpty>
-                  <CommandGroup heading="Session default">
-                    <CommandItem
-                      value="default model"
-                      data-checked={selectedModelKey === "__default"}
-                      onSelect={() => {
-                        setProvider("")
-                        setModelId("")
-                        setModelPickerOpen(false)
-                      }}
-                    >
-                      <Sparkles />
-                      <span>Default model</span>
-                    </CommandItem>
-                  </CommandGroup>
-                  {modelsByProvider.map(([modelProvider, providerModels]) => (
-                    <CommandGroup key={modelProvider} heading={modelProvider}>
-                      {providerModels.map((model) => {
-                        const key = JSON.stringify([model.provider, model.id])
-                        return (
-                          <CommandItem
-                            key={key}
-                            value={`${model.name || model.id} ${model.id} ${model.provider}`}
-                            data-checked={selectedModelKey === key}
-                            onSelect={() => {
-                              setProvider(model.provider)
-                              setModelId(model.id)
-                              setModelPickerOpen(false)
-                            }}
-                          >
-                            <span className="min-w-0 flex-1 truncate">{model.name || model.id}</span>
-                            {model.name && model.name !== model.id && (
-                              <span className="max-w-40 truncate text-xs text-muted-foreground">{model.id}</span>
-                            )}
-                          </CommandItem>
-                        )
-                      })}
-                    </CommandGroup>
-                  ))}
-                </CommandList>
-              </Command>
-            </PopoverContent>
-          </Popover>
+          <QuickSessionModelPicker
+            open={modelPickerOpen}
+            onOpenChange={setModelPickerOpen}
+            models={models}
+            modelsByProvider={modelsByProvider}
+            selectedModel={selectedModel}
+            selectedModelKey={selectedModelKey}
+            loading={modelsQuery.isLoading}
+            onSelectDefault={() => {
+              setProvider("")
+              setModelId("")
+              setModelPickerOpen(false)
+            }}
+            onSelectModel={(model) => {
+              setProvider(model.provider)
+              setModelId(model.id)
+              setModelPickerOpen(false)
+            }}
+          />
           <Select value={thinkingLevel} onValueChange={(value) => setThinkingLevel(String(value))}>
             <SelectTrigger
               size="sm"
@@ -207,15 +154,22 @@ export function QuickSessionComposer({
           </Select>
           <div className="min-w-2 flex-1" />
           <span className="hidden shrink-0 px-2 text-[11px] text-muted-foreground sm:inline">Ctrl/⌘ + Enter</span>
-          <Button
-            type="submit"
-            size="icon"
-            className="rounded-full"
-            aria-label="Create session and send message"
-            disabled={!prompt.trim() || !effectiveCwd || busy}
-          >
-            {busy ? <LoaderCircle className="animate-spin" /> : <ArrowUp />}
-          </Button>
+          {variant === "dialog" || moreOptionsOpen ? (
+            <Button type="submit" size="sm" className="rounded-full px-3" aria-label={submitLabel} disabled={!canSubmit}>
+              {busy ? <LoaderCircle className="animate-spin" /> : null}
+              {busy ? "Starting…" : sessionCount > 1 ? `Start ${sessionCount}` : prompt.trim() ? "Start" : "Create"}
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              size="icon"
+              className="rounded-full"
+              aria-label="Create session and send message"
+              disabled={!canSubmit}
+            >
+              {busy ? <LoaderCircle className="animate-spin" /> : <ArrowUp />}
+            </Button>
+          )}
         </div>
       </form>
       {error && <p role="alert" className="mt-2 px-3 text-sm text-destructive">{error}</p>}
@@ -227,10 +181,14 @@ export function QuickSessionComposer({
             className="max-w-72 shrink-0 border-transparent bg-transparent px-2 shadow-none hover:bg-muted"
             aria-label="Project folder"
             title={effectiveCwd || "No allowed project folders"}
-            disabled={rootsUnavailable}
+            disabled={rootsUnavailable && !cwd}
           >
             <Folder />
-            <span className="truncate">{rootsQuery.isLoading ? "Loading projects..." : selectedRoot?.name || "No allowed projects"}</span>
+            <span className="truncate">
+              {rootsQuery.isLoading
+                ? "Loading projects..."
+                : selectedRoot?.name || (effectiveCwd ? effectiveCwd.split(/[\\/]/).filter(Boolean).at(-1) || effectiveCwd : "No allowed projects")}
+            </span>
           </SelectTrigger>
           <SelectContent side="bottom" align="start" alignItemWithTrigger={false} className="w-96 max-w-[calc(100vw-2rem)]">
             <SelectGroup>
@@ -241,20 +199,16 @@ export function QuickSessionComposer({
                   <span className="max-w-64 truncate text-xs text-muted-foreground">{root.path}</span>
                 </SelectItem>
               ))}
+              {cwd && !roots.some((root) => root.path === cwd) && (
+                <SelectItem value={cwd}>
+                  <span className="min-w-0 flex-1 truncate">{cwd.split(/[\\/]/).filter(Boolean).at(-1) || cwd}</span>
+                  <span className="max-w-64 truncate text-xs text-muted-foreground">{cwd}</span>
+                </SelectItem>
+              )}
             </SelectGroup>
           </SelectContent>
         </Select>
-        <Select
-          value={workerId}
-          onValueChange={(value) => {
-            setWorkerId(String(value))
-            setCwd("")
-            setProvider("")
-            setModelId("")
-            setThinkingLevel("__default")
-            setDraftSessionId(undefined)
-          }}
-        >
+        <Select value={workerId} onValueChange={(value) => changeWorker(String(value))}>
           <SelectTrigger size="sm" className="max-w-52 shrink-0 border-transparent bg-transparent px-2 shadow-none hover:bg-muted" aria-label="Worker">
             <Monitor />
             <span className="truncate">{workerId === "local" ? "Local" : selectedWorker?.id || workerId}</span>
@@ -277,11 +231,57 @@ export function QuickSessionComposer({
             )}
           </SelectContent>
         </Select>
-        <Button type="button" size="xs" variant="ghost" onClick={onMoreOptions}>
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          aria-expanded={moreOptionsOpen}
+          aria-label="Advanced session options"
+          onClick={() => setMoreOptionsOpen((open) => !open)}
+        >
           <SlidersHorizontal data-icon="inline-start" />
-          More options
+          Advanced
+          <ChevronDown className={cn("size-3.5 transition-transform", moreOptionsOpen && "rotate-180")} />
         </Button>
       </div>
+
+      {moreOptionsOpen && (
+        <QuickSessionMoreOptions
+          cwd={cwd}
+          effectiveCwd={effectiveCwd}
+          title={title}
+          isolated={isolated}
+          sessionCount={sessionCount}
+          args={args}
+          labels={labels}
+          advancedOpen={advancedOpen}
+          browsing={browsing}
+          browserLoading={browserLoading}
+          browserPath={browserPath}
+          browserParent={browserParent}
+          directories={directories}
+          browserError={browserError}
+          onCwdChange={setCwd}
+          onTitleChange={setTitle}
+          onIsolatedChange={setIsolated}
+          onSessionCountChange={setSessionCount}
+          onArgsChange={setArgs}
+          onLabelsChange={setLabels}
+          onAdvancedOpenChange={setAdvancedOpen}
+          onToggleBrowsing={() => {
+            const next = !browsing
+            setBrowsing(next)
+            if (next) void loadDirectories()
+          }}
+          onLoadDirectories={(path) => void loadDirectories(path)}
+          onUseBrowserPath={() => {
+            if (browserPath) {
+              setCwd(browserPath)
+              setBrowsing(false)
+            }
+          }}
+        />
+      )}
     </div>
   )
 }

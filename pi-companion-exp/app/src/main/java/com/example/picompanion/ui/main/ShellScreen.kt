@@ -25,8 +25,8 @@ import androidx.compose.ui.unit.dp
 import com.example.picompanion.AppRoute
 import com.example.picompanion.data.api.HttpResult
 import com.example.picompanion.di.AppModule
-import com.example.picompanion.data.model.CreateSessionRequest
 import com.example.picompanion.data.model.ServerSession
+import com.example.picompanion.data.repository.SessionsRepository
 import com.example.picompanion.data.settings.AppSettings
 import com.example.picompanion.ui.components.BottomNavBar
 import com.example.picompanion.ui.components.DirectoryBrowserSheet
@@ -38,8 +38,6 @@ import com.example.picompanion.ui.settings.SettingsScreen
 import com.example.picompanion.ui.workers.WorkersScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -58,6 +56,8 @@ fun ShellScreen(
   var selectedTab by remember { mutableStateOf(initialTab) }
   var drawerOpen by remember { mutableStateOf(false) }
   var showNewSessionBrowser by remember { mutableStateOf(false) }
+  var isCreatingSession by remember { mutableStateOf(false) }
+  val sessionsRepository = remember { SessionsRepository(AppModule.client, AppModule.settingsDataStore) }
   val keyboardOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
 
   // Sessions for the drawer
@@ -151,42 +151,36 @@ fun ShellScreen(
     DirectoryBrowserSheet(
       visible = showNewSessionBrowser,
       server = settings.activeServer,
-      onDismiss = { showNewSessionBrowser = false },
-      onSelect = { cwd, prompt, count ->
-        showNewSessionBrowser = false
+      isCreating = isCreatingSession,
+      onDismiss = { if (!isCreatingSession) showNewSessionBrowser = false },
+      onSelect = { selection ->
         coroutineScope.launch {
-          val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
-          val outcomes = kotlinx.coroutines.coroutineScope {
-            (1..count.coerceIn(1, 12)).map { index ->
-              async(Dispatchers.IO) {
-                when (val created = client.createSession(
-                  server,
-                  CreateSessionRequest(
-                    cwd = cwd,
-                    title = if (count > 1) "New session $index" else null,
-                    start = true,
-                  ),
-                )) {
-                  is HttpResult.Failure -> null to created.userMessage
-                  is HttpResult.Success -> {
-                    val promptFailure = if (prompt.isNotBlank()) {
-                      (client.sendPrompt(server, created.value.id, prompt) as? HttpResult.Failure)?.userMessage
-                    } else null
-                    created.value.id to promptFailure
-                  }
-                }
-              }
-            }.awaitAll()
-          }
-          val createdIds = outcomes.mapNotNull { it.first }
-          if (createdIds.isNotEmpty()) SessionInventoryState.markStale(server.id)
-          val failures = outcomes.mapNotNull { it.second }
-          if (failures.isNotEmpty()) {
-            val message = if (createdIds.isEmpty()) failures.first() else "${createdIds.size} of ${outcomes.size} sessions completed without errors"
-            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-          }
-          if (count == 1) {
-            createdIds.lastOrNull()?.let { onNavigate(AppRoute.SessionDetail(it)) }
+          isCreatingSession = true
+          try {
+            val server = settingsDataStore.settingsFlow.first().activeServer ?: return@launch
+            val outcomes = sessionsRepository.createSessions(
+              cwd = selection.cwd,
+              prompt = selection.prompt,
+              count = selection.count,
+              title = selection.title,
+              createWorktree = selection.createWorktree,
+              workerId = selection.workerId,
+              server = server,
+            )
+            val createdIds = outcomes.mapNotNull { it.sessionId }
+            if (createdIds.isNotEmpty()) SessionInventoryState.markStale(server.id)
+            val failures = outcomes.mapNotNull { it.error }
+            if (failures.isNotEmpty()) {
+              val message = if (createdIds.isEmpty()) failures.first()
+              else "${createdIds.size} of ${outcomes.size} sessions completed without errors"
+              Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            }
+            showNewSessionBrowser = false
+            if (selection.count == 1) {
+              createdIds.lastOrNull()?.let { onNavigate(AppRoute.SessionDetail(it)) }
+            }
+          } finally {
+            isCreatingSession = false
           }
         }
       },
