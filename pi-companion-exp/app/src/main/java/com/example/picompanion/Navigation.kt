@@ -9,18 +9,12 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.picompanion.di.AppModule
 import androidx.compose.ui.Modifier
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.LocalNavAnimatedContentScope
 import androidx.navigation3.ui.NavDisplay
 import com.example.picompanion.ui.components.NavTab
-import kotlinx.coroutines.launch
 import com.example.picompanion.ui.main.ShellScreen
 import com.example.picompanion.ui.sessiondetail.SessionDetailScreen
 
@@ -32,29 +26,7 @@ fun MainNavigation(
   SharedTransitionLayout {
     val backStack = rememberNavBackStack(AppRoute.Home)
     val sharedTransitionScope = this@SharedTransitionLayout
-    val settings by AppModule.settingsDataStore.settingsFlow.collectAsStateWithLifecycle(
-      initialValue = com.example.picompanion.data.settings.AppSettings(),
-    )
-    val scope = rememberCoroutineScope()
-    LaunchedEffect(settings.rememberLastSession, settings.lastSessionServerId, settings.lastSessionId) {
-      val sessionId = settings.lastSessionId
-      if (
-        settings.rememberLastSession &&
-        sessionId.isNotBlank() &&
-        settings.lastSessionServerId == settings.activeServer?.id &&
-        backStack.none { it == AppRoute.SessionDetail(sessionId) }
-      ) {
-        backStack.add(AppRoute.SessionDetail(sessionId))
-      }
-    }
-    val navigate: (AppRoute) -> Unit = { route ->
-      if (route is AppRoute.SessionDetail && settings.rememberLastSession) {
-        settings.activeServer?.id?.takeIf { it.isNotBlank() }?.let { serverId ->
-          scope.launch { AppModule.settingsDataStore.setLastSession(serverId, route.sessionId) }
-        }
-      }
-      backStack.add(route)
-    }
+    val navigate: (AppRoute) -> Unit = { route -> backStack.add(route) }
     fun returnToSessions() {
       while (backStack.size > 1) backStack.removeLastOrNull()
       if (backStack.lastOrNull() != AppRoute.Sessions) backStack.add(AppRoute.Sessions)

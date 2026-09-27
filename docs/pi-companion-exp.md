@@ -34,7 +34,7 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 ## Dependency injection & navigation
 
 - `di/AppModule.kt` — Hilt module providing OkHttp, the API client, repositories, DataStore.
-- `MainActivity.kt`, `Navigation.kt`, `NavigationKeys.kt` — single-activity Compose app; nav graph for home / sessions / workers / settings / session-detail routes.
+- `MainActivity.kt`, `Navigation.kt`, `NavigationKeys.kt` — single-activity Compose app; nav graph for home / sessions / workers / settings / session-detail routes. The navigation back stack starts at Home on every app launch and does not restore the last-opened session.
 
 ## UI layer (`ui/`)
 
