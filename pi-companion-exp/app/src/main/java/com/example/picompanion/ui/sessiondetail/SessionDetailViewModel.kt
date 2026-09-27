@@ -512,7 +512,11 @@ class SessionDetailViewModel(
       if (generation != historyGeneration) return@withLock false
       if (appendOld) _loadingOlderHistory.value = true
       try {
-        when (val result = repository.getSessionMessages(sessionId, offset = offset, limit = limit)) {
+        val result = repository.getSessionMessages(sessionId, offset = offset, limit = limit)
+        // connect() can advance the generation while the network request is
+        // suspended. Never let an old server/session response mutate the new view.
+        if (generation != historyGeneration) return@withLock false
+        when (result) {
           is com.example.picompanion.data.api.HttpResult.Success -> {
             val data = result.value["data"]?.jsonObject
             val messages = data?.get("messages") as? JsonArray
@@ -522,12 +526,19 @@ class SessionDetailViewModel(
               val historyMeta = data["history"]?.jsonObject
               val totalMessages = historyMeta?.get("total")?.jsonPrimitive?.intOrNull
                 ?: (offset + messages.size)
+              val nextOffset = historyMeta?.get("nextOffset")?.jsonPrimitive?.intOrNull
+                ?: (offset + messages.size)
+              val hasOlder = historyMeta?.get("hasOlder")?.jsonPrimitive?.booleanOrNull
+                ?: (nextOffset < totalMessages)
+              if (!isValidHistoryPage(offset, messages.size, totalMessages, nextOffset, hasOlder)) {
+                _historyLoadError.value = "Server returned invalid conversation history pagination data"
+                return@withLock false
+              }
               val pageStartIndex = historyPageStartIndex(totalMessages, offset, messages.size)
               val history = withContext(Dispatchers.Default) {
                 SessionHistoryParser.parse(messages, pageStartIndex)
               }
-              val hasOlder = historyMeta?.get("hasOlder")?.jsonPrimitive?.booleanOrNull == true
-              val nextOffset = historyMeta?.get("nextOffset")?.jsonPrimitive?.intOrNull ?: 0
+              if (generation != historyGeneration) return@withLock false
               _hasOlderHistory.value = hasOlder
               _historyLoadError.value = null
               // Atomic update prevents live events arriving during the HTTP
@@ -554,8 +565,10 @@ class SessionDetailViewModel(
               // the exact same durable page and produces no visible change.
               if (changed || appendOld) cacheCurrentSession()
               return@withLock changed
+            } else {
+              _historyLoadError.value = "Server returned an invalid conversation history response"
+              false
             }
-            false
           }
           is com.example.picompanion.data.api.HttpResult.Failure -> {
             android.util.Log.w(

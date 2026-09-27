@@ -5,7 +5,7 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 ## Data layer (`data/`)
 
 `ui/sessiondetail/MessageInputBar.kt` provides inline suggestions for common slash commands. Commands are sent as ordinary prompt text so custom Pi commands continue to work.
-`SessionDetailViewModel` also renders provider and Pi errors from completed assistant messages in the timeline and clears the sending state.
+`SessionDetailViewModel` also renders provider and Pi errors from completed assistant messages in the timeline and clears the sending state. History loads discard responses from an older connection generation, validate server pagination metadata before changing history state, and show a retryable error for malformed responses.
 
 ### API
 - `data/api/PiServerClient.kt` — the OkHttp-based REST client: capabilities, global and per-session model lists, session CRUD, prompt/RPC POSTs, git endpoints, file browsing, extension-UI responses, worker and daemon endpoints. Parses into the model classes; every response uses `response.use {}` to avoid connection leaks.

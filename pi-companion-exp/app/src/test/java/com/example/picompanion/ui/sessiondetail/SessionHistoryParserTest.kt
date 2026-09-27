@@ -15,6 +15,14 @@ class SessionHistoryParserTest {
   }
 
   @Test
+  fun acceptsConsistentHistoryPaginationAndRejectsImpossibleMetadata() {
+    assertTrue(isValidHistoryPage(offset = 25, pageSize = 40, totalMessages = 100, nextOffset = 65, hasOlder = true))
+    assertEquals(false, isValidHistoryPage(offset = 25, pageSize = 40, totalMessages = 100, nextOffset = 64, hasOlder = true))
+    assertEquals(false, isValidHistoryPage(offset = 25, pageSize = 40, totalMessages = 60, nextOffset = 65, hasOlder = false))
+    assertEquals(false, isValidHistoryPage(offset = 60, pageSize = 40, totalMessages = 100, nextOffset = 100, hasOlder = true))
+  }
+
+  @Test
   fun parsesStandaloneToolRecordsWithoutRole() {
     val messages = Json.parseToJsonElement(
       """[

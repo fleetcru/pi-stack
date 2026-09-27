@@ -133,6 +133,19 @@ internal object SessionHistoryParser {
 internal fun historyPageStartIndex(totalMessages: Int, offset: Int, pageSize: Int): Int =
   (totalMessages - offset - pageSize).coerceAtLeast(0)
 
+/** Reject inconsistent pagination metadata before it can corrupt cached history state. */
+internal fun isValidHistoryPage(
+  offset: Int,
+  pageSize: Int,
+  totalMessages: Int,
+  nextOffset: Int,
+  hasOlder: Boolean,
+): Boolean = offset >= 0 &&
+  pageSize >= 0 &&
+  totalMessages.toLong() >= offset.toLong() + pageSize &&
+  nextOffset.toLong() == offset.toLong() + pageSize &&
+  (!hasOlder || nextOffset < totalMessages)
+
 internal fun historySourceIndex(item: SessionTimelineItem): Int? {
   val sourceId = when (item) {
     is SessionTimelineItem.Chat -> item.sourceId
