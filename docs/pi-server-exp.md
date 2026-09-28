@@ -4,7 +4,7 @@ Go 1.23 HTTP/WebSocket daemon. Spawns Pi CLI processes, speaks strict LF-delimit
 
 ## Entry point
 
-- `cmd/pi-server/main.go` — parses env/log flags, builds `server.Config`, starts the HTTP server, and wires the external relay bridge extension. Interactive foreground starts create a revocable device credential and print a Companion pairing QR for the preferred Tailscale or home-LAN URL; `--pairing-qr=false` disables it. `daemon_unix.go` / `daemon_windows.go` provide background mode.
+- `cmd/pi-server/main.go` — parses env/log flags, builds `server.Config`, starts the HTTP server, and wires the external relay bridge extension. Foreground logs write to `<data-dir>/pi-server.log` by default, leaving an interactive terminal clear for the Companion pairing QR. Interactive foreground starts create a revocable device credential and print a QR for the preferred Tailscale or home-LAN URL; `--pairing-qr=false` disables it. `--pair-then-background` waits for Enter after the QR scan, then relaunches detached without minting another pairing credential. `--log-file` overrides the default path. `daemon_unix.go` / `daemon_windows.go` provide background mode.
 
 ## Server core
 

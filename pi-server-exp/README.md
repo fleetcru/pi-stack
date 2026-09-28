@@ -33,15 +33,16 @@ The executable listens on `0.0.0.0:3142` and prints its local, home-LAN, and Tai
 | `--cwd` | current directory | Default working directory for pi child processes |
 | `--data-dir` | `~/.pi/server` | Data directory for persisted session registry |
 | `--shutdown-timeout` | `10s` | Graceful shutdown timeout |
-| `--log-file` | *(stdout)* | Append log output to a file instead of stdout |
+| `--log-file` | `<data-dir>/pi-server.log` | Append log output to a file instead of the terminal |
 | `--log-format` | `text` | Log format: `text`, `json`, or `logfmt` |
 | `--log-level` | `info` | Log level: `debug`, `info`, `warn`, `error` |
 | `--bg` | `false` | Detach and run in the background (see below) |
 | `--pairing-qr` | `true` | Print a Companion pairing QR when stdout is an interactive terminal |
+| `--pair-then-background` | `false` | Show the QR, wait for Enter, then relaunch detached in the background |
 
 ### Logging
 
-pi-server uses [charmbracelet/log](https://github.com/charmbracelet/log) for colourful, structured output.  On a terminal you get colourised text with timestamps; when stdout is not a TTY (or when writing to a file) ANSI codes are automatically suppressed.
+pi-server writes normal logs to `<data-dir>/pi-server.log` by default, keeping an interactive terminal clear for the Companion pairing QR. Use `--log-file` to choose another path. Log files use plain text with timestamps and no ANSI codes.
 
 **Examples:**
 
@@ -52,8 +53,11 @@ pi-server --log-format json --log-file /var/log/pi-server.log --log-level debug
 # logfmt for machine parsing
 pi-server --log-format logfmt
 
-# Default: colourised text to stdout
+# Default: logs at ~/.pi/server/pi-server.log; terminal shows only the pairing QR
 pi-server
+
+# Scan the QR, press Enter, then leave pi-server running in the background
+pi-server --pair-then-background
 ```
 
 The `PI_SERVER_DEBUG=1` environment variable still works and is equivalent to `--log-level debug`.

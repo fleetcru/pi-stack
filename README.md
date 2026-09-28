@@ -144,7 +144,7 @@ pnpm dev -- --host 0.0.0.0 --port 5174
 
 ### Connect from your phone
 
-The executable and scripts auto-detect your LAN or Tailscale IP. Interactive server starts also print a Companion pairing QR containing a new revocable device credential. Scan it from Companion Settings, or open one of the printed URLs manually:
+The executable and scripts auto-detect your LAN or Tailscale IP. Interactive server starts print a Companion pairing QR containing a new revocable device credential, while normal logs and access URLs go to `~/.pi/server/pi-server.log` by default. Scan the QR from Companion Settings, or read the URLs from that log file.
 
 ```
 Webby: http://192.168.1.100:5174
@@ -157,8 +157,7 @@ For the fastest first-time setup, start the server with the admin page open:
 .\start-exp-server.ps1 -AuthToken "your-secret-token" -OpenAdmin
 ```
 
-Create a trusted device in Pi Server Admin and leave its QR visible. In Pi
-Companion, open Settings and tap **Scan pairing QR**. The app creates the
+Create a trusted device in Pi Server Admin and leave its QR visible. To scan the terminal QR and then detach the server, start it with `--pair-then-background` and press Enter after scanning. In Pi Companion, open Settings and tap **Scan pairing QR**. The app creates the
 server entry, imports the reachable address and credential, and tests the
 connection automatically. On Linux/macOS, use `./start-exp-server.sh
 --open-admin`.

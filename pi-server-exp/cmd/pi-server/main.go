@@ -33,11 +33,12 @@ func main() {
 	flag.StringVar(&cfg.CWD, "cwd", cfg.CWD, "default working directory for pi child processes")
 	flag.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "daemon data directory for persisted session registry")
 	flag.DurationVar(&cfg.ShutdownTimeout, "shutdown-timeout", cfg.ShutdownTimeout, "graceful shutdown timeout")
-	logFile := flag.String("log-file", "", "write log output to a file (appends; default: stdout)")
+	logFile := flag.String("log-file", "", "write log output to a file (appends; default: <data-dir>/pi-server.log)")
 	logFormat := flag.String("log-format", "text", "log format: text, json, or logfmt")
 	logLevel := flag.String("log-level", "info", "log level: debug, info, warn, error")
 	bg := flag.Bool("bg", false, "detach and run in the background (not supported under systemd / Task Scheduler)")
 	pairingQR := flag.Bool("pairing-qr", true, "print a Companion pairing QR in an interactive terminal")
+	pairThenBackground := flag.Bool("pair-then-background", false, "show the pairing QR, wait for Enter, then detach into the background")
 	flag.Parse()
 	flag.Visit(func(f *flag.Flag) {
 		key := map[string]string{
@@ -66,9 +67,12 @@ func main() {
 	}
 
 	// ── Logger setup ───────────────────────────────────────────────────
-	var logOutput io.Writer = os.Stdout
+	if *logFile == "" {
+		*logFile = defaultLogPath(cfg.DataDir)
+	}
+	var logOutput io.Writer
 	var logCloser io.Closer
-	if *logFile != "" {
+	{
 		f, err := openLogFile(*logFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "cannot open log file %q: %v\n", *logFile, err)
@@ -78,7 +82,7 @@ func main() {
 		logCloser = f
 	}
 
-	logger := newLogger(logOutput, formatter, level, *logFile == "" && isTerminal(os.Stdout))
+	logger := newLogger(logOutput, formatter, level, false)
 	slog.SetDefault(slog.New(logger))
 
 	if logCloser != nil {
@@ -132,6 +136,20 @@ func main() {
 	if *pairingQR {
 		// Print before serving so startup logs cannot split and corrupt the QR.
 		printPairingQR(srv, cfg.Addr, logger)
+	}
+	if *pairThenBackground {
+		if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
+			logger.Error("--pair-then-background requires an interactive terminal")
+			os.Exit(1)
+		}
+		fmt.Fprint(os.Stdout, "Press Enter to run pi-server in the background. ")
+		_, _ = fmt.Fscanln(os.Stdin)
+		if err := daemonize(); err != nil {
+			logger.Error("failed to start in background", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("pi-server started in background after pairing")
+		return
 	}
 
 	errCh := make(chan error, 1)
@@ -328,7 +346,7 @@ func openLogFile(path string) (*os.File, error) {
 
 // ── Background / daemon mode ───────────────────────────────────────────
 
-// filteredArgs returns a copy of args with --bg and its value (if any) removed.
+// filteredArgs returns a copy of args without foreground-only startup flags.
 func filteredArgs(args []string) []string {
 	out := make([]string, 0, len(args))
 	skip := false
@@ -337,10 +355,10 @@ func filteredArgs(args []string) []string {
 			skip = false
 			continue
 		}
-		if a == "--bg" {
+		if a == "--bg" || a == "--pair-then-background" {
 			continue
 		}
-		if strings.HasPrefix(a, "--bg=") {
+		if strings.HasPrefix(a, "--bg=") || strings.HasPrefix(a, "--pair-then-background=") {
 			continue
 		}
 		out = append(out, a)
@@ -348,17 +366,28 @@ func filteredArgs(args []string) []string {
 	return out
 }
 
+// defaultLogPath returns the normal foreground log path.
+func defaultLogPath(dataDir string) string {
+	if dataDir == "" {
+		dataDir = defaultDataDir()
+	}
+	return filepath.Join(dataDir, "pi-server.log")
+}
+
 // stderrLogPath returns the path used for background-mode stderr.
 func stderrLogPath() string {
 	dataDir := os.Getenv("PI_SERVER_DATA_DIR")
 	if dataDir == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			dataDir = filepath.Join(home, ".pi", "server")
-		} else {
-			dataDir = ".pi-server"
-		}
+		dataDir = defaultDataDir()
 	}
 	return filepath.Join(dataDir, "stderr.log")
+}
+
+func defaultDataDir() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".pi", "server")
+	}
+	return ".pi-server"
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────

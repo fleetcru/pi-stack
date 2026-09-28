@@ -105,6 +105,11 @@ func TestFilteredArgs(t *testing.T) {
 			input: []string{"--bg=true", "--addr", ":3141"},
 			want:  []string{"--addr", ":3141"},
 		},
+		{
+			name:  "pair then background flag",
+			input: []string{"--pair-then-background", "--addr", ":3141"},
+			want:  []string{"--addr", ":3141"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -209,6 +214,13 @@ func TestLoopbackAddr(t *testing.T) {
 				t.Fatalf("loopbackAddr(%q) = %v, want %v", tc.addr, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestDefaultLogPath(t *testing.T) {
+	path := defaultLogPath("C:/data/pi-server")
+	if !strings.HasSuffix(path, "pi-server.log") {
+		t.Fatalf("expected path ending with pi-server.log, got %q", path)
 	}
 }
 
