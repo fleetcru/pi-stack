@@ -7,6 +7,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.picompanion.data.api.HttpResult
 import com.example.picompanion.di.AppModule
 import com.example.picompanion.data.model.ServerSession
+import com.example.picompanion.data.model.SessionInventoryCache
+import com.example.picompanion.data.model.decodeSessionInventoryCache
 import com.example.picompanion.data.model.visibleGlobalSessions
 import com.example.picompanion.data.model.visibleMachineSessions
 import com.example.picompanion.data.repository.SessionsRepository
@@ -15,6 +17,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -25,6 +29,7 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
   private val client = AppModule.client
   private val settingsDataStore = AppModule.settingsDataStore
   private val repository = SessionsRepository(client, settingsDataStore)
+  private val cacheJson = Json { ignoreUnknownKeys = true }
 
   private val _uiState = MutableStateFlow<SessionsUiState>(SessionsUiState.Loading)
   val uiState: StateFlow<SessionsUiState> = _uiState.asStateFlow()
@@ -65,6 +70,35 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
       }
     }
     refresh()
+  }
+
+  private suspend fun loadDurableSnapshot(serverId: String): SessionInventoryState.Snapshot? =
+    kotlinx.coroutines.withContext(Dispatchers.IO) {
+      val encoded = settingsDataStore.loadSessionInventoryCache() ?: return@withContext null
+      val cached = decodeSessionInventoryCache(encoded, serverId, cacheJson) ?: return@withContext null
+      SessionInventoryState.updateSnapshot(
+        serverId = serverId,
+        activeSessions = cached.activeSessions,
+        machineSessions = cached.machineSessions,
+        globalSessions = cached.globalSessions,
+      )
+    }
+
+  private suspend fun saveDurableSnapshot(serverId: String, snapshot: SessionInventoryState.Snapshot) {
+    kotlinx.coroutines.withContext(Dispatchers.IO) {
+      runCatching {
+        settingsDataStore.saveSessionInventoryCache(
+          cacheJson.encodeToString(
+            SessionInventoryCache(
+              serverId = serverId,
+              activeSessions = snapshot.activeSessions,
+              machineSessions = snapshot.machineSessions,
+              globalSessions = snapshot.globalSessions,
+            ),
+          ),
+        )
+      }
+    }
   }
 
   fun selectTab(tab: SessionTab) {
@@ -129,6 +163,7 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
         activeServerId = server.id
         val inventoryRevision = SessionInventoryState.currentRevision(server.id)
         val cachedSnapshot = SessionInventoryState.snapshot(server.id)
+          ?: loadDurableSnapshot(server.id)
         val existingForServer = existing.takeIf { contentServerId == server.id }
         val baseline = existingForServer ?: cachedSnapshot?.let {
           SessionsUiState.Content(
@@ -162,7 +197,7 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
             activeSessions = activeSessions,
             machineSessions = baseline?.machineSessions ?: snapshot.machineSessions,
             globalSessions = baseline?.globalSessions ?: snapshot.globalSessions,
-            refreshing = false,
+            refreshing = machineDeferred.isActive || globalDeferred.isActive,
           )
           contentServerId = server.id
         }
@@ -179,12 +214,15 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
           is HttpResult.Success -> visibleGlobalSessions(activeSessions, globalResult.value.sessions)
           is HttpResult.Failure -> baseline?.globalSessions ?: emptyList()
         }
-        SessionInventoryState.updateSnapshot(
+        val finalSnapshot = SessionInventoryState.updateSnapshot(
           serverId = server.id,
           activeSessions = activeSessions.takeIf { activeResult is HttpResult.Success },
           machineSessions = machineSessions.takeIf { machineResult is HttpResult.Success },
           globalSessions = globalSessions.takeIf { globalResult is HttpResult.Success },
         )
+        if (activeResult is HttpResult.Success || machineResult is HttpResult.Success || globalResult is HttpResult.Success) {
+          saveDurableSnapshot(server.id, finalSnapshot)
+        }
 
         val completeSuccess =
           activeResult is HttpResult.Success &&

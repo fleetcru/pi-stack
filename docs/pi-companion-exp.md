@@ -50,7 +50,7 @@ Android client: Kotlin, Jetpack Compose, DataStore, OkHttp, Hilt. Uses WebSocket
 - `MainScreen.kt`, `ShellScreen.kt` — dashboard composition and the app shell. `ShellScreen` places the floating bottom navigation in a `Scaffold` bottom-bar slot and applies its measured padding to every tab, so lists and controls remain above the bar.
 
 ### Sessions list (`ui/sessions/`)
-- `SessionsViewModel.kt` / `SessionsScreen.kt` — inventory listing with grouping. The ViewModel shares a process-memory snapshot with Home, paints that snapshot before a loading spinner, publishes the newest 200 active sessions before machine discovery finishes, and clears the refresh indicator as soon as that list arrives. Each session list keeps 16 dp of scrollable space below its final row so cards do not touch the floating bottom navigation.
+- `SessionsViewModel.kt` / `SessionsScreen.kt` — inventory listing with grouping. The ViewModel shares a process-memory snapshot with Home and persists the latest successful inventory in DataStore, carrying the originating server ID with it. A cold launch paints this cache only when it matches the active server, then refreshes in the background. The primary inventory continues to include attached remote sessions and appears as soon as it returns, before slower machine/global discovery finishes. Each session list keeps 16 dp of scrollable space below its final row so cards do not touch the floating bottom navigation.
 - `SessionGrouping.kt` — sorts/filters sessions into groups (active, idle, remote, machine).
 - `SessionInventoryState.kt` — process-memory singleton coordinating inventory revisions, metadata patches, and the latest active/machine/global snapshot across Home and Sessions.
 - `SessionListItem.kt` — row composable.

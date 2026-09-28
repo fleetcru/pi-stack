@@ -41,6 +41,7 @@ class SettingsDataStore(private val context: Context) {
     val DEFAULT_PROJECT_ROOT = stringPreferencesKey("default_project_root")
     val LAST_SESSION_SERVER_ID = stringPreferencesKey("last_session_server_id")
     val LAST_SESSION_ID = stringPreferencesKey("last_session_id")
+    val SESSION_INVENTORY_CACHE = stringPreferencesKey("session_inventory_cache")
   }
 
   private val defaultSettings = AppSettings()
@@ -118,6 +119,13 @@ class SettingsDataStore(private val context: Context) {
       it[Keys.SERVERS_JSON] = json.encodeToString(servers)
       it[Keys.TOKENS_MIGRATED] = true
     }
+  }
+
+  suspend fun loadSessionInventoryCache(): String? =
+    context.dataStore.data.first()[Keys.SESSION_INVENTORY_CACHE]
+
+  suspend fun saveSessionInventoryCache(encodedCache: String) {
+    context.dataStore.edit { it[Keys.SESSION_INVENTORY_CACHE] = encodedCache }
   }
 
   suspend fun setActiveServer(id: String) {
