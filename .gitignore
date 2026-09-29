@@ -5,6 +5,8 @@
 *.err
 *.out
 nul
+# Written by the daemon when it runs with cwd inside the source tree.
+pi-server-exp/internal/server/distributed-runs.json
 .playwright-mcp/
 # Auto-created per-session git worktrees (pi-server createWorktree.enabled)
 .pi-worktrees/

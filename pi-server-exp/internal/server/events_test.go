@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -38,6 +39,45 @@ func TestEventHistoryDefaultsAgree(t *testing.T) {
 			t.Fatalf("close journal: %v", err)
 		}
 	}
+}
+
+// TestDispatchDoesNotRaceUnsubscribe is a regression guard for a
+// send-on-closed-channel panic. dispatch() used to copy the subscriber set
+// under the write lock, release the lock, then send. unsubscribe() closes a
+// channel under that same lock, so a concurrent unsubscribe could close a
+// channel that dispatch was about to send on. The panic surfaced under
+// Windows CI when Start() raced a subscriber detaching.
+func TestDispatchDoesNotRaceUnsubscribe(t *testing.T) {
+	p := NewPiProcess(SessionSpec{ID: "subscribe-race", CWD: t.TempDir()}, Config{DataDir: t.TempDir()}, testLogger())
+	defer func() {
+		if p.journal != nil {
+			_ = p.journal.close()
+		}
+	}()
+
+	const iterations = 300
+	done := make(chan struct{})
+
+	// Producer: continuously emit events while subscribers churn.
+	go func() {
+		defer close(done)
+		for i := 0; i < iterations; i++ {
+			p.dispatch(RPCEvent{"type": "message_update", "delta": "x"})
+			p.dispatchRuntimeState(RPCEvent{
+				"type":          "runtime_state",
+				"runtimeState":  "working",
+				"runtimeReason": "assistant",
+			})
+		}
+	}()
+
+	// Consumer churn: subscribe and immediately unsubscribe.
+	for i := 0; i < iterations; i++ {
+		_, unsubscribe := p.Subscribe()
+		runtime.Gosched()
+		unsubscribe()
+	}
+	<-done
 }
 
 func TestEventHistoryRespectsByteBudget(t *testing.T) {

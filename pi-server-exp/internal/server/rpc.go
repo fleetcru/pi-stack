@@ -563,15 +563,13 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 	out := eventWithID(ev, id)
 	out["_daemonTaskId"] = p.taskID
 	out["_daemonRunId"] = p.runID
-	// Copy subscriber set under the write lock to prevent a subscriber from
-	// being added between the write unlock and read lock, which could cause
-	// it to miss the event in its replay window.
-	subs := make([]chan RPCEvent, 0, len(p.subs))
+	// Deliver while holding the write lock. unsubscribe() removes a channel
+	// from p.subs and closes it under this same lock, so copying the set,
+	// releasing, and then sending would race a concurrent unsubscribe and
+	// panic with "send on closed channel". Sends are non-blocking (the
+	// `default` branch drops for a slow subscriber), so holding the lock cannot
+	// stall on a blocked reader.
 	for ch := range p.subs {
-		subs = append(subs, ch)
-	}
-	p.mu.Unlock()
-	for _, ch := range subs {
 		select {
 		case ch <- out:
 		default:
@@ -579,6 +577,7 @@ func (p *PiProcess) dispatch(ev RPCEvent) {
 			p.logger.Warn("dropping event for slow subscriber")
 		}
 	}
+	p.mu.Unlock()
 	// Emit a synthetic runtime_state event when the process state transitions.
 	// This lets clients derive live status from WS events without HTTP polling.
 	if stateChanged {
@@ -648,12 +647,10 @@ func (p *PiProcess) dispatchRuntimeState(ev RPCEvent) {
 		}
 	}
 	out := eventWithID(ev, id)
-	subs := make([]chan RPCEvent, 0, len(p.subs))
+	// Deliver under the write lock for the same reason as the branch above:
+	// unsubscribe() closes channels under this lock, so sending after
+	// releasing it can race and panic.
 	for ch := range p.subs {
-		subs = append(subs, ch)
-	}
-	p.mu.Unlock()
-	for _, ch := range subs {
 		select {
 		case ch <- out:
 		default:
@@ -661,6 +658,7 @@ func (p *PiProcess) dispatchRuntimeState(ev RPCEvent) {
 			p.logger.Warn("dropping runtime state event for slow subscriber")
 		}
 	}
+	p.mu.Unlock()
 }
 
 func (p *PiProcess) setRuntimeLocked(state, reason, detail string) {
