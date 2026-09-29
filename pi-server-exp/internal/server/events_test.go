@@ -6,6 +6,40 @@ import (
 	"time"
 )
 
+// TestEventHistoryDefaultsAgree pins the two places that define the event-ring
+// bounds to the same values. ConfigFromEnv seeds Config, while NewPiProcess
+// falls back for a hand-built Config; if those drift, a session created through
+// one path retains a different amount of history than the other, and the
+// documented defaults in README stop being true.
+func TestEventHistoryDefaultsAgree(t *testing.T) {
+	t.Setenv("PI_SERVER_DATA_DIR", t.TempDir())
+	t.Setenv("PI_SERVER_EVENT_HISTORY_MAX", "")
+	t.Setenv("PI_SERVER_EVENT_HISTORY_BYTES", "")
+
+	cfg := ConfigFromEnv()
+	if cfg.EventHistoryMax != DefaultEventHistoryMax {
+		t.Fatalf("ConfigFromEnv max = %d, want %d", cfg.EventHistoryMax, DefaultEventHistoryMax)
+	}
+	if cfg.EventHistoryBytes != DefaultEventHistoryBytes {
+		t.Fatalf("ConfigFromEnv bytes = %d, want %d", cfg.EventHistoryBytes, DefaultEventHistoryBytes)
+	}
+
+	// A zero-value Config must fall back to exactly the same bounds.
+	p := NewPiProcess(SessionSpec{ID: "defaults", CWD: t.TempDir()}, Config{DataDir: t.TempDir()}, testLogger())
+	if p.eventMax != DefaultEventHistoryMax {
+		t.Fatalf("NewPiProcess max = %d, want %d", p.eventMax, DefaultEventHistoryMax)
+	}
+	if p.eventMaxBytes != DefaultEventHistoryBytes {
+		t.Fatalf("NewPiProcess bytes = %d, want %d", p.eventMaxBytes, DefaultEventHistoryBytes)
+	}
+	// Release the journal handle so Windows can remove the temp directory.
+	if p.journal != nil {
+		if err := p.journal.close(); err != nil {
+			t.Fatalf("close journal: %v", err)
+		}
+	}
+}
+
 func TestEventHistoryRespectsByteBudget(t *testing.T) {
 	p := NewPiProcess(SessionSpec{ID: "s", CWD: "."}, Config{EventHistoryMax: 10, EventHistoryBytes: 100}, testLogger())
 	p.dispatch(RPCEvent{"type": "one", "data": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})

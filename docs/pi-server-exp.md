@@ -24,7 +24,8 @@ Go 1.23 HTTP/WebSocket daemon. Spawns Pi CLI processes, speaks strict LF-delimit
 
 ## RPC to Pi processes
 
-- `rpc.go` — the heart of the daemon. `PiProcess` wraps one Pi child process: writes JSONL commands to stdin, reads events from stdout, assigns each event a monotonic uint64 ID, and keeps a ring buffer (count + byte bounded) so late WebSocket subscribers can replay. Also handles request/response correlation for commands that expect a reply.
+- `config.go` — `Config`, `ConfigFromEnv`, admin overrides, and the shared `DefaultEventHistoryMax` (100) / `DefaultEventHistoryBytes` (2 MiB) constants. Those constants are the single source of truth for the event-ring bounds: `ConfigFromEnv` seeds them into `Config`, and `NewPiProcess` falls back to them for a hand-built `Config`, so the two paths cannot drift.
+- `rpc.go` — the heart of the daemon. `PiProcess` wraps one Pi child process: writes JSONL commands to stdin, reads events from stdout, assigns each event a monotonic uint64 ID, and keeps a ring buffer (count + byte bounded) so late WebSocket subscribers can replay. Also handles request/response correlation for commands that expect a reply. `Close` is terminal (sets `closed`, closes the journal); `Stop` halts the child but leaves the process reusable for the idle reaper.
 - `rpc_handlers.go` — HTTP handlers for the generic RPC surface: `POST/GET /v1/sessions/{id}/rpc`, prompt delivery, raw send.
 - `rpc_actions.go` — convenience action dispatch (`prompt`, `abort`, model/thinking changes, extension UI responses) mapping REST bodies into RPC commands, plus local-run admission checks.
 - `rpc_catalog.go` — publishes the list of supported RPC actions for clients.
@@ -45,7 +46,12 @@ Go 1.23 HTTP/WebSocket daemon. Spawns Pi CLI processes, speaks strict LF-delimit
 - `session_bridge.go` — maps managed sessions onto the native Pi session directory so inventory discovery can find them.
 - `session_transport.go` — abstraction over where a session's events come from (local process vs relay), exposing a uniform `SessionTransport` interface.
 - `metadata_handlers.go` — `PATCH`-style metadata updates on sessions (titles, pinned flags, worktree branch).
-- `capacity.go` — per-request session-count enforcement against `PI_SERVER_MAX_SESSIONS`.
+- `capacity.go` — per-request session-count enforcement against `PI_SERVER_MAX_SESSIONS`. When the limit is reached it evicts the longest-idle eligible process via the idle reaper before failing, so a new session displaces a dormant one instead of being rejected.
+- `idle_reaper.go` — reclaims memory from dormant sessions. An idle Pi RPC child holds roughly 200 MB RSS whether or not it is working, so a hub with many open sessions pays for every one of them. The reaper stops children idle longer than `PI_SERVER_IDLE_PROCESS_TIMEOUT` (default 20m, non-positive disables) on a 30s sweep, keeping the `SessionSpec` and the durable event journal so the next prompt transparently relaunches Pi from the same spec.
+
+  `PiProcess.Stop()` is deliberately distinct from `PiProcess.Close()`. `Close` is terminal: it sets `closed`, fails every later `Start()` with "session closed", and closes the journal. `Stop` clears only the OS child, so the session stays usable. A `reaping` flag makes `wait()` skip the restart path, otherwise a session with `Restart=true` would respawn the moment it was reclaimed; `Start()` resets that flag and the restart budget.
+
+  A process is eligible only when it is running, not closed, not already reaping, in runtime state `idle`, the idle duration has elapsed, `wsSubscribers == 0`, `pendingExtensionUiRequest == nil`, and `admissionHeld == false`. Each guard prevents losing something live: a streaming client, an unanswered extension dialog, or a checked-out run slot. Under capacity pressure `reapOldestIdle` may evict before the full timeout, but never inside a 60s grace period, so an in-flight prompt is not the victim.
 
 ## Admission and scheduling
 

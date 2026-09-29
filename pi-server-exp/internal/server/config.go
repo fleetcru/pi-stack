@@ -11,6 +11,15 @@ import (
 	"time"
 )
 
+// Default bounds for the per-session event ring. These are the single source of
+// truth: ConfigFromEnv seeds them into Config, and NewPiProcess falls back to
+// them when handed a zero-value Config (hand-built configs and tests). Keeping
+// one constant per bound prevents the two sites from drifting apart.
+const (
+	DefaultEventHistoryMax   = 100
+	DefaultEventHistoryBytes = 2 << 20 // 2 MiB
+)
+
 type Config struct {
 	Addr                     string
 	PiBinary                 string
@@ -36,6 +45,7 @@ type Config struct {
 	RestartBackoff           time.Duration
 	EventHistoryMax          int
 	EventHistoryBytes        int
+	IdleProcessTimeout       time.Duration
 	PerformanceInterval      time.Duration
 	PerformanceHistoryMax    int
 	EventJournalSyncInterval time.Duration
@@ -106,8 +116,9 @@ func ConfigFromEnv() Config {
 		DistributedRunTimeout:    envDuration("PI_SERVER_DISTRIBUTED_RUN_TIMEOUT", 2*time.Hour),
 		RestartMax:               envInt("PI_SERVER_RESTART_MAX", 5),
 		RestartBackoff:           envDuration("PI_SERVER_RESTART_BACKOFF", time.Second),
-		EventHistoryMax:          envInt("PI_SERVER_EVENT_HISTORY_MAX", 100),
-		EventHistoryBytes:        envInt("PI_SERVER_EVENT_HISTORY_BYTES", 2<<20),
+		EventHistoryMax:          envInt("PI_SERVER_EVENT_HISTORY_MAX", DefaultEventHistoryMax),
+		EventHistoryBytes:        envInt("PI_SERVER_EVENT_HISTORY_BYTES", DefaultEventHistoryBytes),
+		IdleProcessTimeout:       envDuration("PI_SERVER_IDLE_PROCESS_TIMEOUT", 20*time.Minute),
 		PerformanceInterval:      envDuration("PI_SERVER_PERFORMANCE_INTERVAL", 15*time.Second),
 		PerformanceHistoryMax:    envInt("PI_SERVER_PERFORMANCE_HISTORY_MAX", 240),
 		EventJournalSyncInterval: envDuration("PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL", 0),
@@ -145,6 +156,7 @@ func markEnvironmentSources(sources map[string]string) {
 		"maxQueuedRuns": "PI_SERVER_MAX_QUEUED_RUNS", "distributedRunTimeout": "PI_SERVER_DISTRIBUTED_RUN_TIMEOUT",
 		"restartMax": "PI_SERVER_RESTART_MAX", "restartBackoff": "PI_SERVER_RESTART_BACKOFF",
 		"eventHistoryMax": "PI_SERVER_EVENT_HISTORY_MAX", "eventHistoryBytes": "PI_SERVER_EVENT_HISTORY_BYTES", "eventJournalSyncInterval": "PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL",
+		"idleProcessTimeout": "PI_SERVER_IDLE_PROCESS_TIMEOUT",
 		"maxWatches": "PI_SERVER_MAX_WATCHES", "debug": "PI_SERVER_DEBUG",
 	}
 	for key, envKey := range keys {

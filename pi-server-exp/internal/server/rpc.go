@@ -63,6 +63,9 @@ type PiProcess struct {
 	pendingUIRequest RPCEvent
 	lastEventAt      time.Time
 	droppedEvents    uint64
+	// reaping marks a deliberate Stop() so wait() does not treat the child's
+	// exit as a crash and spend the restart budget relaunching it.
+	reaping bool
 	// taskID is stable for the session; runID changes for each agent turn.
 	taskID string
 	runID  string
@@ -75,13 +78,15 @@ type PiProcess struct {
 }
 
 func NewPiProcess(spec SessionSpec, cfg Config, logger *slog.Logger) *PiProcess {
+	// Fall back to the shared defaults so a hand-built Config behaves the same
+	// as one produced by ConfigFromEnv.
 	eventMax := cfg.EventHistoryMax
 	if eventMax <= 0 {
-		eventMax = 200
+		eventMax = DefaultEventHistoryMax
 	}
 	eventMaxBytes := cfg.EventHistoryBytes
 	if eventMaxBytes <= 0 {
-		eventMaxBytes = 8 << 20
+		eventMaxBytes = DefaultEventHistoryBytes
 	}
 	journal, restored, lastID, err := openEventJournal(cfg.DataDir, spec.ID, cfg.EventJournalSyncInterval)
 	if err != nil {
@@ -156,6 +161,11 @@ func (p *PiProcess) Start(ctx context.Context) error {
 		return err
 	}
 	p.cmd, p.stdin, p.running, p.done = cmd, stdin, true, make(chan struct{})
+	// A successful (re)launch resets the restart budget. Without this, a session
+	// that was reaped idle after earlier crashes would resume with an exhausted
+	// budget and never restart again on a genuine failure.
+	p.restarts = 0
+	p.reaping = false
 	p.setRuntimeLocked("idle", "process", "Ready")
 	idleEvent := p.runtimeStateEventLocked()
 	p.readers.Add(2)
@@ -421,10 +431,15 @@ func (p *PiProcess) wait(cmd *exec.Cmd) {
 	var stateEvent RPCEvent
 	if p.cmd == cmd {
 		p.running = false
-		if p.spec.Restart && !p.closed && p.restarts < p.cfg.RestartMax {
+		switch {
+		case p.reaping:
+			// A deliberate stop already published its own runtime state. Leaving
+			// the state and restart budget untouched is what keeps the process
+			// reusable instead of self-resurrecting.
+		case p.spec.Restart && !p.closed && p.restarts < p.cfg.RestartMax:
 			p.setRuntimeLocked("reconnecting", "process", "Restarting Pi")
 			stateEvent = p.runtimeStateEventLocked()
-		} else {
+		default:
 			p.setRuntimeLocked("stopped", "process", "Pi process stopped")
 			stateEvent = p.runtimeStateEventLocked()
 		}
@@ -439,7 +454,7 @@ func (p *PiProcess) wait(cmd *exec.Cmd) {
 		delete(p.waiters, id)
 		w.ch <- RPCEvent{"type": "response", "success": false, "error": "pi process exited"}
 	}
-	restart := p.spec.Restart && !p.closed && p.restarts < p.cfg.RestartMax
+	restart := p.spec.Restart && !p.closed && !p.reaping && p.restarts < p.cfg.RestartMax
 	if restart {
 		p.restarts++
 	}

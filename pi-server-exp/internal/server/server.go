@@ -64,6 +64,7 @@ type Server struct {
 	startedAt                 time.Time
 	admin                     *adminState
 	perf                      *performanceCollector
+	reaper                    *idleReaper
 }
 
 func New(cfg Config, logger *slog.Logger) *Server {
@@ -107,6 +108,13 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		perfInterval = defaultPerformanceInterval
 	}
 	s.perf = newPerformanceCollector(perfInterval, cfg.PerformanceHistoryMax, s.sessions, s.admission, s.metrics)
+	idleTimeout := cfg.IdleProcessTimeout
+	if idleTimeout == 0 {
+		// An unset duration (zero value) means "use the default". A negative
+		// value is an explicit opt-out handled inside newIdleReaper.
+		idleTimeout = DefaultIdleProcessTimeout
+	}
+	s.reaper = newIdleReaper(idleTimeout, s.sessions, logger)
 	if len(s.resolvedRoots) == 0 {
 		s.resolvedRoots = resolveAllowedRoots([]string{cfg.CWD})
 	}
@@ -160,6 +168,7 @@ func New(cfg Config, logger *slog.Logger) *Server {
 	s.restoreDistributedRuns()
 	s.startWorkerHeartbeats()
 	s.perf.start(s.stopHeartbeat)
+	s.reaper.start()
 	s.startAdminConfigWatch()
 	s.upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
@@ -219,6 +228,7 @@ func (s *Server) maxSessionsAtomicValue() int64 {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.shutdownOnce.Do(func() {
 		close(s.stopHeartbeat)
+		s.reaper.shutdown()
 		s.stopAdminConfigWatch()
 		s.stopWatchers()
 		s.sessions.CloseAll(ctx)

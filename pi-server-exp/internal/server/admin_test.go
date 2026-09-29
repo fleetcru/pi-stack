@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // chdir changes the process working directory and restores it when the test
@@ -78,6 +79,69 @@ func TestAdminEmptyCWDFallsBackToLaunchDir(t *testing.T) {
 	if cfg.AdminConfigError != "" {
 		t.Fatalf("unexpected admin config error: %s", cfg.AdminConfigError)
 	}
+}
+
+func TestIdleProcessTimeoutConfig(t *testing.T) {
+	t.Run("default is twenty minutes", func(t *testing.T) {
+		t.Setenv("PI_SERVER_DATA_DIR", t.TempDir())
+		t.Setenv("PI_SERVER_IDLE_PROCESS_TIMEOUT", "")
+		cfg := ConfigFromEnv()
+		if cfg.IdleProcessTimeout != 20*time.Minute {
+			t.Fatalf("default = %v, want 20m", cfg.IdleProcessTimeout)
+		}
+		if got := cfg.ConfigSources["idleProcessTimeout"]; got != "default" {
+			t.Fatalf("source = %q, want default", got)
+		}
+	})
+
+	t.Run("environment overrides the default", func(t *testing.T) {
+		t.Setenv("PI_SERVER_DATA_DIR", t.TempDir())
+		t.Setenv("PI_SERVER_IDLE_PROCESS_TIMEOUT", "45m")
+		cfg := ConfigFromEnv()
+		if cfg.IdleProcessTimeout != 45*time.Minute {
+			t.Fatalf("value = %v, want 45m", cfg.IdleProcessTimeout)
+		}
+		if got := cfg.ConfigSources["idleProcessTimeout"]; got != "environment" {
+			t.Fatalf("source = %q, want environment", got)
+		}
+	})
+
+	t.Run("a bare number is read as seconds", func(t *testing.T) {
+		t.Setenv("PI_SERVER_DATA_DIR", t.TempDir())
+		t.Setenv("PI_SERVER_IDLE_PROCESS_TIMEOUT", "900")
+		cfg := ConfigFromEnv()
+		if cfg.IdleProcessTimeout != 15*time.Minute {
+			t.Fatalf("value = %v, want 15m", cfg.IdleProcessTimeout)
+		}
+	})
+
+	t.Run("admin settings round-trip the timeout", func(t *testing.T) {
+		dataDir := t.TempDir()
+		t.Setenv("PI_SERVER_DATA_DIR", dataDir)
+		base := ConfigFromEnv()
+		settings := settingsFromConfig(base)
+		settings.IdleProcessTimeout = "7m"
+		if err := writeJSONAtomic(filepath.Join(dataDir, adminConfigFilename), settings); err != nil {
+			t.Fatal(err)
+		}
+		loaded := ConfigFromEnv()
+		if loaded.IdleProcessTimeout != 7*time.Minute {
+			t.Fatalf("admin value = %v, want 7m", loaded.IdleProcessTimeout)
+		}
+		if got := loaded.ConfigSources["idleProcessTimeout"]; got != "admin" {
+			t.Fatalf("source = %q, want admin", got)
+		}
+	})
+
+	t.Run("a negative duration is rejected by admin settings", func(t *testing.T) {
+		base := ConfigFromEnv()
+		settings := settingsFromConfig(base)
+		settings.IdleProcessTimeout = "-1m"
+		validated := base
+		if err := settings.apply(&validated); err == nil {
+			t.Fatal("expected a negative duration to be rejected")
+		}
+	})
 }
 
 func TestAdminSettingsOverrideEnvironment(t *testing.T) {

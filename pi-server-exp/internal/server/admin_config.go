@@ -38,6 +38,7 @@ type AdminSettings struct {
 	RestartBackoff        string   `json:"restartBackoff"`
 	EventHistoryMax       int      `json:"eventHistoryMax"`
 	EventHistoryBytes     int      `json:"eventHistoryBytes"`
+	IdleProcessTimeout    string   `json:"idleProcessTimeout"`
 	MaxWatches            int      `json:"maxWatches"`
 	Debug                 bool     `json:"debug"`
 }
@@ -52,6 +53,7 @@ func settingsFromConfig(cfg Config) AdminSettings {
 		MaxRunsPerSession: cfg.MaxRunsPerSession, MaxRunsPerWorker: cfg.MaxRunsPerWorker, MaxQueuedRuns: cfg.MaxQueuedRuns,
 		DistributedRunTimeout: cfg.DistributedRunTimeout.String(), RestartMax: cfg.RestartMax, RestartBackoff: cfg.RestartBackoff.String(),
 		EventHistoryMax: cfg.EventHistoryMax, EventHistoryBytes: cfg.EventHistoryBytes, MaxWatches: cfg.MaxWatches,
+		IdleProcessTimeout: cfg.IdleProcessTimeout.String(),
 		Debug: cfg.LogLevel <= -4,
 	}
 }
@@ -91,6 +93,7 @@ func (a AdminSettings) apply(cfg *Config) error {
 	cfg.MaxSessions, cfg.MaxActiveRuns, cfg.MaxRunsPerSession, cfg.MaxRunsPerWorker, cfg.MaxQueuedRuns = a.MaxSessions, a.MaxActiveRuns, a.MaxRunsPerSession, a.MaxRunsPerWorker, a.MaxQueuedRuns
 	cfg.DistributedRunTimeout, cfg.RestartMax, cfg.RestartBackoff = parsed[5], a.RestartMax, parsed[6]
 	cfg.EventHistoryMax, cfg.EventHistoryBytes, cfg.MaxWatches = a.EventHistoryMax, a.EventHistoryBytes, a.MaxWatches
+	cfg.IdleProcessTimeout = parsed[7]
 	if a.Debug {
 		cfg.LogLevel = -4
 	} else {
@@ -99,12 +102,12 @@ func (a AdminSettings) apply(cfg *Config) error {
 	return nil
 }
 
-func (a AdminSettings) parsedDurations() ([7]time.Duration, error) {
-	var out [7]time.Duration
+func (a AdminSettings) parsedDurations() ([8]time.Duration, error) {
+	var out [8]time.Duration
 	values := []struct{ name, value string }{
 		{"shutdownTimeout", a.ShutdownTimeout}, {"requestTimeout", a.RequestTimeout}, {"readTimeout", a.ReadTimeout},
 		{"writeTimeout", a.WriteTimeout}, {"idleTimeout", a.IdleTimeout}, {"distributedRunTimeout", a.DistributedRunTimeout},
-		{"restartBackoff", a.RestartBackoff},
+		{"restartBackoff", a.RestartBackoff}, {"idleProcessTimeout", a.IdleProcessTimeout},
 	}
 	for i, value := range values {
 		d, err := time.ParseDuration(value.value)
@@ -157,7 +160,7 @@ var adminSettingKeys = []string{
 	"addr", "piBinary", "extensions", "cwd", "dataDir", "allowedOrigins", "allowedRoots", "allowedWorkerHosts",
 	"shutdownTimeout", "requestTimeout", "readTimeout", "writeTimeout", "idleTimeout", "maxSessions", "maxActiveRuns",
 	"maxRunsPerSession", "maxRunsPerWorker", "maxQueuedRuns", "distributedRunTimeout", "restartMax", "restartBackoff",
-	"eventHistoryMax", "eventHistoryBytes", "maxWatches", "debug",
+	"eventHistoryMax", "eventHistoryBytes", "idleProcessTimeout", "maxWatches", "debug",
 }
 
 func cloneStrings(values []string) []string { return append([]string(nil), values...) }

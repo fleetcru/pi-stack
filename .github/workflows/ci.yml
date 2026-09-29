@@ -1,5 +1,15 @@
 name: CI
 
+# This workflow covers four independent projects. GitHub has no per-job path
+# filters, so a single workflow-level `paths` list would run every job when any
+# one project changed. Instead the `changes` job computes which project
+# directories were touched and each build job gates on its own output.
+#
+# The workflow-level filter below is only a cheap pre-filter: it stops the
+# workflow from starting at all when nothing relevant changed. Correctness comes
+# from the per-job `if:` gates, so a false positive here costs one lightweight
+# job rather than a full build.
+
 on:
   push:
     branches:
@@ -29,10 +39,101 @@ permissions:
   contents: read
 
 jobs:
+  # Computes which project directories changed. Uses plain `git diff` rather
+  # than a third-party paths-filter action to avoid adding a new supply-chain
+  # dependency to a release-capable repository.
+  changes:
+    name: Detect changed projects
+    runs-on: ubuntu-latest
+    outputs:
+      webby: ${{ steps.filter.outputs.webby }}
+      desktop: ${{ steps.filter.outputs.desktop }}
+      android: ${{ steps.filter.outputs.android }}
+      installers: ${{ steps.filter.outputs.installers }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # A two-commit diff needs history; fetch_depth 0 is required for the
+          # before/after comparison on push and for the PR merge-base.
+          fetch-depth: 0
+
+      - name: Determine changed paths
+        id: filter
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # A manual dispatch intentionally runs everything.
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "manual dispatch: enabling all projects"
+            for name in webby desktop android installers; do
+              echo "$name=true" >> "$GITHUB_OUTPUT"
+            done
+            exit 0
+          fi
+
+          # Resolve the base commit. PRs diff against the merge base; pushes
+          # diff the pushed range. A new branch or force-push reports an
+          # all-zero `before`, in which case fall back to the parent commit.
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$BASE_SHA"
+            head="$HEAD_SHA"
+          else
+            base="$BEFORE_SHA"
+            head="$HEAD_SHA"
+            case "$base" in
+              '' | 0000000000000000000000000000000000000000)
+                base=$(git rev-parse "${head}^" 2>/dev/null || echo "")
+                ;;
+            esac
+          fi
+
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "::warning::cannot resolve base commit; enabling all projects"
+            for name in webby desktop android installers; do
+              echo "$name=true" >> "$GITHUB_OUTPUT"
+            done
+            exit 0
+          fi
+
+          changed=$(git diff --name-only "$base" "$head")
+          echo "Changed files:"
+          echo "$changed"
+
+          # Shared UI sources feed both Webby and Desktop, so a shared change
+          # must exercise both frontends.
+          webby=false
+          desktop=false
+          if echo "$changed" | grep -qE '^(pi-webby-exp/|pi-webby-shared/)'; then
+            webby=true
+          fi
+          if echo "$changed" | grep -qE '^(pi-desktop-app/|pi-webby-shared/)'; then
+            desktop=true
+          fi
+          android=false
+          if echo "$changed" | grep -q '^pi-companion-exp/'; then
+            android=true
+          fi
+          installers=false
+          if echo "$changed" | grep -qE '^(install-server[^/]*\.ps1|windows-installer-common\.ps1|test-windows-installer\.ps1)'; then
+            installers=true
+          fi
+
+          echo "webby=$webby" >> "$GITHUB_OUTPUT"
+          echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
+          echo "android=$android" >> "$GITHUB_OUTPUT"
+          echo "installers=$installers" >> "$GITHUB_OUTPUT"
+
   webby:
     name: Webby — typecheck, lint, test, build
-    # On push/PR the paths filter above already scopes this workflow.
-    # For manual dispatch both projects always run.
+    needs: changes
+    if: needs.changes.outputs.webby == 'true'
     defaults:
       run:
         working-directory: pi-webby-exp
@@ -84,6 +185,8 @@ jobs:
 
   desktop:
     name: Desktop — typecheck, lint, build, Rust check
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     defaults:
       run:
         working-directory: pi-desktop-app
@@ -150,6 +253,8 @@ jobs:
 
   windows-installers:
     name: Windows installer tests
+    needs: changes
+    if: needs.changes.outputs.installers == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -160,6 +265,8 @@ jobs:
 
   android:
     name: Android — compile, test & release build
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
     defaults:
       run:
         working-directory: pi-companion-exp

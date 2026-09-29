@@ -90,9 +90,21 @@ Version tags are immutable release identifiers. Never move, overwrite, or reuse 
 
 ### pi-server releases
 
+## GitHub Actions workflow triggers
+
+Four workflows live in `.github/workflows/`: `ci.yml` (Webby, Desktop, Android, Windows installers), `build-server.yml`, `build-tray.yml`, and the manual `build-android.yml` fallback.
+
+**Never combine `tags` with `paths` in the same `push` trigger.** GitHub ANDs them, so `tags: ['server-v*']` plus `paths: ['pi-server-exp/**']` only runs when a tag push also modifies that folder. Release tags point at already-merged commits, so a tag push changes no files and the build is silently skipped. This affected every tag in this repository until it was fixed: no workflow had ever run on a tag push. Branch-push path scoping therefore lives in a `changes` job whose output gates the build jobs, and tag pushes bypass it because `changes` is skipped for them.
+
+Gate jobs on a skipped `needs:` dependency with `!cancelled() && (needs.changes.result == 'skipped' || needs.changes.outputs.<x> == 'true')`. A plain `needs.X.outputs.<x> == 'true'` fails because a skipped job produces empty outputs.
+
+`ci.yml` has one workflow-level `paths` list covering all four projects, so it starts only when a relevant folder changes. GitHub has no per-job path filters, so a `changes` job computes which project directories were touched and each build job gates on its own output. `pi-webby-shared/**` deliberately enables both the Webby and Desktop jobs, matching the component-sync rule. Change detection uses `git diff` rather than a third-party paths-filter action to avoid adding a supply-chain dependency to a release-capable repository.
+
+When editing a `changes` job, remember that `github.event.before` is all zeros for a new branch or force push; fall back to the parent commit rather than emitting a false negative that silently skips a build.
+
 `.github/workflows/build-server.yml` publishes pi-server on two channels. Both publish the same assets: `pi-server-linux-amd64`, `pi-server-windows-amd64.exe`, and `SHA256SUMS`.
 
-- **Development (`server-dev`)** is the rolling default. Every push to `main` that touches `pi-server-exp/**` replaces the binaries on the fixed `server-dev` prerelease. The tag never moves; only the assets and notes change.
+- **Development (`server-dev`)** is the rolling default. Every push to `main` that touches `pi-server-exp/**` replaces the binaries on the fixed `server-dev` prerelease. The tag never moves; only the assets and notes change. The `pi-server-exp/**` restriction is enforced by the workflow's `changes` job, not a workflow-level `paths` filter, because that filter would also suppress `server-v*` tag builds.
 - **Stable (`server-v<semver>`)** is immutable and created only from an explicit tag push, plus manual `workflow_dispatch` runs which always produce a uniquely numbered prerelease.
 
 Race handling differs from the Companion dev channel because server assets are requested by exact filename, so overlapping runs cannot coexist under unique names. The `publish-dev` job uses `concurrency: server-dev-release` with `cancel-in-progress: true` to serialize runs, and records the publishing run number in an HTML comment (`<!-- build:N -->`) in the release body. A run whose number is not greater than the recorded one exits before uploading, so a slow pipeline can never overwrite a newer build. The `--clobber` upload happens only after that check passes.
@@ -361,6 +373,7 @@ Companion/Webby
 ### Concurrency
 
 - **Lock ordering:** `SessionRegistry.mu` → `PiProcess.mu`. Never reverse. `ListSpecs()` and `ActiveCount()` copy data under RLock, release, then call `Status()` outside. Inventory `status` is agent runtime, not process liveness: a live Pi process that is idle must not be listed as working/running.
+- **Idle process reaping:** an idle Pi child costs ~200 MB RSS, so the server stops children that sit idle past `PI_SERVER_IDLE_PROCESS_TIMEOUT`. `PiProcess.Stop()` is not `Close()`: `Close` is terminal (sets `closed`, closes the journal, makes every later `Start()` fail), while `Stop` clears only the OS child so the next prompt relaunches from the same spec and journal. The `reaping` flag stops `wait()` from treating a deliberate stop as a crash, which would otherwise let a `Restart=true` session respawn instantly. Eligibility requires state `idle` past the timeout, `wsSubscribers == 0`, no pending extension UI request, and no held admission, so a streaming client or an unanswered question is never lost. `ensureSessionCapacity` also evicts the longest-idle process when the session limit is hit, gated by a 60s grace period.
 - **Write serialization:** WebSocket connections use `writeMu` to serialize all writes (events, nacks, ping frames).
 - **Subscriber dispatch:** Copies subscriber set under write lock before iterating outside lock.
 
@@ -479,6 +492,7 @@ Key invariants:
 | `PI_SERVER_PI_BINARY` | `pi` | Path to Pi CLI |
 | `PI_SERVER_PI_EXTENSIONS` | _(none)_ | Extensions to load |
 | `PI_SERVER_EVENT_JOURNAL_SYNC_INTERVAL` | `0` | Event-journal fsync interval; `0` keeps strict per-event durability |
+| `PI_SERVER_IDLE_PROCESS_TIMEOUT` | `20m` | Stop an idle Pi child after this long to reclaim its ~200 MB RSS. `0` or negative disables reaping |
 | `PI_SERVER_PERFORMANCE_INTERVAL` | `15s` | Sampling interval for `GET /v1/performance` in-memory history; minimum `1s` |
 | `PI_SERVER_PERFORMANCE_HISTORY_MAX` | `240` | Samples retained per server/session performance series; maximum `5760` |
 
