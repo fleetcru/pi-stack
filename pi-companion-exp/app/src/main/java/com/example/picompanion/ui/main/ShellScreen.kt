@@ -23,8 +23,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.example.picompanion.AppRoute
-import com.example.picompanion.data.api.HttpResult
 import com.example.picompanion.di.AppModule
+import com.example.picompanion.ui.sessions.SessionInventoryState
 import com.example.picompanion.data.model.ServerSession
 import com.example.picompanion.data.repository.SessionsRepository
 import com.example.picompanion.data.settings.AppSettings
@@ -32,15 +32,13 @@ import com.example.picompanion.ui.components.BottomNavBar
 import com.example.picompanion.ui.components.DirectoryBrowserSheet
 import com.example.picompanion.ui.components.NavTab
 import com.example.picompanion.ui.components.SessionDrawer
-import com.example.picompanion.ui.sessions.SessionInventoryState
 import com.example.picompanion.ui.sessions.SessionsScreen
 import com.example.picompanion.ui.settings.SettingsScreen
 import com.example.picompanion.ui.workers.WorkersScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
+import com.example.picompanion.data.api.HttpResult
 
 @Composable
 fun ShellScreen(
@@ -69,18 +67,43 @@ fun ShellScreen(
   val coroutineScope = rememberCoroutineScope()
   val context = LocalContext.current
 
-  LaunchedEffect(drawerOpen) {
+  LaunchedEffect(drawerOpen, settings.activeServer?.id, settings.activeServer?.url, settings.activeServer?.authToken) {
+    drawerLoading = false
     if (drawerOpen) {
-      drawerLoading = true
-      val settings = settingsDataStore.settingsFlow.first()
       val server = settings.activeServer
-      if (server != null && server.isConfigured) {
-        val result = withContext(Dispatchers.IO) {
-          client.listSessions(server)
-        }
-        drawerSessions = (result as? HttpResult.Success)?.value?.sessions ?: emptyList()
+      val cached = server?.let { SessionInventoryState.snapshot(it.id)?.activeSessions }
+      if (cached != null) {
+        drawerSessions = cached
+        drawerLoading = false
+      } else {
+        drawerLoading = true
       }
-      drawerLoading = false
+      if (server != null && server.isConfigured) {
+        val inventoryResult = try {
+          SessionInventoryState.coalesceSessions(
+            SessionInventoryState.requestKey(server, scope = "all", limit = null),
+          ) {
+            when (val result = client.listSessions(server)) {
+              is HttpResult.Success -> SessionInventoryState.InventoryResult.Success(result.value.sessions)
+              is HttpResult.Failure -> SessionInventoryState.InventoryResult.Failure(result.userMessage)
+            }
+          }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+          throw cancelled
+        } catch (_: Exception) {
+          null
+        }
+        val sessions = (inventoryResult as? SessionInventoryState.InventoryResult.Success)?.sessions
+        if (settings.activeServer == server && sessions != null) {
+          SessionInventoryState.updateSnapshot(server.id, activeSessions = sessions)
+          drawerSessions = sessions
+        }
+      }
+      if (
+        settings.activeServer?.id == server?.id &&
+        settings.activeServer?.url == server?.url &&
+        settings.activeServer?.authToken == server?.authToken
+      ) drawerLoading = false
     }
   }
 

@@ -127,19 +127,36 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
       // Start every request together, but let the main session inventory paint
       // without waiting for the slower worker and machine discovery calls.
       val healthDeferred = async(Dispatchers.IO) { client.checkHealth(server) }
-      val sessionsDeferred = async(Dispatchers.IO) { client.listRecentSessions(server) }
+      val sessionsDeferred = async(Dispatchers.IO) {
+        SessionInventoryState.coalesceSessions(SessionInventoryState.requestKey(server, scope = "all", limit = null)) {
+          when (val result = client.listSessions(server)) {
+            is HttpResult.Success -> SessionInventoryState.InventoryResult.Success(result.value.sessions)
+            is HttpResult.Failure -> SessionInventoryState.InventoryResult.Failure(result.userMessage)
+          }
+        }
+      }
       val workersDeferred = async(Dispatchers.IO) { client.listWorkers(server) }
       val globalDeferred = async(Dispatchers.IO) { client.listGlobalSessions(server) }
       val machineDeferred = async(Dispatchers.IO) { client.listMachineSessions(server) }
 
-      val sessions = sessionsDeferred.await()
-      val sessionList = when (sessions) {
-        is HttpResult.Success -> sessions.value.sessions
-          .sortedByDescending { it.updatedAt ?: it.createdAt ?: "" }
-        is HttpResult.Failure -> cachedSnapshot?.activeSessions.orEmpty()
+      val sessionResult = try {
+        sessionsDeferred.await()
+      } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+      } catch (_: Exception) {
+        null
       }
-      if (sessions is HttpResult.Success) {
-        val snapshot = SessionInventoryState.updateSnapshot(server.id, activeSessions = sessionList)
+      val sessions = (sessionResult as? SessionInventoryState.InventoryResult.Success)?.sessions
+      val sessionsSucceeded = sessions != null
+      val sessionList = sessions?.let {
+        SessionInventoryState.applyPending(server.id, it)
+          .sortedByDescending { it.updatedAt ?: it.createdAt ?: "" }
+      } ?: cachedSnapshot?.activeSessions.orEmpty()
+      if (sessionsSucceeded) {
+        SessionInventoryState.updateSnapshot(server.id, activeSessions = sessionList)
+      }
+      if (sessionsSucceeded && contentServerId != server.id) {
+        val snapshot = SessionInventoryState.snapshot(server.id) ?: SessionInventoryState.updateSnapshot(server.id, activeSessions = sessionList)
         val current = (_uiState.value as? HomeUiState.Content)
           ?.takeIf { contentServerId == server.id }
         _uiState.value = HomeUiState.Content(
@@ -160,7 +177,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
       val global = globalDeferred.await()
       val machine = machineDeferred.await()
 
-      if (health is HttpResult.Failure && sessions is HttpResult.Failure && cachedSnapshot == null) {
+      if (health is HttpResult.Failure && !sessionsSucceeded && cachedSnapshot == null) {
         _uiState.value = HomeUiState.Error(
           message = health.userMessage,
           serverName = serverName,
@@ -184,20 +201,22 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
       }
       SessionInventoryState.updateSnapshot(
         serverId = server.id,
-        activeSessions = sessionList.takeIf { sessions is HttpResult.Success },
+        activeSessions = sessionList.takeIf { sessionsSucceeded },
         machineSessions = machineSessions.takeIf { machine is HttpResult.Success },
         globalSessions = globalSessions.takeIf { global is HttpResult.Success },
       )
 
-      _uiState.value = HomeUiState.Content(
+      val currentContent = (_uiState.value as? HomeUiState.Content)
+        ?.takeIf { contentServerId == server.id }
+      if (currentContent != null || contentServerId == server.id) _uiState.value = HomeUiState.Content(
         connected = health is HttpResult.Success,
         serverName = serverName,
-        sessions = sessionList,
+        sessions = currentContent?.sessions ?: sessionList,
         workers = workerList,
-        globalSessions = globalSessions,
-        machineSessions = machineSessions,
-        activeSessions = capacity?.activeSessions ?: sessionList.size,
-        maxSessions = capacity?.maxSessions ?: 0,
+        globalSessions = currentContent?.globalSessions ?: globalSessions,
+        machineSessions = currentContent?.machineSessions ?: machineSessions,
+        activeSessions = capacity?.activeSessions ?: currentContent?.activeSessions ?: sessionList.size,
+        maxSessions = capacity?.maxSessions ?: currentContent?.maxSessions ?: 0,
       )
       contentServerId = server.id
       // Warm only the two most likely next sessions, after visible Home data is
@@ -216,7 +235,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     server: com.example.picompanion.data.settings.ServerEntry,
     sessions: List<ServerSession>,
   ) = coroutineScope {
-    sessions.map { session ->
+    sessions.take(2).map { session ->
       async {
         val key = "${server.id}:${session.id}"
         if (SessionStateCache.contains(key)) return@async

@@ -5,6 +5,8 @@ import com.example.picompanion.data.model.MachineSession
 import com.example.picompanion.data.model.ServerSession
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import com.example.picompanion.data.settings.ServerEntry
+import kotlinx.coroutines.CompletableDeferred
 
 /** Process-memory coordination for the session list and detail screens. */
 internal object SessionInventoryState {
@@ -22,6 +24,19 @@ internal object SessionInventoryState {
     val status: String?,
     val updatedAt: String,
   )
+
+  data class InventoryRequestKey(
+    val serverId: String,
+    val url: String,
+    val tokenFingerprint: Int,
+    val scope: String,
+    val limit: Int?,
+  )
+
+  sealed interface InventoryResult {
+    data class Success(val sessions: List<ServerSession>) : InventoryResult
+    data class Failure(val message: String) : InventoryResult
+  }
 
   private val revisions = LinkedHashMap<String, Long>()
   private val loadedRevisions = LinkedHashMap<String, Long>()
@@ -44,6 +59,50 @@ internal object SessionInventoryState {
   }
 
   @Synchronized fun snapshot(serverId: String): Snapshot? = snapshots[serverId]
+
+  /** Stable identity for sharing in-flight reads without crossing credential/server changes. */
+  fun requestKey(server: ServerEntry, scope: String = "all", limit: Int? = null) =
+    InventoryRequestKey(server.id, server.url.trimEnd('/'), server.authToken.hashCode(), scope, limit)
+
+  private data class InFlightRequest(
+    val result: CompletableDeferred<InventoryResult>,
+    var waiters: Int,
+  )
+
+  private val inFlight = LinkedHashMap<InventoryRequestKey, InFlightRequest>()
+
+  /** Share identical inventory fetches, propagating the same success or failure to every waiter. */
+  suspend fun coalesceSessions(
+    key: InventoryRequestKey,
+    request: suspend () -> InventoryResult,
+  ): InventoryResult {
+    val (entry, owner) = synchronized(inFlight) {
+      val existing = inFlight[key]
+      if (existing != null) {
+        existing.waiters++
+        existing to false
+      } else {
+        InFlightRequest(CompletableDeferred(), waiters = 1).also { inFlight[key] = it } to true
+      }
+    }
+    var completed = false
+    try {
+      if (owner) entry.result.complete(request())
+      val result = entry.result.await()
+      completed = true
+      return result
+    } catch (error: Throwable) {
+      if (owner) entry.result.completeExceptionally(error)
+      throw error
+    } finally {
+      synchronized(inFlight) {
+        entry.waiters--
+        if (inFlight[key] === entry && (completed || entry.result.isCompleted || entry.waiters == 0)) {
+          inFlight.remove(key)
+        }
+      }
+    }
+  }
 
   @Synchronized fun updateSnapshot(
     serverId: String,

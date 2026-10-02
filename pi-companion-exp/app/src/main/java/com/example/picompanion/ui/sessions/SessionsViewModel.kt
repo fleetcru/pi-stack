@@ -19,6 +19,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
@@ -47,6 +50,7 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
   private var activeServerId: String? = null
   private var contentServerId: String? = null
   private var lastRefreshCompletedAt = 0L
+  private var prefetchJob: Job? = null
   private val resumeRefreshCooldownMs = 2_000L
   private val openingSessionIds = mutableSetOf<String>()
 
@@ -86,7 +90,7 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
 
   private suspend fun saveDurableSnapshot(serverId: String, snapshot: SessionInventoryState.Snapshot) {
     kotlinx.coroutines.withContext(Dispatchers.IO) {
-      runCatching {
+      try {
         settingsDataStore.saveSessionInventoryCache(
           cacheJson.encodeToString(
             SessionInventoryCache(
@@ -97,6 +101,10 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
             ),
           ),
         )
+      } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+      } catch (_: Exception) {
+        // A cache write failure must not replace the in-memory inventory.
       }
     }
   }
@@ -180,28 +188,52 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
           _uiState.value = SessionsUiState.Loading
         }
 
-        val activeDeferred = async(Dispatchers.IO) { client.listSessions(server, limit = 200) }
         val machineDeferred = async(Dispatchers.IO) { client.listMachineSessions(server) }
         val globalDeferred = async(Dispatchers.IO) { client.listGlobalSessions(server) }
 
-        val activeResult = activeDeferred.await()
-        if (activeServerId != server.id) return@launch
-        val activeSessions = when (activeResult) {
-          is HttpResult.Success -> SessionInventoryState.applyPending(server.id, activeResult.value.sessions)
-            .sortedByDescending { it.updatedAt ?: it.createdAt ?: "" }
-          is HttpResult.Failure -> baseline?.activeSessions ?: emptyList()
+        val coalescedResult = try {
+          Result.success(
+            SessionInventoryState.coalesceSessions(
+              SessionInventoryState.requestKey(server, scope = "all", limit = null),
+            ) {
+              when (val result = client.listSessions(server)) {
+                is HttpResult.Success -> SessionInventoryState.InventoryResult.Success(result.value.sessions)
+                is HttpResult.Failure -> SessionInventoryState.InventoryResult.Failure(result.userMessage)
+              }
+            },
+          )
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+          throw cancelled
+        } catch (error: Exception) {
+          Result.failure(error)
         }
-        if (activeResult is HttpResult.Success) {
+        val sessions = (coalescedResult.getOrNull() as? SessionInventoryState.InventoryResult.Success)?.sessions
+        val activeSessions = sessions?.let {
+          SessionInventoryState.applyPending(server.id, it)
+            .sortedByDescending { it.updatedAt ?: it.createdAt ?: "" }
+        } ?: baseline?.activeSessions.orEmpty()
+        if (activeServerId != server.id) return@launch
+        val activeSuccess = sessions != null
+        if (activeSuccess) {
           val snapshot = SessionInventoryState.updateSnapshot(server.id, activeSessions = activeSessions)
+          val current = (_uiState.value as? SessionsUiState.Content)
+            ?.takeIf { contentServerId == server.id }
           _uiState.value = SessionsUiState.Content(
             activeSessions = activeSessions,
-            machineSessions = baseline?.machineSessions ?: snapshot.machineSessions,
-            globalSessions = baseline?.globalSessions ?: snapshot.globalSessions,
-            refreshing = machineDeferred.isActive || globalDeferred.isActive,
+            machineSessions = current?.machineSessions ?: baseline?.machineSessions ?: snapshot.machineSessions,
+            globalSessions = current?.globalSessions ?: baseline?.globalSessions ?: snapshot.globalSessions,
+            refreshing = true,
           )
           contentServerId = server.id
         }
 
+        if (activeSuccess) {
+          prefetchJob?.cancel()
+          prefetchJob = viewModelScope.launch(Dispatchers.IO) {
+            prefetchSessionHistory(server, activeSessions.take(2))
+          }
+          launchDiscoveryPublication(server, activeSessions, machineDeferred, globalDeferred)
+        }
         val machineResult = machineDeferred.await()
         val globalResult = globalDeferred.await()
         if (activeServerId != server.id) return@launch
@@ -216,29 +248,31 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
         }
         val finalSnapshot = SessionInventoryState.updateSnapshot(
           serverId = server.id,
-          activeSessions = activeSessions.takeIf { activeResult is HttpResult.Success },
+          activeSessions = activeSessions.takeIf { activeSuccess },
           machineSessions = machineSessions.takeIf { machineResult is HttpResult.Success },
           globalSessions = globalSessions.takeIf { globalResult is HttpResult.Success },
         )
-        if (activeResult is HttpResult.Success || machineResult is HttpResult.Success || globalResult is HttpResult.Success) {
+        if (activeSuccess || machineResult is HttpResult.Success || globalResult is HttpResult.Success) {
           saveDurableSnapshot(server.id, finalSnapshot)
         }
 
         val completeSuccess =
-          activeResult is HttpResult.Success &&
+          activeSuccess &&
             machineResult is HttpResult.Success &&
             globalResult is HttpResult.Success
         if (!completeSuccess) SessionInventoryState.markStale(server.id)
 
-        if (activeResult is HttpResult.Failure && machineResult is HttpResult.Failure && baseline == null) {
-          _uiState.value = SessionsUiState.Error(activeResult.userMessage)
+        if (!activeSuccess && machineResult is HttpResult.Failure && baseline == null) {
+          _uiState.value = SessionsUiState.Error("Could not load sessions")
           return@launch
         }
 
+        val currentContent = (_uiState.value as? SessionsUiState.Content)
+          ?.takeIf { contentServerId == server.id }
         _uiState.value = SessionsUiState.Content(
           activeSessions = activeSessions,
-          machineSessions = machineSessions,
-          globalSessions = globalSessions,
+          machineSessions = currentContent?.machineSessions ?: machineSessions,
+          globalSessions = currentContent?.globalSessions ?: globalSessions,
           refreshing = false,
         )
         contentServerId = server.id
@@ -358,6 +392,78 @@ class SessionsViewModel(application: Application) : AndroidViewModel(application
       } finally {
         synchronized(openingSessionIds) { openingSessionIds.remove(globalId) }
       }
+    }
+  }
+
+  private fun launchDiscoveryPublication(
+    server: com.example.picompanion.data.settings.ServerEntry,
+    activeSessions: List<ServerSession>,
+    machineDeferred: kotlinx.coroutines.Deferred<HttpResult<com.example.picompanion.data.model.MachineSessionListResponse>>,
+    globalDeferred: kotlinx.coroutines.Deferred<HttpResult<com.example.picompanion.data.model.GlobalSessionListResponse>>,
+  ) {
+    viewModelScope.launch {
+      val result = try {
+        machineDeferred.await()
+      } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+      } catch (_: Exception) {
+        return@launch
+      }
+      val success = result as? HttpResult.Success
+      if (activeServerId != server.id || contentServerId != server.id) return@launch
+      val sessions = success?.let { visibleMachineSessions(activeSessions, it.value.sessions) }
+      val snapshot = SessionInventoryState.updateSnapshot(server.id, machineSessions = sessions)
+      val current = (_uiState.value as? SessionsUiState.Content)
+        ?.takeIf { contentServerId == server.id } ?: return@launch
+      _uiState.value = current.copy(
+        machineSessions = snapshot.machineSessions,
+        refreshing = current.refreshing || refreshJob?.isActive == true,
+      )
+    }
+    viewModelScope.launch {
+      val result = try {
+        globalDeferred.await()
+      } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+      } catch (_: Exception) {
+        return@launch
+      }
+      val success = result as? HttpResult.Success
+      if (activeServerId != server.id || contentServerId != server.id) return@launch
+      val sessions = success?.let { visibleGlobalSessions(activeSessions, it.value.sessions) }
+      val snapshot = SessionInventoryState.updateSnapshot(server.id, globalSessions = sessions)
+      val current = (_uiState.value as? SessionsUiState.Content)
+        ?.takeIf { contentServerId == server.id } ?: return@launch
+      _uiState.value = current.copy(
+        globalSessions = snapshot.globalSessions,
+        refreshing = current.refreshing || refreshJob?.isActive == true,
+      )
+    }
+  }
+
+  private suspend fun prefetchSessionHistory(
+    server: com.example.picompanion.data.settings.ServerEntry,
+    sessions: List<ServerSession>,
+  ) {
+    sessions.forEach { session ->
+      val key = "${server.id}:${session.id}"
+      if (com.example.picompanion.ui.sessiondetail.SessionStateCache.contains(key)) return@forEach
+      val payload = (client.getSessionMessages(server, session.id, limit = 30) as? HttpResult.Success)?.value ?: return@forEach
+      val data = payload["data"] as? kotlinx.serialization.json.JsonObject ?: return@forEach
+      val messages = data["messages"] as? kotlinx.serialization.json.JsonArray ?: return@forEach
+      val history = data["history"] as? kotlinx.serialization.json.JsonObject
+      val total = history?.get("total")?.jsonPrimitive?.intOrNull ?: messages.size
+      val start = com.example.picompanion.ui.sessiondetail.historyPageStartIndex(total, 0, messages.size)
+      val parsed = com.example.picompanion.ui.sessiondetail.SessionHistoryParser.parse(messages, start)
+      com.example.picompanion.ui.sessiondetail.SessionStateCache.put(key,
+        com.example.picompanion.ui.sessiondetail.SessionStateCache.Entry(
+          items = parsed, historicalItems = parsed,
+          nextHistoryOffset = history?.get("nextOffset")?.jsonPrimitive?.intOrNull ?: parsed.size,
+          hasOlder = history?.get("hasOlder")?.jsonPrimitive?.booleanOrNull == true,
+          title = session.title.orEmpty(), project = session.project.orEmpty(), cwd = session.cwd.orEmpty(),
+          lastEventId = 0, totalHistoryMessages = total,
+        ),
+      )
     }
   }
 

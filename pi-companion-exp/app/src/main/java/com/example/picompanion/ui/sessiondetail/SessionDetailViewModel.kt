@@ -346,21 +346,16 @@ class SessionDetailViewModel(
 
       activeServer = server
       restoreCachedSession(server.id)
-      launch { loadMetadata() }
+      val requestGeneration = historyGeneration
+      launch {
+        loadMetadata(server, requestGeneration = requestGeneration)
+      }
       launch { loadGitChanges() }
-      launch { loadModelControls() }
       launch { loadHistory() }
       relayHealthJob?.cancel()
-      relayHealthJob = launch {
-        // Retry an inconclusive first state request instead of permanently
-        // disabling relay health/pending-dialog recovery after one network
-        // hiccup. Stop only after a successful response proves this is local.
-        var external: Boolean? = null
-        while (!closed && external != false) {
-          external = refreshRelayHealth()
-          if (external != false) delay(5_000)
-        }
-      }
+      val requestServerId = server.id
+      val requestModelSelectionRevision = modelSelectionRevision
+      val initialState = async(Dispatchers.IO) { client.getSessionState(server, sessionId) }
 
       // Resume from a known event cursor. A fresh view skips old ring events
       // because HTTP history already contains them; once the socket opens, a
@@ -374,9 +369,27 @@ class SessionDetailViewModel(
       val shouldConnect = !launchConnectionAttempt || appSettings.reconnectOnLaunch
       launchConnectionAttempt = false
       if (shouldConnect) {
-        openTicketedStream(server, since)
+        // Ticket acquisition and live events remain independent of state loading.
+        launch { openTicketedStream(server, since) }
       } else {
         _connectionState.value = ConnectionState.Disconnected("Reconnect on launch is disabled")
+      }
+      relayHealthJob = launch {
+        val sharedStateResult = initialState.await()
+        if (
+          historyGeneration != requestGeneration ||
+          activeServer?.id != requestServerId
+        ) return@launch
+        loadModelControls(sharedStateResult, requestServerId, requestModelSelectionRevision, requestGeneration)
+        // Reuse the shared request only once. Subsequent polls are fresh so
+        // relay failures and pending-dialog state can recover.
+        var state: com.example.picompanion.data.api.HttpResult<JsonObject>? = sharedStateResult
+        var external: Boolean? = null
+        while (!closed && external != false && historyGeneration == requestGeneration && activeServer?.id == requestServerId) {
+          external = refreshRelayHealth(state, server, requestGeneration)
+          state = null
+          if (external != false) delay(5_000)
+        }
       }
     }
   }
@@ -585,10 +598,16 @@ class SessionDetailViewModel(
     }
   }
 
-  private suspend fun refreshRelayHealth(): Boolean? {
-    val server = activeServer ?: return null
-    return when (val result = withContext(Dispatchers.IO) { client.getSessionState(server, sessionId) }) {
+  private suspend fun refreshRelayHealth(
+    initialResult: com.example.picompanion.data.api.HttpResult<JsonObject>? = null,
+    server: com.example.picompanion.data.settings.ServerEntry? = activeServer,
+    requestGeneration: Int? = null,
+  ): Boolean? {
+    server ?: return null
+    if (requestGeneration != null && (historyGeneration != requestGeneration || activeServer?.id != server.id)) return null
+    return when (val result = initialResult ?: withContext(Dispatchers.IO) { client.getSessionState(server, sessionId) }) {
       is com.example.picompanion.data.api.HttpResult.Success -> {
+        if (requestGeneration != null && (historyGeneration != requestGeneration || activeServer?.id != server.id)) return null
         val state = result.value["data"] as? JsonObject ?: return null
         val external = state["external"]?.jsonPrimitive?.booleanOrNull == true
         externalSession = external
@@ -628,23 +647,49 @@ class SessionDetailViewModel(
     }
   }
 
-  private suspend fun loadMetadata() {
-    // Reuse the server captured during connect. Reading settings again here
-    // adds disk work and can race a server switch while the screen starts.
-    val server = activeServer ?: return
-    when (val sessions = repository.listSessions(server)) {
-      is com.example.picompanion.data.api.HttpResult.Success -> {
-        sessions.value.firstOrNull { it.id == sessionId }?.let {
-          _sessionTitle.value = it.title.orEmpty()
-          _sessionProject.value = it.project.orEmpty()
-          _sessionCwd.value = it.cwd.orEmpty()
-          sessionRuntimeStatus = it.status
-          hasSessionMetadata = true
+  private fun applySessionMetadata(session: com.example.picompanion.data.model.ServerSession) {
+    _sessionTitle.value = session.title.orEmpty()
+    _sessionProject.value = session.project.orEmpty()
+    _sessionCwd.value = session.cwd.orEmpty()
+    sessionRuntimeStatus = session.status
+    hasSessionMetadata = true
+  }
+
+  private suspend fun loadMetadata(
+    server: com.example.picompanion.data.settings.ServerEntry? = activeServer,
+    forceRefresh: Boolean = false,
+    requestGeneration: Int = historyGeneration,
+  ) {
+    val server = server ?: return
+    // Paint header fields from the current inventory snapshot, then refresh only
+    // if this session is absent (e.g. deep link before discovery completes).
+    val snapshot = SessionInventoryState.snapshot(server.id)
+    val cached = snapshot?.activeSessions?.firstOrNull { it.id == sessionId }
+    if (cached != null) {
+      if (historyGeneration != requestGeneration || activeServer?.id != server.id) return
+      applySessionMetadata(cached)
+      if (!forceRefresh) return
+    }
+    val inventoryResult = try {
+      SessionInventoryState.coalesceSessions(
+        SessionInventoryState.requestKey(server, scope = "all", limit = null),
+      ) {
+        when (val result = repository.listSessions(server)) {
+          is com.example.picompanion.data.api.HttpResult.Success ->
+            SessionInventoryState.InventoryResult.Success(result.value)
+          is com.example.picompanion.data.api.HttpResult.Failure ->
+            SessionInventoryState.InventoryResult.Failure(result.userMessage)
         }
       }
-      is com.example.picompanion.data.api.HttpResult.Failure -> {
-        if (BuildConfig.DEBUG) android.util.Log.w("SessionWS", "loadMetadata failed: ${sessions.message}")
-      }
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+      throw cancelled
+    } catch (error: Exception) {
+      if (BuildConfig.DEBUG) android.util.Log.w("SessionWS", "loadMetadata failed: ${error.message}")
+      return
+    }
+    val sessions = (inventoryResult as? SessionInventoryState.InventoryResult.Success)?.sessions ?: return
+    if (historyGeneration == requestGeneration && activeServer?.id == server.id) {
+      sessions.firstOrNull { it.id == sessionId }?.let(::applySessionMetadata)
     }
   }
 
@@ -1444,16 +1489,26 @@ class SessionDetailViewModel(
     }
   }
 
-  fun loadModelControls() {
+  fun loadModelControls() = loadModelControls(initialState = null)
+
+  private fun loadModelControls(
+    initialState: com.example.picompanion.data.api.HttpResult<JsonObject>?,
+    expectedServerId: String? = activeServer?.id,
+    selectionRevision: Long = modelSelectionRevision,
+    requestGeneration: Int? = null,
+  ) {
     val server = activeServer ?: return
-    val selectionRevision = modelSelectionRevision
     viewModelScope.launch {
       val (sessionModelsResult, availableModelsResult, stateResult) = withContext(Dispatchers.IO) {
         val sessionModels = async { client.getSessionModels(server, sessionId) }
         val availableModels = async { client.getAvailableModels(server) }
-        val state = async { client.getSessionState(server, sessionId) }
+        val state = async { initialState ?: client.getSessionState(server, sessionId) }
         Triple(sessionModels.await(), availableModels.await(), state.await())
       }
+      if (
+        activeServer?.id != expectedServerId ||
+        (requestGeneration != null && historyGeneration != requestGeneration)
+      ) return@launch
       val sessionChoices = parseModelChoices(
         (sessionModelsResult as? com.example.picompanion.data.api.HttpResult.Success)?.value,
       )
@@ -1641,7 +1696,8 @@ class SessionDetailViewModel(
           // Refresh independent resources together. History still uses its
           // mutex and generation guard, while the live stream stays open.
           kotlinx.coroutines.coroutineScope {
-            launch { loadMetadata() }
+            val server = activeServer ?: return@coroutineScope
+            launch { loadMetadata(server, forceRefresh = true, requestGeneration = historyGeneration) }
             launch { loadHistory() }
             launch { loadGitChanges() }
             launch { refreshRelayHealth() }
