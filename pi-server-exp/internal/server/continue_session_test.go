@@ -151,10 +151,10 @@ func TestContinueExternalSessionPreservesIdentity(t *testing.T) {
 		t.Fatalf("status=%d body=%s", result.Code, result.Body.String())
 	}
 	spec, _ := s.sessions.GetSpec("continue-test")
-	if spec.ID != oldSpec.ID || spec.SessionPath != oldSpec.SessionPath || spec.CWD != oldSpec.CWD || spec.Title != oldSpec.Title || spec.Project != oldSpec.Project || spec.Metadata["custom"] != "kept" {
+	if spec.ID != oldSpec.ID || canonicalPath(spec.SessionPath) != canonicalPath(oldSpec.SessionPath) || canonicalPath(spec.CWD) != canonicalPath(oldSpec.CWD) || spec.Title != oldSpec.Title || spec.Project != oldSpec.Project || spec.Metadata["custom"] != "kept" {
 		t.Fatalf("metadata/history lost: %#v", spec)
 	}
-	if spec.Transport != "rpc" || len(spec.Args) != 2 || spec.Args[0] != "--session" || spec.Args[1] != oldSpec.SessionPath {
+	if spec.Transport != "rpc" || len(spec.Args) != 2 || spec.Args[0] != "--session" || canonicalPath(spec.Args[1]) != canonicalPath(oldSpec.SessionPath) {
 		t.Fatalf("incorrect resume args: %#v", spec)
 	}
 	if _, exists := s.external.get(spec.ID); exists {

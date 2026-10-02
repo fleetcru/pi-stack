@@ -102,19 +102,24 @@ func reclaimStaleHistoryLock(lockPath string) bool {
 }
 
 func (s *Server) releaseHistoryOwner(spec SessionSpec) {
-	key := historyOwnerKey(spec)
-	if key == "" {
+	if spec.SessionPath == "" {
 		return
 	}
 	s.historyOwnerMu.Lock()
-	if owner, ok := s.historyOwners[key]; ok && owner == spec.ID {
-		delete(s.historyOwners, key)
-		if lock := s.historyOwnerLocks[key]; lock != nil {
+	defer s.historyOwnerMu.Unlock()
+	// The history may have been deleted since reservation. On Windows that
+	// also prevents expanding an 8.3 path to its original long-name key.
+	// Release the stored claims for this owner instead of reconstructing them.
+	for storedKey, owner := range s.historyOwners {
+		if owner != spec.ID {
+			continue
+		}
+		delete(s.historyOwners, storedKey)
+		if lock := s.historyOwnerLocks[storedKey]; lock != nil {
 			_ = lock.Close()
-			delete(s.historyOwnerLocks, key)
-			digest := sha256.Sum256([]byte(key))
+			delete(s.historyOwnerLocks, storedKey)
+			digest := sha256.Sum256([]byte(storedKey))
 			_ = os.Remove(filepath.Join(s.cfg.DataDir, "history-locks", hex.EncodeToString(digest[:])+".lock"))
 		}
 	}
-	s.historyOwnerMu.Unlock()
 }
