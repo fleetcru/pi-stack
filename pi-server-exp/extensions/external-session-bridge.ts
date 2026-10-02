@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 
 type BridgeConfig = { relayUrl?: string; relayToken?: string };
@@ -37,6 +37,8 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
   // Stable for this TUI process: re-registering preserves its lease, while a
   // second TUI attached to the same session file rotates the old lease.
   const bridgeId = crypto.randomUUID();
+  const startedAt = Math.round(Date.now() - process.uptime() * 1_000);
+  const proofPath = join(dirname(configPath), "bridge-processes", `${bridgeId}.json`);
   let lease = "";
   let cwd = process.cwd();
   let sessionPath = "";
@@ -195,7 +197,15 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
       registered = false;
     }
     try {
-      const response = await request("/v1/external-sessions/register", "POST", { id, cwd, title, sessionPath, bridgeId });
+      // A remote server must never mistake our PID for one of its local PIDs.
+      // Only a server that can read this random local proof can verify the
+      // process identity and later offer safe continuation after it exits.
+      const proof = { bridgeId, pid: process.pid, startedAt, sessionPath };
+      try {
+        mkdirSync(dirname(proofPath), { recursive: true, mode: 0o700 });
+        writeFileSync(proofPath, JSON.stringify(proof), { encoding: "utf8", mode: 0o600 });
+      } catch { /* Normal relay use still works, but continuation fails closed. */ }
+      const response = await request("/v1/external-sessions/register", "POST", { id, cwd, title, sessionPath, ...proof });
       const data = await response.json() as { lease?: string };
       if (!data.lease) throw new Error("relay did not issue a command lease");
       lease = data.lease;
@@ -972,6 +982,7 @@ export default function externalSessionBridge(pi: ExtensionAPI) {
     }, 5_000);
   });
   pi.on("session_shutdown", async () => {
+    try { unlinkSync(proofPath); } catch { /* already removed or never written */ }
     stopped = true;
     relayConnectInFlight = false;
     socketGen++;

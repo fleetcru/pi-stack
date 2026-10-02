@@ -91,7 +91,10 @@ func (s *Server) externalSessionWebSocket(w http.ResponseWriter, r *http.Request
 	}
 	for {
 		select {
-		case ev := <-events:
+		case ev, open := <-events:
+			if !open {
+				return
+			}
 			if err := write(ev); err != nil {
 				return
 			}

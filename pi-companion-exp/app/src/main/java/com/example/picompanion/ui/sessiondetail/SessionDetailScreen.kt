@@ -148,7 +148,13 @@ fun SessionDetailScreen(
   val extensionRequest by viewModel.extensionRequest.collectAsStateWithLifecycle()
   val modelControls by viewModel.modelControls.collectAsStateWithLifecycle()
   val relayHealth by viewModel.relayHealth.collectAsStateWithLifecycle()
+  val isExternalSession by viewModel.externalSessionState.collectAsStateWithLifecycle()
   val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
+  val continuingOnServer by viewModel.continuingOnServer.collectAsStateWithLifecycle()
+  val continueOnServerError by viewModel.continueOnServerError.collectAsStateWithLifecycle()
+  val continueBlockedReason by viewModel.continueBlockedReason.collectAsStateWithLifecycle()
+  val relayConnected by viewModel.relayConnected.collectAsStateWithLifecycle()
+  val continueAvailable by viewModel.continueAvailable.collectAsStateWithLifecycle()
   val gitOutput by viewModel.gitOutput.collectAsStateWithLifecycle()
   val gitChanges by viewModel.gitChanges.collectAsStateWithLifecycle()
   val extensionSubmitError by viewModel.extensionSubmitError.collectAsStateWithLifecycle()
@@ -236,11 +242,26 @@ fun SessionDetailScreen(
       onFiles = { filesOpen = true },
       onModelControls = { actionsOpen = true; actionsTab = 0; viewModel.loadModelControls() },
       modelControls = modelControls,
+      showContinueOnServer = isExternalSession && !relayConnected && (continueAvailable || continuingOnServer),
+      continuingOnServer = continuingOnServer,
+      continueBlockedReason = continueBlockedReason,
+      onContinueOnServer = viewModel::continueOnServer,
       title = sessionTitle,
       sharedTransitionScope = sharedTransitionScope,
       animatedVisibilityScope = animatedVisibilityScope,
 
     )
+
+    continueOnServerError?.let { error ->
+      androidx.compose.material3.AlertDialog(
+        onDismissRequest = viewModel::dismissContinueOnServerError,
+        title = { Text("Could not continue on server") },
+        text = { Text(error) },
+        confirmButton = {
+          androidx.compose.material3.TextButton(onClick = viewModel::dismissContinueOnServerError) { Text("OK") }
+        },
+      )
+    }
 
     // Git output dialog
     gitOutput?.let { (title, output) ->
@@ -408,15 +429,19 @@ fun SessionDetailScreen(
 
       MessageInputBar(
         onSend = { text -> viewModel.sendPrompt(text, attachments).also { attachments = emptyList() } },
-        sending = sendState is SendState.Sending || sendState is SendState.Accepted || sendState is SendState.Delivered || sendState is SendState.Running,
+        sending = continuingOnServer || (isExternalSession && !relayConnected) || sendState is SendState.Sending || sendState is SendState.Accepted || sendState is SendState.Delivered || sendState is SendState.Running,
         agentWorking = agentWorking,
-        status = when (sendState) {
+        status = when {
+          continuingOnServer -> "Continuing on server…"
+          isExternalSession && !relayConnected -> "Bridge disconnected. Reconnect it or continue on the server."
+          else -> when (sendState) {
           SendState.Sending -> "Sending…"
           SendState.Accepted -> "Queued for Pi…"
           SendState.Delivered -> "Delivered to Pi…"
           SendState.Running -> "Pi responding…"
           is SendState.Failed -> "Send failed: ${(sendState as SendState.Failed).message}"
           SendState.Idle -> null
+          }
         },
         onAbort = { viewModel.abort() },
         onSteer = { text -> viewModel.sendSteer(text) },

@@ -5,6 +5,23 @@ import org.junit.Test
 
 class SessionStateCacheTest {
   @Test
+  fun ownershipTransferRemovesOnlyTheOldSessionCursor() {
+    val entry = SessionStateCache.Entry(
+      items = emptyList(), historicalItems = emptyList(), nextHistoryOffset = 0,
+      hasOlder = false, title = "Session", project = "", cwd = "/tmp",
+      lastEventId = 987, totalHistoryMessages = 0,
+    )
+    val transferred = "ownership-transfer:session"
+    val other = "ownership-transfer:other"
+    SessionStateCache.put(transferred, entry)
+    SessionStateCache.put(other, entry)
+    SessionStateCache.remove(transferred)
+    assertEquals(null, SessionStateCache.get(transferred))
+    assertEquals(987L, SessionStateCache.get(other)?.lastEventId)
+    SessionStateCache.remove(other)
+  }
+
+  @Test
   fun trimmingKeepsEverySegmentFromBoundaryMessage() {
     val first = SessionTimelineItem.Chat("Pi Agent", "first", "t0", false, sourceId = "history-0-segment-0")
     val boundaryStart = SessionTimelineItem.Chat("Pi Agent", "before tool", "t1", false, sourceId = "history-1-segment-0")

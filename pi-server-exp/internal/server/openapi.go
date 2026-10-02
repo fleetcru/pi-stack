@@ -226,6 +226,10 @@ func paths() map[string]any {
 	}
 	post("/v1/sessions/{id}/metadata", "Update persisted app metadata", "SessionMetadataUpdate")
 	post("/v1/sessions/{id}/ui-response", "Respond to Pi extension UI", "ExtensionUIResponse")
+	continuation := op("Continue an exited local TUI relay through server-managed RPC", "RPCResponse", "")
+	continuation["responses"].(map[string]any)["409"] = resp("Error")
+	continuation["responses"].(map[string]any)["503"] = resp("Error")
+	p["/v1/external-sessions/{id}/continue"] = map[string]any{"post": continuation}
 	for _, x := range []string{"abort", "compact", "cycle-model", "cycle-thinking-level", "abort-retry", "switch", "fork", "clone", "new", "name", "export-html", "abort-bash"} {
 		post("/v1/sessions/{id}/"+x, "Pi RPC "+x, "RPCCommand")
 	}

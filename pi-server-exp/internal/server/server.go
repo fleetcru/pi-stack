@@ -36,6 +36,7 @@ type Server struct {
 	historyCache      map[string]historyCacheEntry
 	historyIndexes    map[string]historyIndex
 	historyIndexPaths map[string]string
+	relayOwnershipMu  sync.Mutex // serializes relay registration and explicit RPC takeover
 	historyOwnerMu    sync.Mutex
 	historyOwners     map[string]string
 	historyOwnerLocks map[string]*os.File
@@ -128,6 +129,11 @@ func New(cfg Config, logger *slog.Logger) *Server {
 		return nil
 	}
 	s.external.onLifecycle = func(sessionID, eventType string) {
+		s.relayOwnershipMu.Lock()
+		defer s.relayOwnershipMu.Unlock()
+		if spec, exists := s.sessions.GetSpec(sessionID); exists && spec.Transport != "relay" {
+			return
+		}
 		if eventType == "agent_start" {
 			s.observeDistributedRun(sessionID, "relay:"+sessionID, "relay")
 		} else if eventType == "agent_settled" {
@@ -150,10 +156,18 @@ func New(cfg Config, logger *slog.Logger) *Server {
 	// daemon; inventory marks an unconnected relay as unavailable instead of
 	// deleting the durable identity and confusing clients.
 	for _, spec := range s.sessions.ListSpecs() {
-		if spec.Transport == "rpc" {
+		if spec.Transport == "rpc" || spec.Transport == "relay" {
 			if err := s.reserveHistoryOwner(spec); err != nil {
 				logger.Warn("session history already owned; session disabled", "session", spec.ID, "error", err)
 			}
+		}
+		if spec.Transport == "relay" {
+			// Restore the locally verified creation identity, never a live lease.
+			// An exited TUI remains explicitly continuable after a server restart.
+			restored, _ := s.external.register(spec.ID, spec.CWD, spec.Title, spec.SessionPath, "restored")
+			restored.Status = "stale"
+			restored.UpdatedAt = spec.UpdatedAt
+			restored.bridgePID, restored.bridgeStartedAt = spec.BridgePID, spec.BridgeStartedAt
 		}
 	}
 	if err := s.devices.load(); err != nil {

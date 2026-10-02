@@ -152,6 +152,9 @@ class PiServerClient(
   fun getSessionState(server: ServerEntry, sessionId: String): HttpResult<JsonObject> =
     doGet(server, "/v1/sessions/$sessionId/state", emptyMap(), JsonObject.serializer())
 
+  fun continueExternalSession(server: ServerEntry, sessionId: String): HttpResult<JsonObject> =
+    doPost(server, "/v1/external-sessions/$sessionId/continue", "{}", JsonObject.serializer())
+
   fun setSessionModel(server: ServerEntry, sessionId: String, provider: String, modelId: String): HttpResult<Unit> =
     doPostUnit(server, "/v1/sessions/$sessionId/model", json.encodeToString(SetModelRequest(provider, modelId)))
 

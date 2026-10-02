@@ -27,10 +27,15 @@ internal class EventSequenceTracker {
   }
 
   @Synchronized
-  fun clear() {
+  fun resetForOwnershipTransfer() {
     lastEventId = null
     resynchronizing = false
     seenEventIds.clear()
+  }
+
+  @Synchronized
+  fun clear() {
+    resetForOwnershipTransfer()
   }
 
   @Synchronized

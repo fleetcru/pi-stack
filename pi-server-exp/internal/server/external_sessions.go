@@ -36,37 +36,40 @@ type ExternalCommand struct {
 }
 
 type ExternalSession struct {
-	ID               string
-	CWD              string
-	Title            string
-	SessionPath      string
-	Model            map[string]any
-	AvailableModels  []any
+	ID                string
+	CWD               string
+	Title             string
+	SessionPath       string
+	Model             map[string]any
+	AvailableModels   []any
 	AvailableCommands []any
-	ThinkingLevel    string
-	LastUsage        map[string]any
-	TotalCost        float64
-	MessageCount     int
-	Status           string
-	PendingUIRequest RPCEvent
-	UpdatedAt        time.Time
-	next             uint64
-	eventBytes       int
-	events           []EventRecord
-	subs             map[chan RPCEvent]struct{}
-	commands         []ExternalCommand
-	relay            chan ExternalCommand
-	relayStop        chan struct{}
-	relayGeneration  uint64
-	RelayConnected   bool
-	RelayLatencyMS   int64
-	TaskID           string
-	RunID            string
+	ThinkingLevel     string
+	LastUsage         map[string]any
+	TotalCost         float64
+	MessageCount      int
+	Status            string
+	PendingUIRequest  RPCEvent
+	UpdatedAt         time.Time
+	next              uint64
+	eventBytes        int
+	events            []EventRecord
+	subs              map[chan RPCEvent]struct{}
+	commands          []ExternalCommand
+	relay             chan ExternalCommand
+	relayStop         chan struct{}
+	relayGeneration   uint64
+	RelayConnected    bool
+	RelayLatencyMS    int64
+	TaskID            string
+	RunID             string
 	// leaseID identifies the bridge instance that owns this session; leaseToken
 	// must be presented on HTTP command polling and ack. A different bridge
 	// re-registering rotates the lease and detaches any stale relay.
-	leaseID    string
-	leaseToken string
+	leaseID         string
+	leaseToken      string
+	bridgePID       int
+	bridgeStartedAt string // kernel creation identity verified while the TUI was alive
+	transferring    bool
 }
 
 type ExternalRegistry struct {
@@ -215,13 +218,15 @@ func (r *ExternalRegistry) stateSnapshot(id string) map[string]any {
 		"taskId":                    s.TaskID,
 		"runId":                     s.RunID,
 		"pendingExtensionUiRequest": cloneEvent(s.PendingUIRequest),
+		"continueAvailable":         externalContinueBlockedReason(s) == "",
+		"continueBlockedReason":     externalContinueBlockedReason(s),
 	}
 }
 
 func (r *ExternalRegistry) publish(id string, ev RPCEvent) bool {
 	r.mu.Lock()
 	s := r.sessions[id]
-	if s == nil {
+	if s == nil || s.transferring {
 		r.mu.Unlock()
 		return false
 	}
@@ -319,19 +324,17 @@ func (r *ExternalRegistry) publish(id string, ev RPCEvent) bool {
 	out := eventWithID(ev, record.ID)
 	out["_daemonTaskId"] = s.TaskID
 	out["_daemonRunId"] = s.RunID
-	subs := make([]chan RPCEvent, 0, len(s.subs))
-	for ch := range s.subs {
-		subs = append(subs, ch)
-	}
 	eventType, _ := ev["type"].(string)
 	onLifecycle := r.onLifecycle
-	r.mu.Unlock()
-	for _, ch := range subs {
+	// Nonblocking delivery remains under the registry lock. Continuation closes
+	// viewer channels under that same lock, so no late sender can panic.
+	for ch := range s.subs {
 		select {
 		case ch <- out:
 		default: // live viewers can reconnect and replay the bounded event ring
 		}
 	}
+	r.mu.Unlock()
 	if onLifecycle != nil && (eventType == "agent_start" || eventType == "agent_end" || eventType == "agent_settled") {
 		onLifecycle(id, eventType)
 	}
@@ -384,7 +387,13 @@ func (r *ExternalRegistry) enqueueCommand(id string, command ExternalCommand, ex
 	defer r.persistMu.Unlock()
 	r.mu.Lock()
 	s := r.sessions[id]
-	if s == nil || s.Status == "stale" || s.Status == "stopped" {
+	if s == nil || s.transferring || s.Status == "stale" || s.Status == "stopped" {
+		r.mu.Unlock()
+		return false, false
+	}
+	// Do not accept new commands for a verifiably exited TUI. Otherwise a
+	// prompt sent just before the user taps Continue would strand its queue.
+	if !s.RelayConnected && s.bridgePID > 0 && bridgeProcessExited(s.bridgePID, s.bridgeStartedAt) {
 		r.mu.Unlock()
 		return false, false
 	}
@@ -439,7 +448,7 @@ func (r *ExternalRegistry) commandsFor(id, lease string) (commands []ExternalCom
 	if s == nil {
 		return nil, false, false
 	}
-	if s.leaseToken == "" || subtle.ConstantTimeCompare([]byte(s.leaseToken), []byte(lease)) != 1 {
+	if s.transferring || s.leaseToken == "" || subtle.ConstantTimeCompare([]byte(s.leaseToken), []byte(lease)) != 1 {
 		return nil, true, false
 	}
 	// Command polling doubles as a relay heartbeat.
@@ -460,7 +469,7 @@ func (r *ExternalRegistry) attachRelay(id, lease string) (<-chan ExternalCommand
 		r.mu.Unlock()
 		return nil, nil, 0, nil, nil, false, false
 	}
-	if s.leaseToken == "" || subtle.ConstantTimeCompare([]byte(s.leaseToken), []byte(lease)) != 1 {
+	if s.transferring || s.leaseToken == "" || subtle.ConstantTimeCompare([]byte(s.leaseToken), []byte(lease)) != 1 {
 		r.mu.Unlock()
 		return nil, nil, 0, nil, nil, true, false
 	}
@@ -582,25 +591,43 @@ func (r *ExternalRegistry) removeAcknowledgedCommandsLocked(s *ExternalSession, 
 }
 
 func (s *Server) externalRegister(w http.ResponseWriter, r *http.Request) {
+	s.relayOwnershipMu.Lock()
+	defer s.relayOwnershipMu.Unlock()
 	var input struct {
 		ID, CWD, Title, SessionPath string
 		BridgeID                    string `json:"bridgeId"`
+		PID                         int    `json:"pid"`
+		StartedAt                   int64  `json:"startedAt"`
 	}
 	if json.NewDecoder(r.Body).Decode(&input) != nil || !validSessionID(input.ID) || input.BridgeID == "" {
 		writeErrorText(w, http.StatusBadRequest, "valid id and bridgeId required")
 		return
 	}
-	if existing, ok := s.sessions.GetSpec(input.ID); ok && existing.Transport != "relay" {
-		writeErrorText(w, http.StatusConflict, "session is already owned by a managed RPC process")
-		return
+	if existing, ok := s.sessions.GetSpec(input.ID); ok {
+		if existing.Transport != "relay" {
+			writeErrorText(w, http.StatusConflict, "session is already owned by a managed RPC process")
+			return
+		}
+		if existing.SessionPath != "" && canonicalPath(existing.SessionPath) != canonicalPath(input.SessionPath) {
+			writeErrorText(w, http.StatusConflict, "relay registration cannot change its history file")
+			return
+		}
 	}
 	ownerSpec := SessionSpec{ID: input.ID, SessionPath: input.SessionPath}
 	if err := s.reserveHistoryOwner(ownerSpec); err != nil {
 		writeError(w, http.StatusConflict, err)
 		return
 	}
-	external, lease := s.external.register(input.ID, input.CWD, input.Title, input.SessionPath, input.BridgeID)
-	_, err := s.sessions.RegisterSpec(SessionSpec{ID: external.ID, CWD: external.CWD, Title: external.Title, Status: external.Status, Managed: false, Transport: "relay", SessionPath: external.SessionPath})
+	pid, identity := 0, ""
+	if isLocalBridgeRequest(r) {
+		pid, identity = localBridgeProcess(bridgeProcessProof{BridgeID: input.BridgeID, PID: input.PID, StartedAt: input.StartedAt, SessionPath: input.SessionPath})
+	}
+	registered, lease := s.external.register(input.ID, input.CWD, input.Title, input.SessionPath, input.BridgeID)
+	s.external.mu.Lock()
+	registered.bridgePID, registered.bridgeStartedAt = pid, identity
+	s.external.mu.Unlock()
+	external, _ := s.external.get(input.ID)
+	_, err := s.sessions.RegisterSpec(SessionSpec{ID: external.ID, CWD: external.CWD, Title: external.Title, Status: external.Status, Managed: false, Transport: "relay", SessionPath: external.SessionPath, BridgePID: pid, BridgeStartedAt: identity})
 	if err != nil {
 		s.releaseHistoryOwner(ownerSpec)
 		writeError(w, http.StatusInternalServerError, err)
@@ -612,6 +639,8 @@ func (s *Server) externalRegister(w http.ResponseWriter, r *http.Request) {
 func (s *Server) externalPost(w http.ResponseWriter, r *http.Request) {
 	id, action := splitExternalPath(r.URL.Path)
 	switch action {
+	case "continue":
+		s.continueExternalSession(w, r, id)
 	case "events":
 		var event RPCEvent
 		if json.NewDecoder(r.Body).Decode(&event) != nil || !s.external.publish(id, event) {

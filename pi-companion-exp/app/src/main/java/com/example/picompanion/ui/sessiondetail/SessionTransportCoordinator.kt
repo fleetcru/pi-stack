@@ -24,6 +24,7 @@ internal class SessionTransportCoordinator(
     }
   }
 
+  fun resetForOwnershipTransfer() = socket.resetForOwnershipTransfer()
   fun disconnect() = socket.disconnect()
   fun disconnectForReplay() = socket.disconnect(preserveReplayState = true)
   fun isConnected(): Boolean = socket.isConnected()

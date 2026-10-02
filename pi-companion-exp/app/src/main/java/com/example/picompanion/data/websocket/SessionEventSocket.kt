@@ -194,6 +194,13 @@ class SessionEventSocket(
    * OkHttp returns false when the socket is closing/closed, allowing the
    * caller to use the REST transport without submitting the command twice.
    */
+  fun resetForOwnershipTransfer() {
+    disconnect()
+    // Do not deliver buffered relay events after switching runtime owners.
+    while (_events.tryReceive().isSuccess) { }
+    while (_control.tryReceive().isSuccess) { }
+  }
+
   fun disconnect(preserveReplayState: Boolean = false) {
     generation.incrementAndGet()
     webSocket?.close(1000, "Client disconnect")

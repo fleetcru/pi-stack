@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -29,6 +31,34 @@ func TestMain(m *testing.M) {
 
 func runFakePiChild() {
 	fmt.Println(`{"type":"ready"}`)
+	if os.Getenv("PI_TEST_CONTINUE_RPC") == "1" {
+		var path string
+		for index, argument := range os.Args {
+			if argument == "--session" && index+1 < len(os.Args) {
+				path = os.Args[index+1]
+			}
+		}
+		var header struct {
+			ID string `json:"id"`
+		}
+		if file, err := os.Open(path); err == nil {
+			_ = json.NewDecoder(file).Decode(&header)
+			_ = file.Close()
+		}
+		if os.Getenv("PI_TEST_WRONG_SESSION") == "1" {
+			path = "wrong-history"
+			header.ID = "wrong"
+		}
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			var command map[string]any
+			if json.Unmarshal(scanner.Bytes(), &command) != nil {
+				continue
+			}
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"type": "response", "id": command["id"], "command": command["type"], "success": true, "data": map[string]any{"isStreaming": false, "sessionFile": path, "sessionId": header.ID}})
+		}
+		return
+	}
 	_, _ = io.Copy(io.Discard, os.Stdin)
 }
 

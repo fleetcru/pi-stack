@@ -104,6 +104,17 @@ class EventSequenceTrackerTest {
   }
 
   @Test
+  fun ownershipTransferResetClearsDuplicateWindowAndCursor() {
+    val tracker = EventSequenceTracker()
+    tracker.beginConnection(null)
+    tracker.process(event(9))
+    tracker.resetForOwnershipTransfer()
+    tracker.beginConnection(null)
+
+    assertEquals(1, tracker.process(event(1)).size)
+  }
+
+  @Test
   fun explicitDisconnectClearsDuplicateWindow() {
     val tracker = EventSequenceTracker()
     tracker.beginConnection(null)

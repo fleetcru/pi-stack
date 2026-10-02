@@ -21,6 +21,8 @@ type SessionSpec struct {
 	ManagedSessionDir string            `json:"managedSessionDir,omitempty"`
 	Managed           bool              `json:"managed"`
 	Transport         string            `json:"transport,omitempty"` // rpc or relay
+	BridgePID         int               `json:"bridgePid,omitempty"` // verified server-side, not app-editable metadata
+	BridgeStartedAt   string            `json:"bridgeStartedAt,omitempty"`
 	Restart           bool              `json:"restart,omitempty"`
 	Status            string            `json:"status,omitempty"`
 	LastExit          string            `json:"lastExit,omitempty"`
@@ -99,6 +101,12 @@ func (r *SessionRegistry) RegisterSpec(spec SessionSpec) (SessionSpec, error) {
 		if spec.Transport != "" {
 			current.Transport = spec.Transport
 		}
+		if spec.SessionPath != "" {
+			current.SessionPath = spec.SessionPath
+		}
+		if spec.Transport == "relay" {
+			current.BridgePID, current.BridgeStartedAt = spec.BridgePID, spec.BridgeStartedAt
+		}
 		current.Status = spec.Status
 		current.UpdatedAt = now
 		r.specs[spec.ID] = current
@@ -152,6 +160,29 @@ func (r *SessionRegistry) addInternal(p *PiProcess, spec SessionSpec, maxSession
 	r.specs[p.id] = spec
 	r.mu.Unlock()
 	return r.Save()
+}
+
+// replaceRelayProcess publishes a successfully started continuation and rolls
+// back the in-memory registry if its durable record cannot be written.
+func (r *SessionRegistry) replaceRelayProcess(p *PiProcess, spec SessionSpec) error {
+	r.mu.Lock()
+	old, exists := r.specs[spec.ID]
+	if !exists || old.Transport != "relay" || r.sessions[spec.ID] != nil {
+		r.mu.Unlock()
+		return fmt.Errorf("relay ownership changed during continuation")
+	}
+	r.specs[spec.ID], r.sessions[spec.ID] = spec, p
+	r.mu.Unlock()
+	if err := r.Save(); err != nil {
+		r.mu.Lock()
+		if r.sessions[spec.ID] == p {
+			r.specs[spec.ID] = old
+			delete(r.sessions, spec.ID)
+		}
+		r.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 func (r *SessionRegistry) Attach(p *PiProcess) {

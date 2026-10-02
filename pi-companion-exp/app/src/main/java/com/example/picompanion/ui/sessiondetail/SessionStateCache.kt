@@ -21,6 +21,7 @@ internal object SessionStateCache {
 
   @Synchronized fun get(key: String): Entry? = entries[key]
   @Synchronized fun contains(key: String): Boolean = entries.containsKey(key)
+  @Synchronized fun remove(key: String) { entries.remove(key) }
   @Synchronized fun put(key: String, entry: Entry) {
     val assigned = mutableMapOf<String, Long>()
     var nextOrder = (entry.historicalItems + entry.items).maxOfOrNull { it.order } ?: 0

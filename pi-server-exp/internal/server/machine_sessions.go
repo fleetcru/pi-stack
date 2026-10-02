@@ -224,7 +224,17 @@ func (s *Server) preferredServerSession(machine MachineSession, specs []SessionS
 	if relay := s.liveRelaySpecForHistory(probe, specs); relay != nil {
 		return relay
 	}
-	return matchingServerSession(machine, specs)
+	if managed := matchingServerSession(machine, specs); managed != nil {
+		return managed
+	}
+	// A disconnected relay is not proof that its TUI exited. Keep discovery
+	// routed to its existing identity until explicit, verified continuation.
+	for i := range specs {
+		if specs[i].Transport == "relay" && sessionSpecsShareHistory(specs[i], probe) {
+			return &specs[i]
+		}
+	}
+	return nil
 }
 
 // hideDuplicateSessionSpec presents the live TUI relay as the canonical owner
@@ -237,6 +247,8 @@ func (s *Server) hideDuplicateSessionSpec(spec SessionSpec, specs []SessionSpec)
 }
 
 func (s *Server) openMachineSession(w http.ResponseWriter, r *http.Request, machineID string) {
+	s.relayOwnershipMu.Lock()
+	defer s.relayOwnershipMu.Unlock()
 	if !validSessionID(machineID) {
 		writeErrorCode(w, r, http.StatusBadRequest, CodeBadRequest, "invalid machine session id")
 		return
@@ -294,9 +306,15 @@ func (s *Server) openMachineSession(w http.ResponseWriter, r *http.Request, mach
 	// are not constrained by workspace file roots. File APIs remain protected by
 	// AllowedRoots and are not widened by this endpoint.
 	spec := SessionSpec{ID: NewSessionID(), CWD: found.CWD, Args: []string{"--session", found.Path}, SessionPath: found.Path, Managed: true, Transport: "rpc", Status: "created", Title: filepath.Base(found.CWD)}
+	if err := s.reserveHistoryOwner(spec); err != nil {
+		writeError(w, http.StatusConflict, err)
+		return
+	}
 	p := NewPiProcess(spec, s.cfg, s.logger)
 	p.onMessageEnd = func() { s.invalidateHistoryCache(spec.ID) }
 	if err := s.sessions.AddIfCapacity(p, spec, int(s.maxSessionsAtomicValue())); err != nil {
+		s.releaseHistoryOwner(spec)
+		_ = p.Close(context.Background())
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -304,6 +322,8 @@ func (s *Server) openMachineSession(w http.ResponseWriter, r *http.Request, mach
 	defer cancel()
 	if err := p.Start(ctx); err != nil {
 		_ = s.sessions.Delete(spec.ID)
+		s.releaseHistoryOwner(spec)
+		_ = p.Close(context.Background())
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}

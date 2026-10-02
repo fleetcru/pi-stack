@@ -89,6 +89,18 @@ class SessionDetailViewModel(
   val relayHealth: StateFlow<RelayHealth?> = _relayHealth.asStateFlow()
   private val _refreshing = MutableStateFlow(false)
   val refreshing: StateFlow<Boolean> = _refreshing.asStateFlow()
+  private val _continuingOnServer = MutableStateFlow(false)
+  val continuingOnServer: StateFlow<Boolean> = _continuingOnServer.asStateFlow()
+  private val _continueOnServerError = MutableStateFlow<String?>(null)
+  val continueOnServerError: StateFlow<String?> = _continueOnServerError.asStateFlow()
+  private val _continueBlockedReason = MutableStateFlow<String?>(null)
+  val continueBlockedReason: StateFlow<String?> = _continueBlockedReason.asStateFlow()
+  private val _externalSession = MutableStateFlow(false)
+  val externalSessionState: StateFlow<Boolean> = _externalSession.asStateFlow()
+  private val _relayConnected = MutableStateFlow(false)
+  val relayConnected: StateFlow<Boolean> = _relayConnected.asStateFlow()
+  private val _continueAvailable = MutableStateFlow(false)
+  val continueAvailable: StateFlow<Boolean> = _continueAvailable.asStateFlow()
 
   private val _extensionRequest = MutableStateFlow<ExtensionUiRequest?>(null)
   val extensionRequest: StateFlow<ExtensionUiRequest?> = _extensionRequest.asStateFlow()
@@ -598,6 +610,60 @@ class SessionDetailViewModel(
     }
   }
 
+  fun dismissContinueOnServerError() {
+    _continueOnServerError.value = null
+  }
+
+  fun continueOnServer() {
+    if (_continuingOnServer.value) return
+    val server = activeServer ?: return
+    if (externalSession != true || _relayConnected.value || !_continueAvailable.value) return
+    val requestGeneration = historyGeneration
+    _continuingOnServer.value = true
+    _continueOnServerError.value = null
+    viewModelScope.launch {
+      try {
+        val result = withContext(Dispatchers.IO) { client.continueExternalSession(server, sessionId) }
+        if (activeServer != server || historyGeneration != requestGeneration) return@launch
+        when (result) {
+          is com.example.picompanion.data.api.HttpResult.Failure -> {
+            _continueOnServerError.value = result.userMessage
+            withContext(Dispatchers.IO) { client.getSessionState(server, sessionId) }
+              .let { refreshRelayHealth(it, server, requestGeneration) }
+          }
+          is com.example.picompanion.data.api.HttpResult.Success -> {
+            if (result.value["sessionId"]?.jsonPrimitive?.contentOrNull != sessionId ||
+              result.value["transport"]?.jsonPrimitive?.contentOrNull != "rpc") {
+              _continueOnServerError.value = "The server returned an invalid continuation response"
+              return@launch
+            }
+            historyGeneration++
+            relayHealthJob?.cancel()
+            transport.resetForOwnershipTransfer()
+            SessionStateCache.remove("${server.id}:$sessionId")
+            SessionInventoryState.markStale(server.id)
+            lastEventId = 0
+            externalSession = false
+            _externalSession.value = false
+            _relayConnected.value = false
+            _continueAvailable.value = false
+            _relayHealth.value = null
+            _continueBlockedReason.value = null
+            _extensionRequest.value = null
+            _sendState.value = SendState.Idle
+            pendingPromptIds.clear()
+            _agentWorking.value = false
+            // Keep the visible conversation while connect refreshes durable
+            // history. An empty/unchanged page must never prevent reconnection.
+            connect()
+          }
+        }
+      } finally {
+        _continuingOnServer.value = false
+      }
+    }
+  }
+
   private suspend fun refreshRelayHealth(
     initialResult: com.example.picompanion.data.api.HttpResult<JsonObject>? = null,
     server: com.example.picompanion.data.settings.ServerEntry? = activeServer,
@@ -611,8 +677,15 @@ class SessionDetailViewModel(
         val state = result.value["data"] as? JsonObject ?: return null
         val external = state["external"]?.jsonPrimitive?.booleanOrNull == true
         externalSession = external
+        _externalSession.value = external
+        val connected = state["relayConnected"]?.jsonPrimitive?.booleanOrNull == true
+        _relayConnected.value = external && connected
+        _continueAvailable.value = external && state["continueAvailable"]?.jsonPrimitive?.booleanOrNull == true
+        _continueBlockedReason.value = if (external && !connected) {
+          state["continueBlockedReason"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+        } else null
         _relayHealth.value = if (external) RelayHealth(
-          connected = state["relayConnected"]?.jsonPrimitive?.booleanOrNull == true,
+          connected = connected,
           latencyMs = state["relayLatencyMs"]?.jsonPrimitive?.longOrNull,
         ) else null
         // Fresh session views intentionally skip old event replay because
@@ -1233,6 +1306,7 @@ class SessionDetailViewModel(
     }
 
   fun sendPrompt(message: String, imageUris: List<Uri> = emptyList()) {
+    if (_continuingOnServer.value) return
     if (message.isBlank() && imageUris.isEmpty()) return
     // Debounce rapid-fire sends (double-tap, accidental repeat) to prevent
     // duplicate messages. 300ms window catches most accidental double-taps.

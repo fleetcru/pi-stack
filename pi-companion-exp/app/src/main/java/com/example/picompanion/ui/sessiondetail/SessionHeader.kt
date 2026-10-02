@@ -20,12 +20,14 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +52,10 @@ fun SessionHeader(
   onModelControls: () -> Unit,
   modelControls: ModelControls = ModelControls(),
   title: String? = null,
+  showContinueOnServer: Boolean = false,
+  continuingOnServer: Boolean = false,
+  continueBlockedReason: String? = null,
+  onContinueOnServer: () -> Unit = {},
   sharedTransitionScope: SharedTransitionScope,
   animatedVisibilityScope: AnimatedVisibilityScope,
   modifier: Modifier = Modifier,
@@ -120,6 +126,30 @@ fun SessionHeader(
               Icon(Icons.Default.Settings, contentDescription = "Session actions", modifier = Modifier.size(20.dp))
             }
           }
+        }
+
+        if (showContinueOnServer) {
+          TextButton(
+            onClick = onContinueOnServer,
+            enabled = !continuingOnServer,
+            modifier = Modifier.padding(start = 50.dp),
+          ) {
+            if (continuingOnServer) {
+              CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+              Spacer(Modifier.width(8.dp))
+            } else {
+              Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+              Spacer(Modifier.width(4.dp))
+            }
+            Text(if (continuingOnServer) "Continuing on server…" else "Continue on server")
+          }
+        } else if (continueBlockedReason != null) {
+          Text(
+            text = "Continue unavailable: $continueBlockedReason",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 50.dp),
+          )
         }
 
         // Status row: connection status + model chip
