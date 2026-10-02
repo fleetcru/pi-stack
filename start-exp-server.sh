@@ -3,30 +3,33 @@ set -euo pipefail
 
 # ── Defaults ──────────────────────────────────────────────
 PORT="${PORT:-3142}"
-AUTH_TOKEN="${AUTH_TOKEN:-}"
+AUTH_TOKEN="${AUTH_TOKEN-${PI_SERVER_AUTH_TOKEN:-}}"
 OPEN_ADMIN="${OPEN_ADMIN:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/dev-launcher-common.sh"
 SERVER_DIR="$SCRIPT_DIR/pi-server-exp"
 DATA_DIR="${DATA_DIR:-$SCRIPT_DIR/.data/pi-server}"
 
 # ── Parse args ────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -p|--port)       PORT="$2"; shift 2 ;;
-    -t|--token)      AUTH_TOKEN="$2"; shift 2 ;;
-    -d|--data-dir)   DATA_DIR="$2"; shift 2 ;;
+    -p|--port)       dev_need_value "$@"; PORT="$2"; shift 2 ;;
+    -t|--token)      dev_need_value "$@"; AUTH_TOKEN="$2"; shift 2 ;;
+    -d|--data-dir)   dev_need_value "$@"; DATA_DIR="$2"; shift 2 ;;
     --open-admin) OPEN_ADMIN=1; shift ;;
     -h|--help)
       echo "Usage: start-exp-server.sh [-p PORT] [-t AUTH_TOKEN] [-d DATA_DIR]"
       echo "  -p, --port       Server port (default: 3142)"
       echo "  -t, --token      Auth token (omit for no auth)"
       echo "  -d, --data-dir   Data directory (default: .data/pi-server)"
-      echo "      --open-admin      Open Admin after the server is ready"
+      echo "      --open-admin Deprecated. Use the terminal pairing QR or Webby/Desktop."
       exit 0 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
 
+dev_port "$PORT"
+dev_assert_port_free "$PORT"
 # ── Checks ────────────────────────────────────────────────
 if [[ ! -d "$SERVER_DIR" ]]; then
   echo "Error: pi-server-exp not found at $SERVER_DIR" >&2
@@ -58,8 +61,24 @@ if [[ -z "$TAILSCALE_IP" && -z "$HOME_LAN_IP" ]]; then
   echo "Warning: Could not detect a home-LAN or Tailscale address. Clients may not reach the server." >&2
 fi
 
+# Build first and execute the server directly, not a go run parent process.
+BUILD_DIR=$(mktemp -d)
+SERVER_PID=''
+cleanup() {
+  local status=$?
+  trap - EXIT INT TERM
+  [[ -z "$SERVER_PID" ]] || kill -TERM "$SERVER_PID" 2>/dev/null || true
+  [[ -z "$SERVER_PID" ]] || wait "$SERVER_PID" 2>/dev/null || true
+  rm -rf "$BUILD_DIR"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+(cd "$SERVER_DIR" && go build -trimpath -o "$BUILD_DIR/pi-server" ./cmd/pi-server)
 # ── Setup ─────────────────────────────────────────────────
 mkdir -p "$DATA_DIR"
+DATA_DIR=$(cd "$DATA_DIR" && pwd)
 
 # With no explicit allowlist, pi-server's built-in CORS policy accepts
 # loopback, private home-LAN, and Tailscale browser origins.
@@ -69,8 +88,8 @@ BIND_HOST="0.0.0.0"
 export PI_SERVER_ADDR="${BIND_HOST}:${PORT}"
 export PI_SERVER_CWD="$SCRIPT_DIR"
 export PI_SERVER_DATA_DIR="$DATA_DIR"
-export PI_SERVER_ALLOWED_ROOTS="$SCRIPT_DIR"
-unset PI_SERVER_ALLOWED_ORIGINS 2>/dev/null || true
+export PI_SERVER_ALLOWED_ROOTS="${PI_SERVER_ALLOWED_ROOTS:-$SCRIPT_DIR}"
+# Preserve an explicitly configured CORS allowlist.
 
 if [[ -f "$EXTENSION" ]]; then
   export PI_SERVER_PI_EXTENSIONS="$EXTENSION"
@@ -94,7 +113,7 @@ echo "  Bind:      ${BIND_HOST}:${PORT}"
 [[ -n "$TAILSCALE_IP" ]] && echo "  Tailscale: http://${TAILSCALE_IP}:${PORT}"
 echo "  Local:     http://127.0.0.1:${PORT}"
 echo "  Data:      ${DATA_DIR}"
-echo "  Browser:   localhost, home LAN, and Tailscale origins allowed"
+echo "  Browser:   ${PI_SERVER_ALLOWED_ORIGINS:-automatic private-network policy}"
 if [[ -n "$AUTH_TOKEN" ]]; then
   echo "  Auth:      configured"
 else
@@ -102,21 +121,12 @@ else
 fi
 echo ""
 
-if [[ "$OPEN_ADMIN" == "1" ]]; then
-  ADMIN_URL="http://127.0.0.1:${PORT}/admin/"
-  (
-    for _ in $(seq 1 60); do
-      if curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1; then
-        if command -v xdg-open >/dev/null 2>&1; then xdg-open "$ADMIN_URL" >/dev/null 2>&1
-        elif command -v open >/dev/null 2>&1; then open "$ADMIN_URL" >/dev/null 2>&1
-        else echo "  Admin:      $ADMIN_URL"; fi
-        exit 0
-      fi
-      sleep 0.5
-    done
-  ) &
-  echo "  Pairing:    Create a trusted device in Admin, then scan its QR from Companion."
+if [[ "$OPEN_ADMIN" == 1 ]]; then
+  printf '%s\n' 'Warning: --open-admin is obsolete. Use Webby/Desktop for administration, or scan the terminal pairing QR in Companion.' >&2
 fi
 
-cd "$SERVER_DIR"
-exec go run ./cmd/pi-server
+"$BUILD_DIR/pi-server" &
+SERVER_PID=$!
+if wait "$SERVER_PID"; then status=0; else status=$?; fi
+SERVER_PID=''
+exit "$status"

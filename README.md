@@ -73,7 +73,11 @@ Review a script before running it if you are unsure what it changes. These comma
 | Windows, all users | Run PowerShell as Administrator, then `irm https://windows.fleetcru.dev \| iex` | [`install-server.ps1`](install-server.ps1) |
 | Linux with systemd | `curl -fsSL https://linux.fleetcru.dev \| sudo bash` | [`install-server.sh`](install-server.sh) |
 
-The current-user Windows installer is the right choice when Pi is installed only for your Windows account. It creates a per-user scheduled task and does not require Administrator access.
+The current-user Windows installer is the right choice when Pi is installed only for your Windows account. It creates a per-user scheduled task and does not require Administrator access. Its initial configuration listens on loopback. For Companion access, edit `%LOCALAPPDATA%\pi-server\config\pi-server.env` to bind `PI_SERVER_ADDR=0.0.0.0:3142`, set an auth token, and restart the task. Use only a private LAN or Tailscale network.
+
+Rerun the installer to upgrade. Existing settings and credentials stay intact unless you explicitly supply `-Port` or `-AuthToken`, or their Linux environment-variable equivalents. Installers verify downloads before stopping the old server and attempt to restore the previous binary and configuration if startup fails. Upgrades restart the server, so finish active runs first.
+
+The default channel is the rolling `server-dev` release. Use `-Channel stable` on Windows or `PI_SERVER_CHANNEL=stable` on Linux to select the highest stable `server-v<version>` release. A missing development release falls back to stable; network errors and checksum mismatches do not. Source builds require an explicit `-BuildFromSource` or `PI_SERVER_ALLOW_SOURCE_BUILD=1` and an exact pinned revision.
 
 ### Linux with systemd
 
@@ -82,6 +86,8 @@ git clone https://github.com/fleetcru/pi-stack.git
 cd pi-stack
 sudo PI_SERVER_AUTH_TOKEN="your-secret" ./install-server.sh
 ```
+
+Install Pi for the service account first. The installer requires a running systemd, curl, Python 3, and flock. It does not install language toolchains automatically.
 
 The service runs as the user who invoked `sudo`, which keeps access to that user's Pi installation and projects. It allows session roots under that user's home directory. Configuration is stored at `/etc/pi-server/pi-server.env` with mode `0600`.
 
@@ -113,7 +119,16 @@ The standalone server and development launchers bind pi-server to port **3142**.
 .\start-exp-live-stack.ps1
 ```
 
-Opens three windows: pi-server, Webby (Vite dev server), and a Pi TUI terminal.
+Opens three windows: pi-server, Webby, and a Pi TUI terminal. Install Webby's dependencies first. Startup fails if either port is already occupied or a service fails its readiness check.
+
+For hidden server and Webby processes, without a hidden Pi TUI:
+
+```powershell
+.\start-exp-live-stack.ps1 -Background
+.\stop-exp-live-stack.ps1
+```
+
+The stop script checks recorded process creation times before stopping the stack. Pass the same `-DataDir` to both scripts if you chose a custom directory. Startup logs live below `<DataDir>\.launchers\`.
 
 ### Run server only (Windows)
 
@@ -128,13 +143,13 @@ chmod +x start-exp-server.sh
 ./start-exp-server.sh
 ```
 
-The shell launcher is server-only. To run Webby alongside it, start Vite from `pi-webby-exp`:
+To run the server and Webby together, install Webby's dependencies and use:
 
 ```bash
-cd pi-webby-exp
-pnpm install
-pnpm dev -- --host 0.0.0.0 --port 5174
+bash start-exp-live-stack.sh
 ```
+
+Ctrl+C stops both services and their child processes. The shell stack does not launch a Pi TUI. Both launchers preserve an existing `PI_SERVER_AUTH_TOKEN` and explicit CORS allowlist.
 
 ### Run with authentication
 
@@ -151,16 +166,9 @@ Webby: http://192.168.1.100:5174
 pi-server: http://192.168.1.100:3142
 ```
 
-For the fastest first-time setup, start the server with the admin page open:
+In Companion Settings, tap **Scan pairing QR** to scan an interactive server's terminal QR. To scan and then detach a manually launched executable, use `pi-server --pair-then-background` and press Enter after scanning. Do not use that flag under Task Scheduler or systemd.
 
-```powershell
-.\start-exp-server.ps1 -AuthToken "your-secret-token" -OpenAdmin
-```
-
-Create a trusted device in Pi Server Admin and leave its QR visible. To scan the terminal QR and then detach the server, start it with `--pair-then-background` and press Enter after scanning. In Pi Companion, open Settings and tap **Scan pairing QR**. The app creates the
-server entry, imports the reachable address and credential, and tests the
-connection automatically. On Linux/macOS, use `./start-exp-server.sh
---open-admin`.
+Use Webby or Desktop for server administration. The standalone `/admin/` page no longer exists; the old `-OpenAdmin` and `--open-admin` launcher options now print a migration hint.
 
 ## Configuration
 

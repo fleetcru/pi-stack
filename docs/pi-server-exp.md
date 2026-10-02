@@ -6,6 +6,14 @@ Go 1.23 HTTP/WebSocket daemon. Spawns Pi CLI processes, speaks strict LF-delimit
 
 - `cmd/pi-server/main.go` — parses env/log flags, builds `server.Config`, starts the HTTP server, and wires the external relay bridge extension. Foreground logs write to `<data-dir>/pi-server.log` by default, leaving an interactive terminal clear for the Companion pairing QR. Interactive foreground starts create a revocable device credential and print a QR for the preferred Tailscale or home-LAN URL; `--pairing-qr=false` disables it. `--pair-then-background` waits for Enter after the QR scan, then relaunches detached without minting another pairing credential. `--log-file` overrides the default path. `daemon_unix.go` / `daemon_windows.go` provide background mode.
 
+## Installation scripts
+
+- `scripts/install-windows-service.ps1` retains its legacy filename but installs a current-user logon task. The console binary cannot run as an SCM service, so this no longer uses `sc.exe create`. Checks task ownership, rejects an existing legacy service, and supports `-WhatIf`. Use the root installers for verified downloads and managed configuration.
+- `scripts/install-systemd.sh` installs an existing executable. Preserves existing environment and unit files, includes the service user's HOME/PATH on first setup, restarts on rerun, and reports startup failure.
+- `scripts/bootstrap-linux-vps.sh` provisions Debian/Ubuntu with a local binary or Git source. Stages builds in unique directories, supports this monorepo and standalone server repositories, preserves existing settings and units, and restores previous files on failed startup. Refuses to overwrite a service owned by another installer. Credentials stay in the private environment file rather than terminal output. Optional Pi/Tailscale installation and agent-bundle import remain provisioning operations, not part of server-file rollback.
+
+See [the script guide](scripts-and-extensions.md) for root installers, development launchers, and sandbox tests.
+
 ## Server core
 
 - `internal/server/server.go` — the `Server` struct and constructor. Owns the HTTP mux, registries (sessions, remote sessions, external relays, workers, devices), admission control, metrics, and route registration. `Shutdown` drains gracefully.

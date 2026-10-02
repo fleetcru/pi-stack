@@ -14,7 +14,7 @@
     Auth token for API authentication. Auto-generated if not provided.
 
 .PARAMETER AllowInsecure
-    Allow binding to 0.0.0.0 without auth enforcement. Use only on trusted networks.
+    Legacy compatibility parameter. Does not disable authentication.
 
 .PARAMETER Channel
     Release channel. 'dev' (default) tracks the rolling server-dev build that is
@@ -23,7 +23,11 @@
     not been published yet.
 
 .PARAMETER SourceRevision
-    Exact Git commit used only when a release binary is unavailable.
+    Exact Git commit used with the explicit -BuildFromSource switch.
+
+.PARAMETER BuildFromSource
+    Build the pinned revision instead of downloading a release. Requires Git and Go.
+    Download or checksum failures never trigger a source build.
 
 .EXAMPLE
     .\install-server.ps1
@@ -33,16 +37,18 @@
 #>
 
 param(
-    [int]$Port = 3142,
-    [string]$AuthToken = "",
+    [ValidateRange(1, 65535)][int]$Port = 3142,
+    [ValidateScript({ $_ -notmatch '[\r\n\x00]' })][string]$AuthToken = "",
+    [switch]$BuildFromSource,
     [switch]$AllowInsecure,
     [ValidateSet('dev', 'stable')]
     [string]$Channel = $(if ($env:PI_SERVER_CHANNEL) { $env:PI_SERVER_CHANNEL } else { 'dev' }),
     [ValidatePattern('^[0-9a-fA-F]{40}$')]
-    [string]$SourceRevision = "40b6e9632eda9a926ba59d77a2e3af7a15762805"
+    [string]$SourceRevision = "3ef3f52c2b776b2a913122dc473302d06665e7cc"
 )
 
 $ErrorActionPreference = "Stop"
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 # Keep this script self-contained so it also works when downloaded and run
 # directly with `irm https://windows.fleetcru.dev | iex`.
@@ -52,9 +58,9 @@ function Get-ExpectedReleaseHash {
         [Parameter(Mandatory)][string]$AssetName
     )
     $escapedName = [Regex]::Escape($AssetName)
-    $line = Get-Content -LiteralPath $ChecksumPath | Where-Object { $_ -match "\s+\*?$escapedName$" } | Select-Object -First 1
-    if (-not $line) { throw "SHA256SUMS does not contain $AssetName" }
-    $hash = ($line -split '\s+')[0]
+    $lines = @(Get-Content -LiteralPath $ChecksumPath | Where-Object { $_ -match "^\s*[0-9a-fA-F]{64}\s+\*?$escapedName\s*$" })
+    if ($lines.Count -ne 1) { throw "SHA256SUMS must contain exactly one valid entry for $AssetName" }
+    $hash = ($lines[0].Trim() -split '\s+')[0]
     if ($hash -notmatch '^[0-9a-fA-F]{64}$') { throw "SHA256SUMS contains an invalid hash for $AssetName" }
     return $hash.ToUpperInvariant()
 }
@@ -64,7 +70,10 @@ function Assert-ReleaseChecksum {
         [Parameter(Mandatory)][string]$FilePath,
         [Parameter(Mandatory)][string]$ExpectedHash
     )
-    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $FilePath).Hash
+    $stream = [IO.File]::OpenRead($FilePath)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try { $actual = [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '') }
+    finally { $sha256.Dispose(); $stream.Dispose() }
     if ($actual -ne $ExpectedHash) { throw "Downloaded pi-server checksum mismatch" }
 }
 
@@ -75,28 +84,56 @@ $DataDir = Join-Path $InstallDir "data"
 $ConfigDir = Join-Path $InstallDir "config"
 $TaskName = "PiServer"
 
-# The rolling development release uses a fixed tag, so installers request it by
-# name rather than through releases/latest, which excludes prereleases.
-$ReleaseBase = if ($Channel -eq 'stable') {
-    "https://github.com/$Repo/releases/latest/download"
-} else {
-    "https://github.com/$Repo/releases/download/server-dev"
+function Get-ServerReleaseBase {
+    param([string]$Repo, [string]$Channel)
+    if ($Channel -eq 'dev') {
+        try {
+            $release = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/tags/server-dev" -TimeoutSec 30
+            if ($release.draft) { throw "server-dev is a draft release" }
+            return "https://github.com/$Repo/releases/download/server-dev"
+        } catch {
+            if (-not $_.Exception.Response -or [int]$_.Exception.Response.StatusCode -ne 404) { throw }
+            Write-Warning "server-dev does not exist. Trying a stable server release."
+        }
+    }
+    # /releases/latest can select Companion or tray. Select server tags only.
+    $candidates = @()
+    for ($page = 1; $page -le 10; $page++) {
+        $releases = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases?per_page=100&page=$page" -TimeoutSec 30
+        foreach ($release in $releases) {
+            if (-not $release.draft -and -not $release.prerelease -and $release.tag_name -match '^server-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+                $candidates += [PSCustomObject]@{ Tag = $release.tag_name; Version = [version]($release.tag_name.Substring(8)) }
+            }
+        }
+        if ($releases.Count -lt 100) { break }
+        if ($page -eq 10) { throw "Release listing exceeded 1,000 entries. Cannot safely select the newest server release." }
+    }
+    $selected = $candidates | Sort-Object Version -Descending | Select-Object -First 1
+    if (-not $selected) { throw "No stable server-v<version> release exists. Try -Channel dev." }
+    return "https://github.com/$Repo/releases/download/$($selected.Tag)"
 }
-$BinaryUrl = "$ReleaseBase/pi-server-windows-amd64.exe"
-$ChecksumUrl = "$ReleaseBase/SHA256SUMS"
 
 # ── Helpers ───────────────────────────────────────────────
 function Write-Step($msg) { Write-Host "[info] $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)   { Write-Host "[ok] $msg" -ForegroundColor Green }
 function Write-Warn($msg) { Write-Host "[warn] $msg" -ForegroundColor Yellow }
-function Write-Fail($msg) { Write-Host "[error] $msg" -ForegroundColor Red; exit 1 }
+function Write-Fail($msg) { throw $msg }
 
-# Generate auth token if not provided
-if (-not $AuthToken) {
+# Check prerequisites and retain credentials before changing the installation.
+$EnvFile = Join-Path $ConfigDir 'pi-server.env'
+$WrapperPath = Join-Path $InstallDir 'start.ps1'
+$ExistingConfig = if (Test-Path -LiteralPath $EnvFile) { [IO.File]::ReadAllText($EnvFile) } else { $null }
+$ExistingWrapper = if (Test-Path -LiteralPath $WrapperPath) { [IO.File]::ReadAllText($WrapperPath) } else { $null }
+if ($ExistingConfig -and -not $PSBoundParameters.ContainsKey('Port') -and $ExistingConfig -match '(?m)^PI_SERVER_ADDR=.*:([0-9]+)\r?$') { $Port = [int]$matches[1] }
+$PiCommand = Get-Command pi -ErrorAction SilentlyContinue
+if (-not $PiCommand -and -not $ExistingConfig) { throw 'Pi CLI is not installed or is not available in PATH.' }
+if ($AllowInsecure) { Write-Warning '-AllowInsecure is obsolete and does not disable authentication.' }
+if (-not $AuthToken -and $null -eq $ExistingConfig) {
     $bytes = New-Object byte[] 32
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-    $AuthToken = [Convert]::ToBase64String($bytes) -replace '[/+=]', '' | ForEach-Object { $_.Substring(0, [Math]::Min(32, $_.Length)) }
-    Write-Step "Generated an auth token"
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+    $AuthToken = [BitConverter]::ToString($bytes).Replace('-', '').ToLowerInvariant()
+    Write-Step 'Generated an auth token'
 }
 
 # ── Create directories ────────────────────────────────────
@@ -104,66 +141,98 @@ Write-Step "Creating directories..."
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
-Write-Ok "Directories created"
-
-# ── Download binary ───────────────────────────────────────
-Write-Step "Downloading pi-server ($Channel channel)..."
-$ExePath = Join-Path $InstallDir "pi-server.exe"
-
+$CurrentUserSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+# A SYSTEM startup task must not execute a wrapper writable by a standard user.
+& icacls.exe $InstallDir /inheritance:r /grant:r "*$CurrentUserSid`:(OI)(CI)(RX)" '*S-1-5-18:(OI)(CI)(F)' '*S-1-5-32-544:(OI)(CI)(F)' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Could not protect the installation directory.' }
+& icacls.exe $ConfigDir /inheritance:r /grant:r "*$CurrentUserSid`:(OI)(CI)(R)" '*S-1-5-18:(OI)(CI)(F)' '*S-1-5-32-544:(OI)(CI)(F)' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Could not protect the configuration directory.' }
+$InstallLock = [IO.File]::Open((Join-Path $InstallDir '.install.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
 try {
-    $ChecksumPath = Join-Path $env:TEMP "pi-server-SHA256SUMS"
-    try {
-        Invoke-WebRequest -Uri $BinaryUrl -OutFile $ExePath -UseBasicParsing
-        Invoke-WebRequest -Uri $ChecksumUrl -OutFile $ChecksumPath -UseBasicParsing
-    } catch {
-        if ($Channel -eq 'dev') {
-            Write-Warn "No server-dev release found. Falling back to the newest stable release."
-            $ReleaseBase = "https://github.com/$Repo/releases/latest/download"
-            $BinaryUrl = "$ReleaseBase/pi-server-windows-amd64.exe"
-            $ChecksumUrl = "$ReleaseBase/SHA256SUMS"
-            Invoke-WebRequest -Uri $BinaryUrl -OutFile $ExePath -UseBasicParsing
-            Invoke-WebRequest -Uri $ChecksumUrl -OutFile $ChecksumPath -UseBasicParsing
-        } else {
-            throw
+$ExistingConfig = if (Test-Path -LiteralPath $EnvFile) { [IO.File]::ReadAllText($EnvFile) } else { $null }
+$ExistingWrapper = if (Test-Path -LiteralPath $WrapperPath) { [IO.File]::ReadAllText($WrapperPath) } else { $null }
+if ($ExistingConfig -and -not $PSBoundParameters.ContainsKey('Port') -and $ExistingConfig -match '(?m)^PI_SERVER_ADDR=.*:([0-9]+)\r?$') { $Port = [int]$matches[1] }
+Write-Ok 'Directories created'
+
+# Stage and verify before stopping the installed server.
+$ExePath = Join-Path $InstallDir 'pi-server.exe'
+$StageDir = Join-Path $InstallDir ".install-$([guid]::NewGuid().ToString('N'))"
+$StagedExe = Join-Path $StageDir 'pi-server.exe'
+$BackupExe = Join-Path $StageDir 'previous.exe'
+$PreviousTaskXml = $null
+$WasRunning = $false
+$Installed = $false
+$Committed = $false
+$TaskStopped = $false
+try {
+    New-Item -ItemType Directory -Path $StageDir | Out-Null
+    $PreviousTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($PreviousTask) {
+        $ownedAction = @($PreviousTask.Actions | Where-Object { $_.Execute -match '(^|[\\/])powershell\.exe$' -and $_.Arguments -and $_.Arguments.IndexOf($WrapperPath, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+        if (-not $ownedAction.Count) { throw "Task $TaskName does not belong to this installation. It has not been changed." }
+        $PreviousTaskXml = Export-ScheduledTask -TaskName $TaskName
+        $WasRunning = $PreviousTask.State -eq 'Running'
+    }
+    foreach ($listener in @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue)) {
+        $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
+        if (-not $WasRunning -or -not $owner.ExecutablePath -or -not [string]::Equals($owner.ExecutablePath, $ExePath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Port $Port is owned by another process. Stop it explicitly or choose a different port."
         }
     }
-    $ExpectedHash = Get-ExpectedReleaseHash -ChecksumPath $ChecksumPath -AssetName "pi-server-windows-amd64.exe"
-    Assert-ReleaseChecksum -FilePath $ExePath -ExpectedHash $ExpectedHash
-    Remove-Item -LiteralPath $ChecksumPath -Force -ErrorAction SilentlyContinue
-    Write-Ok "Downloaded and verified pre-built binary"
-} catch {
-    Write-Warn "No pre-built binary found. Building from source..."
-    
-    if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
-        Write-Fail "Go is not installed. Install from https://go.dev/dl/ and retry."
+    if ($BuildFromSource) {
+        foreach ($command in @('git', 'go')) {
+            if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "$command is required for -BuildFromSource" }
+        }
+        $SourceDir = Join-Path $StageDir 'source'
+        New-Item -ItemType Directory -Path $SourceDir | Out-Null
+        foreach ($arguments in @(@('init'), @('remote', 'add', 'origin', "https://github.com/$Repo.git"), @('fetch', '--depth', '1', 'origin', $SourceRevision), @('checkout', '--detach', 'FETCH_HEAD'))) {
+            & git -C $SourceDir @arguments
+            if ($LASTEXITCODE -ne 0) { throw "git failed with exit code $LASTEXITCODE" }
+        }
+        Push-Location (Join-Path $SourceDir 'pi-server-exp')
+        try {
+            & go build -trimpath -o $StagedExe ./cmd/pi-server
+            if ($LASTEXITCODE -ne 0) { throw "go build failed with exit code $LASTEXITCODE" }
+        } finally { Pop-Location }
+    } else {
+        Write-Step "Downloading pi-server ($Channel channel)..."
+        $ReleaseBase = Get-ServerReleaseBase -Repo $Repo -Channel $Channel
+        $ChecksumPath = Join-Path $StageDir 'SHA256SUMS'
+        Invoke-WebRequest "$ReleaseBase/pi-server-windows-amd64.exe" -OutFile $StagedExe -UseBasicParsing -TimeoutSec 120
+        Invoke-WebRequest "$ReleaseBase/SHA256SUMS" -OutFile $ChecksumPath -UseBasicParsing -TimeoutSec 30
+        $ExpectedHash = Get-ExpectedReleaseHash -ChecksumPath $ChecksumPath -AssetName 'pi-server-windows-amd64.exe'
+        Assert-ReleaseChecksum -FilePath $StagedExe -ExpectedHash $ExpectedHash
+        Write-Ok 'Downloaded and verified binary'
     }
-
-    $TmpDir = Join-Path $env:TEMP "pi-stack-build"
-    if (Test-Path $TmpDir) { Remove-Item -Recurse -Force $TmpDir }
-    
-    Write-Step "Fetching pinned source revision $SourceRevision..."
-    New-Item -ItemType Directory -Force -Path $TmpDir | Out-Null
-    git -C $TmpDir init
-    git -C $TmpDir remote add origin "https://github.com/$Repo.git"
-    git -C $TmpDir fetch --depth 1 origin $SourceRevision
-    git -C $TmpDir checkout --detach FETCH_HEAD
-    if ($LASTEXITCODE -ne 0) { Write-Fail "Could not fetch pinned source revision $SourceRevision" }
-
-    Write-Step "Building pi-server..."
-    Push-Location (Join-Path $TmpDir "pi-server-exp")
-    go build -o $ExePath ./cmd/pi-server
-    Pop-Location
-    
-    Remove-Item -Recurse -Force $TmpDir
-    Write-Ok "Built from source"
-}
+    if ($WasRunning) {
+        Write-Step 'Stopping the installed task for upgrade...'
+        Stop-ScheduledTask -TaskName $TaskName
+        $TaskStopped = $true
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        while ((Get-ScheduledTask -TaskName $TaskName).State -eq 'Running') {
+            if ([DateTime]::UtcNow -ge $deadline) { throw 'Task did not stop. The existing binary has not been replaced.' }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    if ($TaskStopped) {
+        $deadline = [DateTime]::UtcNow.AddSeconds(30)
+        do {
+            $children = @(Get-CimInstance Win32_Process -Filter "Name='pi-server.exe'" -ErrorAction Stop | Where-Object { [string]::Equals($_.ExecutablePath, $ExePath, [StringComparison]::OrdinalIgnoreCase) })
+            if (-not $children.Count) { break }
+            if ([DateTime]::UtcNow -ge $deadline) {
+                $TaskStopped = $false
+                throw 'The server child did not stop. Stop it explicitly before upgrading. Its binary is unchanged.'
+            }
+            Start-Sleep -Milliseconds 250
+        } while ($true)
+    }
+    if (Test-Path -LiteralPath $ExePath) { Move-Item -LiteralPath $ExePath -Destination $BackupExe }
+    Move-Item -LiteralPath $StagedExe -Destination $ExePath
+    $Installed = $true
 
 # ── Write config ──────────────────────────────────────────
 Write-Step "Writing configuration..."
-$EnvFile = Join-Path $ConfigDir "pi-server.env"
-$PiCommand = Get-Command pi -ErrorAction SilentlyContinue
-if (-not $PiCommand) { Write-Fail "Pi CLI is not installed or is not available in PATH." }
-$PiBinary = $PiCommand.Source
+$PiBinary = if ($PiCommand) { $PiCommand.Source } else { '' }
 
 $EnvContent = @(
     "# pi-server configuration"
@@ -172,19 +241,27 @@ $EnvContent = @(
     "#   Start-ScheduledTask -TaskName '$TaskName'"
     ""
     "PI_SERVER_ADDR=0.0.0.0:$Port"
+    "PI_SERVER_CWD=$env:USERPROFILE"
     "PI_SERVER_DATA_DIR=$DataDir"
     "PI_SERVER_ALLOWED_ROOTS=$env:USERPROFILE"
     "PI_SERVER_AUTH_TOKEN=$AuthToken"
     "PI_SERVER_PI_BINARY=$PiBinary"
 ) -join [Environment]::NewLine
 
-# Only add ALLOW_INSECURE if explicitly requested
-if ($AllowInsecure) {
-    $EnvContent += [Environment]::NewLine + "PI_SERVER_ALLOW_INSECURE=1"
-    Write-Warn "Running in INSECURE mode - auth token will not be enforced"
+if ($null -ne $ExistingConfig) {
+    $EnvContent = $ExistingConfig
+    if ($PSBoundParameters.ContainsKey('Port')) {
+        if ($EnvContent -match '(?m)^PI_SERVER_ADDR=') {
+            $EnvContent = [regex]::Replace($EnvContent, '(?m)^(PI_SERVER_ADDR=.*):[0-9]+\r?$', "`${1}:$Port")
+        } else { $EnvContent = $EnvContent.TrimEnd() + "`nPI_SERVER_ADDR=0.0.0.0:$Port`n" }
+    }
+    if ($PSBoundParameters.ContainsKey('AuthToken')) {
+        $EnvContent = [regex]::Replace($EnvContent, '(?m)^PI_SERVER_AUTH_TOKEN=.*\r?\n?', '')
+        $EnvContent = $EnvContent.TrimEnd() + "`nPI_SERVER_AUTH_TOKEN=$AuthToken`n"
+    }
+    Write-Ok 'Preserving existing configuration and credentials'
 }
-
-Set-Content -Path $EnvFile -Value $EnvContent -Encoding UTF8
+[IO.File]::WriteAllText($EnvFile, $EnvContent, (New-Object Text.UTF8Encoding $false))
 $CurrentUserSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 & icacls.exe $EnvFile /inheritance:r /grant:r "*$CurrentUserSid`:(R)" "*S-1-5-18`:(F)" "*S-1-5-32-544`:(F)" | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Fail "Could not restrict ACLs on $EnvFile" }
@@ -195,31 +272,32 @@ Write-Step "Creating service wrapper..."
 $WrapperPath = Join-Path $InstallDir "start.ps1"
 
 $WrapperContent = @'
-# Reads config and starts pi-server
-$envFile = Join-Path $PSScriptRoot "config\pi-server.env"
-Get-Content $envFile | ForEach-Object {
-    if ($_ -match '^\s*([^#][^=]+)=(.+)$') {
-        [Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), "Process")
+# Task Scheduler owns backgrounding. Return the server's exit code for retries.
+$ErrorActionPreference = 'Stop'
+Set-Location $PSScriptRoot
+$envFile = Join-Path $PSScriptRoot 'config\pi-server.env'
+Get-Content -LiteralPath $envFile | ForEach-Object {
+    if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+        [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
     }
 }
-& (Join-Path $PSScriptRoot "pi-server.exe")
+try {
+    & (Join-Path $PSScriptRoot 'pi-server.exe') --pairing-qr=false
+    exit $LASTEXITCODE
+} catch {
+    $_ | Out-File (Join-Path $PSScriptRoot 'startup-error.log') -Append
+    exit 1
+}
 '@
 
 Set-Content -Path $WrapperPath -Value $WrapperContent -Encoding UTF8
 Write-Ok "Wrapper created"
 
-# ── Remove old task if exists ─────────────────────────────
-$ExistingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-if ($ExistingTask) {
-    Write-Step "Removing existing scheduled task..."
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-}
-
 # ── Create scheduled task (startup, SYSTEM account) ───────
 Write-Step "Creating scheduled task..."
 
 $Action = New-ScheduledTaskAction `
-    -Execute "powershell.exe" `
+    -Execute (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') `
     -Argument "-NoProfile -ExecutionPolicy RemoteSigned -WindowStyle Hidden -File `"$WrapperPath`"" `
     -WorkingDirectory $InstallDir
 
@@ -230,7 +308,8 @@ $Settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
-    -ExecutionTimeLimit (New-TimeSpan -Days 365)
+    -MultipleInstances IgnoreNew `
+    -ExecutionTimeLimit ([TimeSpan]::Zero)
 
 $Principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
 
@@ -251,16 +330,58 @@ Start-ScheduledTask -TaskName $TaskName
 Start-Sleep -Seconds 2
 
 $Task = Get-ScheduledTask -TaskName $TaskName
-if ($Task.State -eq "Running") {
-    Write-Ok "pi-server is running"
+if ($Task.State -eq 'Running') {
+    $address = if ($EnvContent -match '(?m)^PI_SERVER_ADDR=([^\r\n]+)') { $matches[1].Trim() } else { '0.0.0.0:3142' }
+    $probeAddress = $address -replace '^0\.0\.0\.0:', '127.0.0.1:' -replace '^\[::\]:', '[::1]:'
+    $probePort = [int]($address -replace '^.*:', '')
+    $ready = $false
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ((Get-ScheduledTask -TaskName $TaskName).State -ne 'Running') { throw 'Server task exited during startup.' }
+        $ownedListener = $false
+        foreach ($listener in @(Get-NetTCPConnection -State Listen -LocalPort $probePort -ErrorAction SilentlyContinue)) {
+            $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
+            if ([string]::Equals($owner.ExecutablePath, $ExePath, [StringComparison]::OrdinalIgnoreCase)) { $ownedListener = $true }
+        }
+        if ($ownedListener) {
+            try {
+                $health = Invoke-WebRequest "http://$probeAddress/healthz" -UseBasicParsing -TimeoutSec 2
+                if ($health.StatusCode -eq 200) { $ready = $true; break }
+            } catch { }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    if (-not $ready) { throw "Server did not become ready. Check $InstallDir\startup-error.log and the configured data directory's pi-server.log." }
+    Write-Ok 'pi-server is running and healthy'
 } else {
-    Write-Warn "pi-server may have failed to start."
-    Write-Warn "Check: Get-ScheduledTaskInfo -TaskName '$TaskName'"
+    throw "pi-server failed to start. Check $InstallDir\startup-error.log and the data directory's pi-server.log."
+}
+$Committed = $true
+} catch {
+    $failure = $_
+    if ($Installed -or (Test-Path -LiteralPath $BackupExe)) {
+        Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $BackupExe) {
+            if (Test-Path -LiteralPath $ExePath) { Remove-Item -LiteralPath $ExePath -Force }
+            Move-Item -LiteralPath $BackupExe -Destination $ExePath
+        } elseif ($Installed) { Remove-Item -LiteralPath $ExePath -Force }
+        if ($null -ne $ExistingConfig) { [IO.File]::WriteAllText($EnvFile, $ExistingConfig, (New-Object Text.UTF8Encoding $false)) }
+        else { Remove-Item -LiteralPath $EnvFile -Force -ErrorAction SilentlyContinue }
+        if ($null -ne $ExistingWrapper) { [IO.File]::WriteAllText($WrapperPath, $ExistingWrapper, (New-Object Text.UTF8Encoding $false)) }
+        else { Remove-Item -LiteralPath $WrapperPath -Force -ErrorAction SilentlyContinue }
+        if ($PreviousTaskXml) { Register-ScheduledTask -TaskName $TaskName -Xml $PreviousTaskXml -Force | Out-Null }
+        else { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue }
+    }
+    if ($WasRunning -and $TaskStopped) { Start-ScheduledTask -TaskName $TaskName }
+    throw $failure
+} finally {
+    if (-not $Committed -and (Test-Path -LiteralPath $BackupExe)) { Write-Warning "Previous binary retained at $BackupExe after a failed rollback." }
+    else { Remove-Item -LiteralPath $StageDir -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 # ── Summary ───────────────────────────────────────────────
-$ServerIP = (Invoke-WebRequest -Uri "https://ifconfig.me" -UseBasicParsing -ErrorAction SilentlyContinue).Content.Trim()
-if (-not $ServerIP) { $ServerIP = "localhost" }
+$ServerIP = '127.0.0.1'
+Write-Host 'For Companion, use a private LAN or Tailscale address. Do not expose this server publicly.' -ForegroundColor Yellow
 
 Write-Host ""
 Write-Host "==================================================" -ForegroundColor Green
@@ -277,5 +398,8 @@ Write-Host "    Stop-ScheduledTask -TaskName '$TaskName'" -ForegroundColor Cyan
 Write-Host "    Get-ScheduledTask -TaskName '$TaskName'" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Auth token: stored in $EnvFile" -ForegroundColor Cyan
-Write-Host "  Save this token. It is required for all API connections." -ForegroundColor Yellow
+Write-Host '  Read the token from the config when connecting a client.' -ForegroundColor Yellow
 Write-Host "==================================================" -ForegroundColor Green
+} finally {
+    $InstallLock.Dispose()
+}

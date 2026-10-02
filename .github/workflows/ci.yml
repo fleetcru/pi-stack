@@ -19,9 +19,17 @@ on:
       - 'pi-companion-exp/**'
       - 'pi-desktop-app/**'
       - 'pi-webby-shared/**'
-      - 'install-server*.ps1'
+      - 'install-server*'
+      - 'install-exp-external-bridge.*'
+      - 'start-exp-*'
+      - 'stop-exp-*'
+      - 'dev-launcher-common.*'
       - 'windows-installer-common.ps1'
       - 'test-windows-installer.ps1'
+      - 'test-shell-scripts.sh'
+      - 'pi-server-tray/*.ps1'
+      - 'pi-server-exp/scripts/**'
+      - '.gitattributes'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
@@ -29,9 +37,17 @@ on:
       - 'pi-companion-exp/**'
       - 'pi-desktop-app/**'
       - 'pi-webby-shared/**'
-      - 'install-server*.ps1'
+      - 'install-server*'
+      - 'install-exp-external-bridge.*'
+      - 'start-exp-*'
+      - 'stop-exp-*'
+      - 'dev-launcher-common.*'
       - 'windows-installer-common.ps1'
       - 'test-windows-installer.ps1'
+      - 'test-shell-scripts.sh'
+      - 'pi-server-tray/*.ps1'
+      - 'pi-server-exp/scripts/**'
+      - '.gitattributes'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
 
@@ -121,7 +137,7 @@ jobs:
             android=true
           fi
           installers=false
-          if echo "$changed" | grep -qE '^(install-server[^/]*\.ps1|windows-installer-common\.ps1|test-windows-installer\.ps1)'; then
+          if echo "$changed" | grep -qE '^(install-server[^/]*$|install-exp-external-bridge\.[^/]+$|start-exp-[^/]+$|stop-exp-[^/]+$|dev-launcher-common\.[^/]+$|windows-installer-common\.ps1$|test-windows-installer\.ps1$|test-shell-scripts\.sh$|pi-server-tray/[^/]+\.ps1$|pi-server-exp/scripts/|\.gitattributes$|\.github/workflows/ci\.yml$)'; then
             installers=true
           fi
 
@@ -259,9 +275,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Test checksum and validation helpers
+      - name: Test installers and launchers under Windows PowerShell 5.1
         shell: powershell
         run: .\test-windows-installer.ps1
+      - name: Test installers and launchers under PowerShell 7
+        shell: pwsh
+        run: .\test-windows-installer.ps1
+
+  shell-scripts:
+    name: Linux installer and launcher tests
+    needs: changes
+    if: needs.changes.outputs.installers == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Test installation rollback and process cleanup
+        run: bash test-shell-scripts.sh
 
   android:
     name: Android — compile, test & release build

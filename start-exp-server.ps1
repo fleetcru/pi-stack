@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-  [int]$Port = 3142,
-  [string]$AuthToken = "",
+  [ValidateRange(1, 65535)][int]$Port = 3142,
+  [string]$AuthToken = $env:PI_SERVER_AUTH_TOKEN,
   [string]$DataDir = (Join-Path $PSScriptRoot ".data" | Join-Path -ChildPath "pi-server"),
   [switch]$OpenAdmin,
   [switch]$InstallExternalBridge,
@@ -10,6 +10,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 $serverDir = Join-Path $PSScriptRoot "pi-server-exp"
+. (Join-Path $PSScriptRoot 'dev-launcher-common.ps1')
+foreach ($command in @('go', 'pi')) {
+  if (-not (Get-Command $command -ErrorAction SilentlyContinue)) { throw "$command is not available in PATH." }
+}
+Assert-DevPortAvailable -Port $Port
 
 if (-not (Test-Path -LiteralPath $serverDir -PathType Container)) {
   throw "pi-server-exp not found at: $serverDir"
@@ -42,8 +47,19 @@ if (-not $homeLanIp -and -not $tailscaleIp) {
   Write-Warning "No home-LAN or Tailscale address detected. Clients may not reach the server."
 }
 
+# Restore the caller's environment even when build or startup fails.
+$savedEnvironment = @{}
+foreach ($name in @('PI_SERVER_ADDR', 'PI_SERVER_CWD', 'PI_SERVER_DATA_DIR', 'PI_SERVER_ALLOWED_ROOTS', 'PI_SERVER_PI_EXTENSIONS', 'PI_SERVER_AUTH_TOKEN', 'PI_SERVER_ALLOW_INSECURE')) {
+  $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
+$buildDir = Join-Path ([IO.Path]::GetTempPath()) "pi-dev-$([guid]::NewGuid().ToString('N'))"
+try {
+New-Item -ItemType Directory -Path $buildDir | Out-Null
+$binary = Join-Path $buildDir 'pi-server.exe'
+Build-DevServer -ServerDir $serverDir -Output $binary
 # --- Setup ---
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+$DataDir = [IO.Path]::GetFullPath($DataDir)
 
 # The server's built-in CORS policy accepts loopback, home-LAN, and Tailscale
 # browser origins when no explicit allowlist is configured.
@@ -51,8 +67,8 @@ $bindHost = "0.0.0.0"
 $env:PI_SERVER_ADDR         = "${bindHost}:$Port"
 $env:PI_SERVER_CWD          = $PSScriptRoot
 $env:PI_SERVER_DATA_DIR     = $DataDir
-$env:PI_SERVER_ALLOWED_ROOTS = $PSScriptRoot
-Remove-Item Env:PI_SERVER_ALLOWED_ORIGINS -ErrorAction SilentlyContinue
+if (-not $env:PI_SERVER_ALLOWED_ROOTS) { $env:PI_SERVER_ALLOWED_ROOTS = $PSScriptRoot }
+# Honor an explicit CORS allowlist rather than silently clearing it.
 
 $extension = Join-Path $serverDir "extensions" | Join-Path -ChildPath "session-title.ts"
 if (Test-Path -LiteralPath $extension -PathType Leaf) {
@@ -77,11 +93,7 @@ if ($InstallExternalBridge) {
     throw "External bridge installer not found: $installer"
   }
   $relayUrl = if ($BridgeRelayUrl) { $BridgeRelayUrl.TrimEnd('/') } else { "http://127.0.0.1:$Port" }
-  & powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File $installer `
-    -ServerPort $Port `
-    -RelayUrl $relayUrl `
-    -AuthToken $AuthToken
-  if ($LASTEXITCODE -ne 0) { throw "External bridge installation failed with exit code $LASTEXITCODE" }
+  & $installer -ServerPort $Port -RelayUrl $relayUrl -AuthToken $AuthToken
 }
 
 # --- Launch ---
@@ -93,27 +105,20 @@ if ($homeLanIp) { Write-Host "  Home LAN:  http://${homeLanIp}:$Port" }
 if ($tailscaleIp) { Write-Host "  Tailscale: http://${tailscaleIp}:$Port" }
 Write-Host "  Local:     http://127.0.0.1:$Port"
 Write-Host "  Data:      $DataDir"
-Write-Host "  Browser:   localhost, home LAN, and Tailscale origins allowed"
+Write-Host "  Browser:   $(if ($env:PI_SERVER_ALLOWED_ORIGINS) { $env:PI_SERVER_ALLOWED_ORIGINS } else { 'automatic private-network policy' })"
 if ($AuthToken) { Write-Host "  Auth:      configured" }
 else { Write-Host "  Auth:      none (trusting home LAN/Tailscale)" -ForegroundColor Yellow }
 Write-Host ""
 
 if ($OpenAdmin) {
-  Start-Job -ArgumentList "http://127.0.0.1:$Port", $Port -ScriptBlock {
-    param($baseUrl, $serverPort)
-    for ($attempt = 0; $attempt -lt 60; $attempt++) {
-      try {
-        $health = Invoke-WebRequest -Uri "$baseUrl/healthz" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
-        if ($health.StatusCode -eq 200) {
-          Start-Process "$baseUrl/admin/"
-          return
-        }
-      } catch { }
-      Start-Sleep -Milliseconds 500
-    }
-  } | Out-Null
-  Write-Host "  Opened Pi Server Admin. Create a trusted device there, then scan its QR from Companion." -ForegroundColor Green
+  Write-Warning '-OpenAdmin is obsolete. The standalone /admin/ page was removed. Use Webby or Desktop for administration, or scan the terminal pairing QR in Companion.'
 }
 
-Set-Location $serverDir
-go run ./cmd/pi-server
+# Run the built executable directly so Ctrl+C reaches the actual server,
+# rather than leaving a go run child behind.
+& $binary
+if ($LASTEXITCODE -ne 0) { throw "pi-server exited with code $LASTEXITCODE. Check $DataDir\pi-server.log." }
+} finally {
+  foreach ($entry in $savedEnvironment.GetEnumerator()) { [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process') }
+  Remove-Item -LiteralPath $buildDir -Recurse -Force -ErrorAction SilentlyContinue
+}

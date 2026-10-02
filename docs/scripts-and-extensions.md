@@ -17,21 +17,25 @@ Small Go program (separate module) for Windows desktops running pi-server person
 - `icon_windows.go` / `icon_unix.go` — embedded tray icon per platform.
 - `open_windows.go` / `open_darwin.go` / `open_linux.go` — open-URL-in-browser per OS.
 - `replace_windows.go` / `replace_unix.go` — self-update file replacement logic.
-- `install.ps1` / `uninstall.ps1` — install/uninstall the tray app.
+- `install.ps1` / `uninstall.ps1` — build/install or remove the tray app. Installation stages the binary, retains recovery files if rollback fails, and removes an existing startup shortcut with `-NoStartup`. Uninstall removes only its executable rather than recursively deleting the install directory. `-RemoveData` rejects protected home/root directories and a data-directory junction. `-WhatIf` previews removal.
 
 ## Root scripts
 
 Startup:
-- `start-exp-server.ps1` / `.cmd` / `.sh` — build/run pi-server only. The PowerShell and shell launchers bind `0.0.0.0:3142`, use the built-in home-LAN/Tailscale browser-origin policy, and print detected local, LAN, and Tailscale URLs.
-- `start-exp-live-stack.ps1` / `.cmd` / `.sh` — full dev stack: pi-server + webby dev server + a Pi TUI with the relay bridge.
+- `start-exp-server.ps1` / `.cmd` / `.sh` build a temporary server executable and run it directly. They validate ports, preserve inherited auth and explicit CORS settings, and clean up the build. PowerShell restores the caller's environment. The deprecated OpenAdmin option prints a hint because `/admin/` no longer exists.
+- `start-exp-live-stack.ps1` / `.cmd` start the server, Webby, and optionally a Pi TUI. `-Background` starts only server and Webby. Both services must pass bounded readiness checks. Commands use encoded PowerShell arguments to preserve paths with quotes and spaces; tokens travel through environment variables, not command-line text.
+- `stop-exp-live-stack.ps1` reads `<DataDir>/dev-stack.json`, verifies PID creation times, and stops recorded wrappers and descendants. Supports `-WhatIf`. Startup logs remain under `<DataDir>/.launchers/<buildId>/`.
+- `start-exp-live-stack.sh` starts server and Webby, not a TUI. Cleanup traps run on startup errors and signals. Dedicated process groups stop Vite even if its pnpm parent has already exited. Child failures propagate a nonzero exit code.
+- `dev-launcher-common.ps1` / `.sh` hold port, readiness, build, quoting, and process helpers. PowerShell process records store timestamp ticks as strings to survive PS 5.1 and PS 7 JSON round trips.
 - `fix-pi-server-node-path.sh` — repairs the Node path so the server can spawn Pi on Linux/macOS.
 
 Install:
-- `install-server.sh` — Linux VPS install (systemd unit). Pulls the rolling `server-dev` release by default; set `PI_SERVER_CHANNEL=stable` to pin to the newest immutable `server-v*` release. Falls back to stable automatically when `server-dev` has not been published yet, and verifies the download against `SHA256SUMS`.
-- `install-server.ps1` — Windows install requiring admin (scheduled task). Takes the same release channel through the `-Channel dev|stable` parameter (default `dev`, or the `PI_SERVER_CHANNEL` environment variable when the parameter is omitted).
-- `install-server-user.ps1` — per-user Windows install, no admin needed. Accepts the same `-Channel` parameter.
-- `install-exp-external-bridge.ps1` / `.cmd` — copies the relay-bridge extension into the user's Pi extensions directory.
-- `windows-installer-common.ps1` / `test-windows-installer.ps1` — shared installer logic and its test harness.
+- `install-server.sh` installs a Linux systemd unit. Requires Pi, curl, Python 3, flock, and a running systemd. Downloads and verifies in a private staging directory, serializes installers with flock, preserves configuration and custom units, and restarts the service on upgrade. Checks the main executable and HTTP readiness, with binary/config/unit rollback on failure. `PI_SERVER_PORT` and `PI_SERVER_AUTH_TOKEN` explicitly update settings. Source builds require `PI_SERVER_ALLOW_SOURCE_BUILD=1` and a pinned `PI_SERVER_SOURCE_REVISION`; no automatic Go installation.
+- `install-server.ps1` installs a SYSTEM startup task; `install-server-user.ps1` installs a current-user logon task. Both remain self-contained for download-and-execute one-liners. They stage verified binaries, lock concurrent installs, check task ownership and occupied ports, preserve existing settings, and attempt rollback after failed startup. `-Port` and `-AuthToken` explicitly override saved values. `-BuildFromSource` opts into a pinned source build. Task wrappers return native exit codes for restart-on-failure. The user installer initially binds loopback; the admin installer binds all interfaces and generates a token on first install.
+- All release installers default to `server-dev`. Stable selection paginates GitHub releases and compares numeric `server-v<major>.<minor>.<patch>` versions, excluding Companion, tray, drafts, and prereleases. Only a 404 for the dev release triggers stable fallback. Download and checksum failures leave the old server untouched.
+- `install-exp-external-bridge.ps1` / `.cmd` copy the extension into Pi's automatically discovered user extensions directory, without duplicate package registration. Existing JSON fields and credentials survive reinstall. Changing the relay URL clears a saved credential unless a new token is supplied. Writes private, atomic UTF-8 JSON without a BOM, including on PowerShell 5.1, and removes the legacy persistent token environment variable.
+- `windows-installer-common.ps1` contains checksum helpers. `test-windows-installer.ps1` extracts the actual self-contained installer helpers and runs mocked upgrades, download/checksum/startup/ACL failures, bridge JSON, tray removal, and real harmless child-process cleanup tests under PS 5.1 and PS 7.
+- `test-shell-scripts.sh` uses temporary directories and mocked service/network commands to test Linux upgrades, rollback, settings preservation, release selection, startup failures, and process-group cleanup. It does not require root or change installed services. CI runs both test suites for installer and launcher changes. `.gitattributes` keeps shell scripts LF-terminated.
 
 Maintenance:
 - `sync-components.ps1` / `.sh` — copies shared React components between pi-webby-exp and pi-desktop-app to keep the mirrors identical.
